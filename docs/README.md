@@ -1,0 +1,26 @@
+# docs/
+
+This folder holds two kinds of documents.
+
+## Reference docs (shipped with the toolkit)
+
+- `MEMORY.md`: conventions for the agent's persistent file-based memory.
+- `STATUSLINE.md`: statusline wiring and customization.
+- `ACCOUNTS.md`: running several Claude Code accounts, the shortcuts, and the traps.
+- `PERMISSIONS.md`: what bypass mode actually trades, and how to change it.
+- `tsql-rules.md`: optional stack addendum with portable SQL Server rules.
+- `WORKLOG.md`: design spec of the cross-session worklog. Planned for Sprint 03, not published yet.
+
+## Spec tree (development of this repo itself)
+
+This repo dogfoods its own spec-driven workflow. The folders below are the source of truth for building the toolkit, consumed by the `/sdd` skill.
+
+- `00-product/`: vision, scope, and the domain model.
+- `01-requirements/`: functional requirements (FR-xxx), non-functional requirements (NFR-xxx), and user stories (US-xxx).
+- `02-architecture/`: architecture overview, data contracts, security and privacy, and the ADRs (numbered decisions).
+- `03-features/`: one spec per feature (F01 to F12), each mapping the FR/US it satisfies.
+- `04-plan/`: roadmap, backlog, and `sprints/` with one file per sprint carrying its scope and definition of done.
+
+There is no `05-design/` folder because the toolkit has no UI.
+
+Status: all ADRs are Proposed until the maintainer approves them. Implementation must not start on a feature whose ADR dependencies are still open. When specs and reality diverge, fix the spec first, then the code.

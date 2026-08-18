@@ -1,0 +1,49 @@
+onboarding = false
+# herdr configuration
+# Personal, portable scheme (Gentleman-style keymap: ctrl+a prefix).
+# To reproduce on another machine, copy this file to the same path:
+#   Windows:      %APPDATA%\herdr\config.toml
+#   macOS/Linux:  ~/.config/herdr/config.toml
+# Herdr live-reloads this file; a running server also reloads it with `herdr server reload-config`.
+
+[update]
+channel = "preview"
+
+[keys]
+# Prefix remapped to ctrl+a (Herdr default is ctrl+b).
+# Press the prefix, then the action key. "prefix+x" needs the prefix first.
+prefix = "ctrl+a"
+
+# Prefix-mode shortcuts. Most of these already match Herdr defaults; they are
+# written out so this file is a self-contained record of the scheme.
+settings = "prefix+s"          # open the settings menu (sounds, toasts, integrations)
+workspace_picker = "prefix+w"  # workspace selector
+new_tab = "prefix+c"           # new tab
+switch_tab = "prefix+1..9"     # jump to tab 1..9
+# NOTE: ctrl+<digit> is NOT reliably delivered by terminals (only ctrl+LETTER maps
+# to a real control code). herdr's own example uses alt, so agents jump with alt+digit.
+focus_agent = "prefix+alt+1..9" # prefix, then alt+1..9 -> jump to agent 1..9
+focus_pane_left = "prefix+h"   # move focus to the pane on the left
+focus_pane_right = "prefix+l"  # move focus to the pane on the right
+goto = "prefix+g"              # session browser (by workspace or agent)
+toggle_sidebar = "prefix+b"    # minimalist mode (collapsed status rail)
+help = "prefix+?"              # list every configured keybinding
+
+[keys.indexed]
+# Direct (no-prefix) agent jump: alt+1..9 focuses agent row N WITHOUT the prefix.
+# This is herdr's own documented example (reliable -- unlike ctrl+digit).
+# The prefixed focus_agent above still works too; delete that focus_agent line
+# if you want ONLY the direct jump.
+agents = "alt"
+
+[ui.toast]
+# In-app pop-up notifications. Set delivery = "system" for OS desktop notifications.
+delivery = "system"
+
+[ui.sound]
+# Sound on agent state changes in background workspaces:
+# a done sound when an agent finishes, an attention sound when it needs input.
+enabled = true
+
+[ui]
+agent_panel_sort = "spaces"

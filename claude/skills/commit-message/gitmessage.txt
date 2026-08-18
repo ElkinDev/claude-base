@@ -1,0 +1,12 @@
+# <type>(<scope>): <subject>   <= 50 chars, imperative, no period
+#
+# Body: WHY and WHAT. Leave one blank line above.
+#
+#
+# Footer: tracker link on its own last line  |  BREAKING CHANGE: ...
+#   Azure DevOps: #<id>    Jira: PROJ-123 / Refs PROJ-123    plain git: none
+#
+# --------------------------------------------------------------------
+# type:  feat fix docs style refactor perf test chore build ci revert
+# scope: area touched (api, auth, ui, db, config). optional.
+# house style: English only. No em-dashes. No AI attribution / Co-Authored-By.

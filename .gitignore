@@ -1,0 +1,22 @@
+# backups and generated
+*.bak
+*.new
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# machine-local project state (if this repo is ever used as a workspace)
+.claude/.active-story
+
+# herdr runtime (never part of the repo, listed for safety)
+*.sock
+herdr-*.log
+session.json
+
+# never commit account state or credentials, even by accident
+.credentials.json
+.names.json
+.claude.json
+.sync-source.json
+.claude-accounts/
