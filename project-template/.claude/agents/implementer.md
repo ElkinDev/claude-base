@@ -28,4 +28,4 @@ Return what you built, mapped to the acceptance criteria you satisfied, plus any
 
 ## Turn budget
 
-You have 100 turns (`maxTurns`). At turn 70, before anything else, write the checkpoint: `NOTES.md` in the worktree (goal, acceptance list, done, next, blockers) when you work in one, otherwise the head of your deliverable file. A continuation must be able to pick up from that checkpoint without re-reading the repo. Then finish, or stop and report what is done and what is left.
+You have 100 turns (`maxTurns`). At turn 70, before anything else, checkpoint by reporting, never by a notes file: end the turn with an interim report carrying goal, acceptance list, done, next and blockers, so a continuation can pick up from it without re-reading the repo. Then finish, or stop and report what is done and what is left.

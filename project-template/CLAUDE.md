@@ -6,7 +6,14 @@ paths, integration branch, git discipline, evidence base, local environment) liv
 applies. A rule without its reason breaks on the first edge case.
 
 ## Language and voice
-- Live chat may be in any language you choose (for example Spanish). Everything that ships is in
+- Language by audience. Spanish (or whatever language the owner writes in) is used ONLY in text
+  addressed to the owner: the chat reply, the status block, a question. Every exchange between
+  sessions and agents is in English: briefs, agent prompts, agent reports, Herdr pane prompts,
+  SendMessage traffic, NOTES and checkpoints, memory files. Reason: agents produce English
+  artifacts anyway, and English costs fewer tokens than Spanish for the same content, so a Spanish
+  brief or reply only adds tokens and a language switch. This rule survives compaction because it
+  lives here, in a file re-read on every context, not in the summary.
+- Everything that ships is in
   English: code, comments, documentation, commit and PR and tracker text, team communication, and
   evidence. A project may declare a different artifact language for a specific scope (for example a
   personal notes folder), and that override lives in `CLAUDE.project.md`; it is not the default.

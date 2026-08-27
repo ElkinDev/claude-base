@@ -39,10 +39,10 @@ Every line below is a law. Cite laws by their words in briefs; never paraphrase 
 - Waiting for a mutex or any slow condition is one blocking foreground call, repeated silently; turn-polling a wait is banned.
 - While a gate runs, bank the next scope item it does not compile, and end the turn only when nothing remains doable without the verdict.
 - Never pause with an uncommitted tree: commit the checkpoint first, then wait.
-- Every lane keeps a notes file in its worktree with goal, acceptance list, done and next, and checkpoints it well before its turn budget runs out.
+- An agent keeps no notes file; its checkpoint is its final report plus the board line, and findings worth keeping go to `docs/` in main before the worktree is removed.
 - No narration: no status pings, no per-phase messages, no waiting messages.
 - A lane ends its turn at most twice per gate, one interim naming the exit file and one final report; interims are at most five lines and only for a decision, a flag or error, or a checkpoint before sleeping on a queued gate.
-- The final report is at most ten lines plus pointers to the exit file, the test results and the diff stat; forensics go to the exit file or the notes file, never into a message.
+- The final report is at most ten lines plus pointers to the exit file, the test results and the diff stat; forensics go to the exit file, never into a message.
 - Red before green: prove the defect against the pre-change tree before the fix lands.
 - Prove the red by snapshot and checkout, never by a stash, whose ref is shared across worktrees.
 - Restore the tree before releasing the lock on every exit path, and abort the gate when the restore fingerprint does not match.
