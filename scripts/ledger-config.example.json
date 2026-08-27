@@ -1,0 +1,15 @@
+{
+  "_help": "Copy this file to ledger-config.json beside ledger-day.py and edit it. Keys in `projects` are lowercase prefixes of the transcript folder names under ~/.claude/projects (a folder is the working directory with the separators replaced by dashes); the longest matching prefix wins, so a more specific folder can leave the group its parent prefix would put it in.",
+  "projects": {
+    "c--repo-myapp": "myapp",
+    "c--repo": "myapp",
+    "c--repo-shared-tooling": "myapp",
+    "c--repo-otherapp": "otherapp"
+  },
+  "project_order": ["myapp", "otherapp", "other"],
+  "feature_project": "myapp",
+  "repo": null,
+  "branch": "main",
+  "ledger_dir": null,
+  "_repo": "Absolute path of the repository whose merge commits count as shipped features, or null when no repository is watched. CLAUDE_LEDGER_DIR overrides `ledger_dir`, and `ledger_dir` overrides the default, which is the `ledger` folder next to the folder holding this script."
+}
