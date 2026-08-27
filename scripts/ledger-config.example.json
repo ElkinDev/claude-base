@@ -12,6 +12,13 @@
   "branch": "main",
   "ledger_dir": null,
   "_repo": "Absolute path of the repository whose merge commits count as shipped features, or null when no repository is watched. CLAUDE_LEDGER_DIR overrides `ledger_dir`, and `ledger_dir` overrides the default, which is the `ledger` folder next to the folder holding this script.",
+  "retention": {
+    "scratch_root": null,
+    "projects_root": null,
+    "scratch_days": 7,
+    "subagent_days": 14
+  },
+  "_retention": "Read by ledger-nightly.ps1, which sweeps once a day on the morning run and after the three steps, so nothing the ledger reads is deleted before it reads it. `scratch_root` holds the per-session scratchpads and defaults to `claude` inside the system temp folder: a `<project>/<session>/scratchpad` whose newest file at any depth is older than `scratch_days` is removed whole, an empty one is dated by its own folder stamp or the session folder's, whichever is newer, so a session that has written nothing yet survives, and the `<session>` folder goes with the scratchpad when nothing else is left inside. `projects_root` is the transcript folder and defaults to `.claude/projects` under the home directory: inside `<project>/<session>/subagents` a subagent transcript older than `subagent_days` by its own mtime is removed together with the agent-*.meta.json sidecar of the same stem, and a sidecar whose transcript is already gone is swept on its own mtime, while the main `<session>.jsonl` beside that folder, the memory folders and the tool results are never candidates. Either path set to null takes its default. Both rules delete one item at a time and log one line each with the counts and the bytes freed; a folder holding a junction or a symlink is skipped rather than recursed into.",
   "compare": {
     "baseline": "baseline.json",
     "baseline_label": "the window before the change",
