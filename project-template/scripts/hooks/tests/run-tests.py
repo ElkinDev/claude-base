@@ -140,6 +140,23 @@ def test_non_gradle_command_is_untouched(ws):
     assert stdout == "", "a non gradle command must be left alone, got: %s" % stdout
 
 
+def test_grep_that_mentions_gradle_is_untouched(ws):
+    payload = fixture("non-gradle-command.json", ws.replacements()).replace(
+        "git status --porcelain", "grep -rn 'gradle ' docs/ | head -20")
+    code, stdout = run_hook(FILTER_HOOK, payload, {"CLAUDE_PROJECT_DIR": PROJECT_DIR})
+    assert code == 0, code
+    assert stdout == "", "a command that only mentions gradle must be left alone, got: %s" % stdout
+
+
+def test_gradle_behind_cd_env_and_timeout_is_wrapped(ws):
+    payload = fixture("non-gradle-command.json", ws.replacements()).replace(
+        "git status --porcelain",
+        "cd C:/Repo/myapp-w99 && JAVA_HOME=C:/jbr timeout 600 ./gradlew :app:testDebugUnitTest")
+    code, stdout = run_hook(FILTER_HOOK, payload, {"CLAUDE_PROJECT_DIR": PROJECT_DIR})
+    assert code == 0, code
+    assert "run-logged.py" in decision(stdout)["updatedInput"]["command"], stdout
+
+
 def test_digest_keeps_what_matters(ws):
     runner = load_module(RUN_LOGGED, "run_logged")
     with open(os.path.join(FIXTURES_DIR, "gradle-output-failed.txt"), encoding="utf-8") as handle:

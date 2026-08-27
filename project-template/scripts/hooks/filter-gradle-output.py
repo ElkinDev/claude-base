@@ -14,14 +14,38 @@ import re
 import sys
 from datetime import datetime
 
-GRADLE_MARKERS = ("gradlew", "gradlew.bat", "gradle ", "gradle-lockrun.ps1", "lane-gate.sh")
+GRADLE_COMMANDS = {"gradlew", "gradlew.bat", "gradle", "gradle.bat"}
+GRADLE_SCRIPTS = {"gradle-lockrun.ps1", "lane-gate.sh"}
+SEGMENT_SPLIT = re.compile(r"\|\||&&|[;|\n]")
+ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+PREFIX_WORDS = {"time", "nice", "exec"}
 RUNNER = "run-logged.py"
 SLUG_CAP = 40
 
 
+def basename(token):
+    return token.strip("\"'").replace("\\", "/").rsplit("/", 1)[-1].lower()
+
+
 def is_gradle(command):
-    lowered = command.lower()
-    return any(marker in lowered for marker in GRADLE_MARKERS)
+    """True only when gradle, or one of its wrapper scripts, is the command word of a segment.
+
+    A command that merely mentions gradle in its text, such as a grep, must not be wrapped:
+    the digest would swallow its output.
+    """
+    for segment in SEGMENT_SPLIT.split(command):
+        tokens = segment.split()
+        while tokens and (ENV_ASSIGNMENT.match(tokens[0]) or tokens[0] in PREFIX_WORDS):
+            tokens.pop(0)
+        if len(tokens) > 1 and tokens[0] == "timeout":
+            tokens = tokens[2:]
+        if not tokens:
+            continue
+        if basename(tokens[0]) in GRADLE_COMMANDS:
+            return True
+        if any(basename(token) in GRADLE_SCRIPTS for token in tokens):
+            return True
+    return False
 
 
 def slug(command):
