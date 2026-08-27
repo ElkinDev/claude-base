@@ -35,6 +35,8 @@ param(
     [Alias("a")][string]$Alias,
     [Alias("i")][string]$Icon,
     [Alias("h")][switch]$Help,
+    [Alias("o")][ValidateSet("orchestrator", "lane", "research")][string]$Role = "lane",
+    [Alias("x")][string]$Workspace,
     # Anything after `--` is handed to claude untouched. The separator is required
     # because flags like -c would collide with -Dir and -r with -Rename, and PowerShell
     # would try to bind them here before they ever reach claude.
@@ -56,6 +58,32 @@ if ($Extra) {
     $extraStr = " " + (($Extra | ForEach-Object {
         if ($_ -match '\s') { "'" + $_.Replace("'", "''") + "'" } else { $_ }
     }) -join " ")
+}
+
+
+# --- pane role: context cap and label ---------------------------------------------
+# orchestrator and lane run with the context capped at 200k (CLAUDE_CODE_DISABLE_1M_CONTEXT=1);
+# research is the only uncapped role. CLAUDE_ROLE travels to the process so hooks know which
+# pane they are in (the read guard denies images only to the orchestrator).
+$roleEnvPs = "`$env:CLAUDE_ROLE = '$Role'; " + $(if ($Role -eq "research") { "Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT -ErrorAction SilentlyContinue" } else { "`$env:CLAUDE_CODE_DISABLE_1M_CONTEXT = '1'" })
+function Apply-Role {
+    $env:CLAUDE_ROLE = $Role
+    if ($Role -eq "research") { Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT -ErrorAction SilentlyContinue }
+    else { $env:CLAUDE_CODE_DISABLE_1M_CONTEXT = "1" }
+}
+$roleTag = if ($Role -eq "lane") { "" } else { "-$Role" }
+# -Workspace takes the id (w8) or the number the UI shows (5); the number is resolved here.
+function Herdr-Workspace-Args {
+    if (-not $Workspace) { return @() }
+    $id = $Workspace
+    if ($Workspace -match '^\d+$') {
+        try {
+            $ws = (herdr workspace list | ConvertFrom-Json).result.workspaces | Where-Object { [string]$_.number -eq $Workspace } | Select-Object -First 1
+        } catch { Fail "could not read the Herdr workspaces." }
+        if (-not $ws) { Fail "there is no Herdr workspace number $Workspace." }
+        $id = $ws.workspace_id
+    }
+    return @("--workspace", $id)
 }
 
 # Folders shared with the default directory. Missing ones are skipped.
@@ -204,6 +232,9 @@ function Show-Help {
     Write-Host "  -Icon <emoji>    -i      icon shown in the list and the status line"
     Write-Host "  -Delete          -d      delete the profile, removing junctions first"
     Write-Host "  -NoShare         -n      create it without linking skills or memory"
+    Write-Host "  -Role <role>     -o      orchestrator | lane (default) | research; the first two cap"
+    Write-Host "                           the context at 200k, research runs uncapped"
+    Write-Host "  -Workspace <n>   -x      with -Tab: Herdr workspace (number or id) for the new tab"
     Write-Host "  -Help            -h      this help"
     Write-Host ""
     Write-Host "Examples" -ForegroundColor Cyan
@@ -343,18 +374,20 @@ if ($isDefault) {
     }
     if (-not $Tab) {
         Remove-Item Env:\CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue
+        Apply-Role
         Set-Location $Folder
         claude @Extra
         exit 0
     }
     if ($env:HERDR_ENV -eq "1" -and (Get-Command herdr -ErrorAction SilentlyContinue)) {
-        $j = herdr tab create --cwd "$Folder" --label "cc-$defaultName" --no-focus | ConvertFrom-Json
+        $wsArgs = Herdr-Workspace-Args
+        $j = herdr tab create @wsArgs --cwd "$Folder" --label "cc-$defaultName$roleTag" --no-focus | ConvertFrom-Json
         $pane = $j.result.root_pane.pane_id
-        herdr pane run $pane "Remove-Item Env:\CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue; claude$extraStr" | Out-Null
-        Write-Host "Opened in Herdr tab cc-$defaultName (pane $pane)." -ForegroundColor Green
+        herdr pane run $pane "Remove-Item Env:\CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue; $roleEnvPs; claude$extraStr" | Out-Null
+        Write-Host "Opened in Herdr tab cc-$defaultName$roleTag (pane $pane, role $Role)." -ForegroundColor Green
         exit 0
     }
-    Start-Process powershell -ArgumentList @("-NoExit", "-Command", "Set-Location '$Folder'; claude$extraStr")
+    Start-Process powershell -ArgumentList @("-NoExit", "-Command", "Set-Location '$Folder'; $roleEnvPs; claude$extraStr")
     exit 0
 }
 
@@ -553,21 +586,23 @@ if (-not $Tab) {
     # status line shows which one, so there is no way to lose track.
     Write-Host "This window is now on account $target. Use -Tab (-w) to open separately." -ForegroundColor DarkGray
     $env:CLAUDE_CONFIG_DIR = $ProfileDir
+    Apply-Role
     Set-Location $Folder
     claude @Extra
     exit 0
 }
 
 if ($env:HERDR_ENV -eq "1" -and (Get-Command herdr -ErrorAction SilentlyContinue)) {
-    $j = herdr tab create --cwd "$Folder" --label "cc-$target" --no-focus | ConvertFrom-Json
+    $wsArgs = Herdr-Workspace-Args
+    $j = herdr tab create @wsArgs --cwd "$Folder" --label "cc-$target$roleTag" --no-focus | ConvertFrom-Json
     $pane = $j.result.root_pane.pane_id
-    herdr pane run $pane "$pre; claude$extraStr" | Out-Null
-    Write-Host "Opened in Herdr tab cc-$target (pane $pane)." -ForegroundColor Green
+    herdr pane run $pane "$pre; $roleEnvPs; claude$extraStr" | Out-Null
+    Write-Host "Opened in Herdr tab cc-$target$roleTag (pane $pane, role $Role)." -ForegroundColor Green
     exit 0
 }
 
 $title = "Claude Code  |  $target  |  $(Split-Path $Folder -Leaf)"
-$cmd = "$pre; Set-Location '$Folder'; " +
+$cmd = "$pre; $roleEnvPs; Set-Location '$Folder'; " +
        "`$Host.UI.RawUI.WindowTitle = '$title'; " +
        "Write-Host 'Account: $target' -ForegroundColor Cyan; Write-Host ''; " +
        "claude$extraStr"

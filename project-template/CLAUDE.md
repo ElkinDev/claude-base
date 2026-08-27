@@ -120,3 +120,7 @@ All project-specific facts live in `CLAUDE.project.md`. Read it. If it is missin
 profile from the base `project-template/profiles/` over it and fill in the blanks. Optional
 stack addenda (for example the T-SQL rules for a SQL Server project) live in the base `docs/`; keep
 only the ones the project uses.
+
+## Compaction instructions
+
+When this conversation is compacted, the summary must keep verbatim: the acceptance list of the work in flight; every decision taken and every ruling from the owner, quoted; the next step and who owns it; the path of `NOTES.md` in each worktree touched and of the session brief; the branch and tip of every worktree touched; the last gate verdict; every ban in force. Drop tool outputs, build logs and intermediate reasoning: the files are the record, not the summary.
