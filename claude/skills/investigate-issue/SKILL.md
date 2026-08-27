@@ -1,6 +1,6 @@
 ---
 name: investigate-issue
-description: Investigate test failures, crashes, timeouts, or bugs using facts from logs and saved output. Use when tests fail, something behaves unexpectedly, timeouts occur, or the user reports a bug. NO GUESSING - only facts from evidence.
+description: Investigate test failures, crashes, timeouts, or bugs using facts from logs and evidence only. Use when tests fail or behavior is unexpected.
 ---
 
 # Issue Investigation Protocol

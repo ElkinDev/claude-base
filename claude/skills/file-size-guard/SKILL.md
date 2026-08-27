@@ -1,6 +1,6 @@
 ---
 name: file-size-guard
-description: Enforce file size limits when creating or editing files. Use when writing code, creating files, or when files approach 300 lines. Maximum 300 lines per file.
+description: Enforce a 300-line file size limit. Use when creating or editing files, or when a file approaches the limit.
 ---
 
 # File Size Guard - 300 Line Limit

@@ -1,60 +1,120 @@
 ---
 name: wave-orchestration
-description: Run a project as an orchestrator conducting a band of implementer agents (waves) under a token-economy regime, with red-first gates, machine-readable evidence, a regression ledger, and an optional zero-cost local model for night QA. Use when coordinating multi-agent autonomous work on a codebase, when agent spend must stay proportional to progress, or when the user asks for the wave/band way of working.
+description: Law sheet for running a band of implementer agents: dispatch, lane conduct, gates under one build mutex, union merges, evidence and token economy.
 ---
 
 # Wave orchestration
 
-One orchestrator conducts; implementer agents (waves, or lanes) build; scripts and gates verify; a local model collects for free at night. The system exists to convert tokens into merged, verified work at the highest possible ratio, and every rule below was paid for by a failure that taught it.
+Every line below is a law. Cite laws by their words in briefs; never paraphrase one.
 
-## Roles
+## Dispatch and briefs
 
-- **Orchestrator** (the strongest model available): decides, briefs, verifies, merges, pushes, talks to the owner. Never implements at length while lanes are free to do it, never believes a lane's prose without checking the artifacts.
-- **Implementer lanes** (strong-tier subagents): one ticket cluster each, own git worktree, own branch, red-first, gate before reporting. Route models by VERIFICATION COST, not task size: a cheaper model is only cheaper when the gate can prove its work mechanically; if correctness needs the orchestrator reading code, the supervision cost eats the saving.
-- **Local model** (optional, zero quota): collectors and low-stakes judgment over FILES that scripts gathered. Its findings NEVER become tickets without a cheap verification pass (grep, bench, source read); expect a high noise rate and design for it.
-- **Scripts** (zero tokens, deterministic): everything scriptable is scripted: gates, collectors, cleanups, guards. An agent doing what a script can do is waste.
+- The orchestrator owns dispatch, sequencing, merging, pushing and every conversation with the owner.
+- Every brief opens with the token law: never wait alive, never narrate, report raw data.
+- Briefs point at ticket ids, file paths, law names and the canonical gate script; they never paraphrase a law and never paste what the lane can read itself.
+- Every brief carries the root cause the orchestrator already knows, plus the worktree, the branch, the acceptance list and the exit-file path.
+- Every brief names the test task of every module the lane may touch, and the lane adds a phase for any module it ends up touching.
+- After any compaction, restart or account switch the orchestrator re-reads this sheet before dispatching or resuming.
+- Continuation is a message to the same agent; the orchestrator's context is never forked, and a fresh agent that re-reads the repo never continues live work.
+- Stopped agents never resume: recover with a fresh lane per worktree briefed on disk truth, never relaunching over uncommitted work, and order every lane to commit and write a partial report before a planned cutover.
+- One feature implementation lane at a time; the rest of the band takes work that does not need the build mutex, such as specs, mockups, analysis, reviews, docs and scripts.
+- The band is three to five lanes on the primary account when the approved queue feeds them; a secondary account runs one lane on simple tasks and stays well inside its quotas.
+- Zero lanes on an empty queue is the correct state; idle-filling is banned, and the band is called full only after enumerating the mutex-free work classes.
+- Orchestrator and lanes run with a capped context and only a research role runs uncapped; agent panes start one at a time and never steal the owner's focus or split the owner's pane.
 
-## The band
+## Lane conduct
 
-3 to 5 lanes WHEN the approved queue feeds them and three waste conditions hold: no output nobody reads, no reprocessed bugs, no relaunched contexts. Zero lanes on an empty queue is the correct state, never idle-filling. On every lane-completion notification the orchestrator launches the next approved item before anything else. No polling or clock wake-ups; wake on terminal signals only.
+- Agents never wait alive: launch long work from your own session and end the turn.
+- Waiting for a mutex or any slow condition is one blocking foreground call, repeated silently; turn-polling a wait is banned.
+- While a gate runs, bank the next scope item it does not compile, and end the turn only when nothing remains doable without the verdict.
+- Never pause with an uncommitted tree: commit the checkpoint first, then wait.
+- Every lane keeps a notes file in its worktree with goal, acceptance list, done and next, and checkpoints it well before its turn budget runs out.
+- No narration: no status pings, no per-phase messages, no waiting messages.
+- A lane ends its turn at most twice per gate, one interim naming the exit file and one final report; interims are at most five lines and only for a decision, a flag or error, or a checkpoint before sleeping on a queued gate.
+- The final report is at most ten lines plus pointers to the exit file, the test results and the diff stat; forensics go to the exit file or the notes file, never into a message.
+- Red before green: prove the defect against the pre-change tree before the fix lands.
+- Prove the red by snapshot and checkout, never by a stash, whose ref is shared across worktrees.
+- Restore the tree before releasing the lock on every exit path, and abort the gate when the restore fingerprint does not match.
+- Style pass before any gate: run the touched modules' formatter and linter checks in one acquisition and fix the whole report set in one pass.
+- Read every report file in one pass rather than iterating gate runs, and count a report only when its writing task ran in this gate and its mtime falls inside this run's window.
+- Every scripted edit asserts its match count, that the file hash moved, and that the intended new text is literally present.
+- Never pass a replacement carrying a dollar sign or backslashes through a shell into a regex engine; write the edit to a file or use the editing tool, and detect each file's newline style first on a mixed-ending tree.
+- Scripts and analysis run from a private per-lane scratch directory, never writing a bare standard-library module name where an interpreter runs.
+- A lane verifies another lane's finding against code and version control before building on it; helpers coordinate through worktree files, and a helper that refuses a peer's git order because its brief reserves git to its parent is correct.
 
-## Token economy (the sealed contract)
+## Gates
 
-1. **Report contract**: a lane's final message is at most 10 lines plus pointers (exit file, test-results XML, diff stat). Long prose is reserved for FLAG, ERROR, or a decision the orchestrator must take. The verification standard does not drop; the MEDIUM changes: the orchestrator verifies from machine-readable artifacts, not narrative.
-2. **Briefs point, never paste**: ticket ids, file paths, law names. The lane reads what it needs. Delegate broad reading to a search subagent that returns conclusions, keeping file dumps out of every long-lived context.
-3. **Measure**: record each lane's token usage (the harness reports it per completed agent) in a worklog; set budgets; review the burn against progress. Optimization claims without measurement are guesses. Note the account's remaining quota at session open and close.
-4. **Continue, do not respawn**: message a live or completed lane to extend it (it keeps its context); a fresh spawn re-pays the whole fixed context. Never fork the orchestrator's own context into a lane.
-5. **One session per work block**: long orchestrator sessions pay repeated compaction; resume from memory/worklog files instead. One canonical record per audience (an owner board, a repo intake); other documents link rather than repeat.
-6. **Artifacts once**: build release artifacts once per cut, AFTER device or end-to-end verification reports zero holds. A discarded upload can still consume a version number.
+- Gates run through the canonical gate script; hand-rolled wrappers are banned.
+- A gate that fits inside the foreground tool ceiling runs foreground at the maximum timeout; anything longer launches detached, and the orchestrator owns the wake.
+- Harness-tracked background gates, custom watchers and agent-armed monitors are banned as wake mechanisms; a monitor may supplement, never substitute.
+- Gate scripts use absolute paths, each run gets its own immutable script and its own exit file truncated at start with every line naming the run, and a script that is executing is never edited.
+- The verdict is the exit file plus the phase log, read from the file and never through a pipe; an exit code with no log proves nothing.
+- The final exit line folds the worst phase, readers read the phase lines rather than the last line alone, and a disagreement between the exit code and the build's own word resolves red in both directions.
+- A harness reporting that nothing failed must first prove the work ran: executed test counts, the build's own executed-task line, or the phase log's evidence.
+- A phase that fails in seconds is a spawn, filter or environment error until proved otherwise, and a test filter containing spaces matches nothing.
+- A compile red is not the assertions firing; read which task failed before calling a red intended.
+- The compile phase builds every test source set the gate will run, compile and lint phases keep going past the first failure, each linter runs as its own phase, and expensive test phases are skipped on a compile red while text-level lint still runs in the same acquisition.
+- Every test phase runs under a timeout above its contended duration, and on expiry a thread dump of the worker is taken before the kill.
+- Every gate exports its toolchain environment inline, including the runtime's bin directory on PATH when a phase spawns one.
+- Lane gates are light pre-gates (compile, lint, the lane's module tests, its new cross-cutting classes by filter) and never the full suite; two consecutive union reds from one lane revoke its light pre-gate for the next wave.
+- The application-module phase is never a substitute for the library modules' own tests.
+- A gate that mutates the tree runs its tests with the build cache disabled and proves the change in the compiled output; a wave that adds or changes a static-analysis rule runs that phase without a resident daemon and records the loaded rule set as a phase line.
+- One machine-wide build mutex, taken by atomic mkdir, polled every one to two seconds, bounded, exiting on its own starvation code, logging one waiting line per poll.
+- The holder record is one atomic line naming run, pid, log and epoch, written to a fixed pair of filenames and refreshed by a beater that dies with the script and checks its parent each tick.
+- A fresh beat alone is never evidence of work, and every helper or heartbeat pid is killed explicitly before any exec.
+- Traps cover normal exit and every catchable stop, kill the gate's own build child before releasing, and a signalled gate exits instead of resuming; release only after confirming the record still names this pid, and a failed ownership match is a loud error, never a silent skip.
+- A lock is broken only on positive evidence of absence of work: the newest mtime across record, beat, main log and phase logs older than the longest phase by a wide margin, seen twice a minute apart.
+- An unreadable record means live, every guard defaults fail-safe, and no break rests on age alone, on the main log alone, or on any process-id evidence, which crosses shells unreliably.
+- A silent log is not a dead process, so signal and probe rather than kill a holder with a build behind it, and after any eviction or gentle stop kill the build daemons and clean the touched module build dirs before relaunching.
+- A shared physical test device has its own lock, taken before any command reaches it; the owner preempts, personal devices are never touched, and no agent leaves the device in a state nobody can undo.
 
-## Gates and worktrees
+## Merge and union
 
-- Every lane works in its own worktree from the current main tip; the orchestrator merges. **Merge closes the worktree in the same step**: remove worktree, delete branch, VERIFY the directory left the disk (on Windows, long build paths defeat rmdir; retry with `rm -rf`, and a daemon-locked file waits for the daemon, not for `--force`). A cleanup script that only touches clean, merged trees runs as a backstop. A dirty worktree is never cleaned by automation; it is triaged by name.
-- Gates run detached (`nohup ... &`) under a single machine-wide build mutex (mkdir-atomic directory lock with an owner record refreshed on a beat); phases run under timeouts with `--continue`; every exit line names its run; the final gate verdict folds the worst phase. Verify from the exit file and the test XML, never from the build's last word.
-- **Red-first**: every fix proves the defect on the shipped bytes before the fix makes the test pass. A guard that cannot fail is decoration; prove the red by running the new pin against the pre-change tree (snapshot and restore, never stash on a shared repo).
-- Lanes run the formatter and linter over THEIR touched files before requesting the gate; one over-long line costs a whole extra gate acquisition.
-- **Light pre-gates, one arbiter**: a lane's own gate stays light (compile, lint, its module tests, its NEW cross-cutting test classes by filter); the FULL suite plus visual goldens run once per batch in the orchestrator's union before the push, with an overnight full mirror as the third net. A union red is routed back to the owning lane by message with the failing-test pointer; two consecutive union reds from one lane revoke its light pre-gate. When CI is unavailable or rationed, that union is the sole arbiter and every push carries a tip that suppresses CI (e.g. `[skip ci]`); a pre-push hook enforcing identity and the tip rule prevents the two expensive mistakes.
+- Merge the batch first, then run one union over it, then resume by message the single lane a real failure belongs to.
+- The union is the arbiter: the full suite and the visual baselines run there once per batch, orchestrator-owned with no agent alive behind it, never skipped, and with the build cache disabled after merging any wave that mutated its own tree.
+- Never merge into a checkout a union is building from; stop that gate gently, merge, then relaunch one union over the batch.
+- Merge conflicts are resolved by the orchestrator by hand, in one pass, keeping both waves' intent.
+- A registry collision is not resolved until every list that enumerates the registry carries both sides.
+- A schema branch writes its migration as head to head plus one and renumbers it mechanically at rebase.
+- Before accepting a green, check the lane's exit-file phases against its diff stat and the diff against the claimed scope; a module in the diff with no phase is an unverified lane, and a delivery claim without diff evidence reopens as work.
+- A union red names its test and goes back to the owning lane with the failing result pointer.
+- Merge closes the worktree in the same step: remove the worktree, delete the branch, and verify the directory left the disk.
+- Remnant cleanup enumerates only directories the worktree list does not show, one by one; globbing the worktree prefix is banned and a worktree with uncommitted work is never cleaned by automation.
+- Every worktree is seeded with its ignored local configuration and credential files before its first build.
+- Format runs are scoped to the failing module, a repo-wide format is never staged, and real changes are isolated with a diff that ignores end-of-line differences.
+- While CI is rationed or unavailable every pushed tip carries the marker that suppresses it, and such a marker never sits above unpushed code.
+- A deploy carrying a server-side entitlement change is ordered: precondition data, then the server, then the client, then any default flip, and the order is stated in the batch's deploy note.
 
-## Verification (anti-hallucination law)
+## Close and evidence
 
-The orchestrator verifies every load-bearing claim before it shapes a decision: cites are opened, greps are re-run, arithmetic is reproduced. A lane asserting something "from memory" about an external system (an OS constant, a store policy, an API) verifies it against the source, not recollection. Findings from any model, local or premium, are a MAP, never evidence.
+- Landings and owner-facing artifacts live in one owner-facing location; the agent scratchpad stays internal.
+- Pending work lives in one owner-facing backlog file, updated at every band close and every owner decision.
+- Release artifacts are built once per cut after verification reports zero holds, staged once with a checksum sidecar, uniquely named and never overwritten.
+- Every shippable binary passes its integrity probe before install or handoff.
+- Visual baselines mount the real production component, never a scaffold copy of its layout.
+- A change confined to a small region is proved by a region frame or a strict comparator, never by a full frame under a percentage budget, and a colour-only change is proved by a palette census.
+- A baseline that renders relative time anchors its fixture instant to the run, mid-bucket.
+- After any record pass, every pre-existing baseline is compared against its committed bytes in version control and restored unless the change deliberately targets it; movement is judged on decoded pixels, never on file bytes.
+- Baselines whose surface animates are restored from committed bytes after any record and shown byte-identical in the gate evidence.
+- A re-recorded baseline is eyeballed against the previous one and against the state the test names in its own words.
+- An absence assertion reads the unmerged tree and sits beside a positive sibling proving the finder can see the node when present.
+- A test hands fresh state per mutation exactly as production does, a scroll or reveal claim asserts the measured offset, and a scenario that depends on an absent or unanswered input asserts that premise inside the test.
+- Restore, never rewrite, an assertion that pins an approved design, and read its history before trusting the red.
+- Promoting a string to a shared module carries every locale verbatim, and a permission widening lands its rules before the code that needs them.
+- Device fixtures are seeded through the data layer with the app stopped, and the app is launched by component, never through the launcher.
+- Structural features are design-first with an approved spec before code while small curated fixes stay on the fast lane, and a defect seen twice earns a ledger row and a standing guard before new work lands in its area.
 
-## Regression ledger
+## Economy and context
 
-A defect seen TWICE gets a ledger row (pattern, canonical case, standing guard) and a guard ticket BEFORE new feature work lands in its area. Wave briefs cite the rows of the area they touch; reintroducing a rowed pattern is a FLAG, not a report line. A row with no standing guard is a ticket, not a record.
+- The orchestrator verifies every load-bearing claim from machine-readable artifacts before it shapes a decision; lane reports are evidence, not truth.
+- The orchestrator never reads images, never opens a browser and never reads raw build output; a hook stores it and returns a digest.
+- The orchestrator's heartbeat sweeps disk truth, wakes lanes with facts (branch tip, dirty count, exit-file verdict) and never narrates no-ops.
+- Wake on terminal lines only, never on per-phase lines and never on a clock.
+- An idle watchdog runs whenever lanes are in flight, the owner is never the one who notices dead air, and lanes from a closed train are stopped so their rows cannot revive on stale monitors.
+- Each lane's token figure goes into the worklog; optimization claims without measurement are guesses.
+- Everything scriptable is scripted; an agent doing a script's work is waste.
+- Third-party harnesses never run on the subscription's quota, and a local model's verdicts never gate a decision without a cheap verification.
+- Read the machine clock before scheduling anything.
+- Artifacts are written in the project's declared artifact language, and nothing carries em-dashes, tool attribution or person names.
 
-## Owner interaction
-
-Decide everything decidable (precedent, house law, reversible default) and log it for veto; only genuine product-taste calls reach the owner, numbered, each with a recommendation. When the owner reports a field round, triage EVERY item into a numbered document (bug lanes, small queue, design queue, answers) before implementing any of it. Design-first for structural features: analysis and an approved spec or mockup before code; small curated fixes stay on the fast lane.
-
-## Device bench (if the project has one)
-
-One physical test device, one mkdir-atomic lock every session must take before any command reaches it; the device is always addressed by serial; personal devices are never touched. Restore every setting changed; leave the device in a known state; screenshots and dumps are the evidence. Before diagnosing any anomaly, verify WHICH build is installed (update time plus a hash of the pulled binary).
-
-## Local-model night QA (optional)
-
-A scripted harness drives the device or the checkout and SAVES files; the local model judges the files against a fixed rubric with structured, greppable verdict lines, uncertainty marked explicitly; a run window (for example 20:00-07:00) protects daytime machine performance. The morning pass is one orchestrator read: verify the survivors cheaply, discard the noise, lane what remains. Two hard-won calibrations: have the harness read the device's REAL resolution before computing taps, and dedupe repeated findings across missions before the report.
-
-## Evolution log
-
-When a failure teaches a law, append it to the project's protocol skill the same day, dated, with the failure named. The protocol is alive; this file is its portable seed.
+When a failure teaches a law, add the law here and its reasoning to the project's own protocol history; this sheet stays laws only.

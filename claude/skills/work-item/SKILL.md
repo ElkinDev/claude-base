@@ -1,6 +1,6 @@
 ---
 name: work-item
-description: Read a work item or issue from the project's tracker and reconcile the git branch to it (one branch per task). Use when a message names an item id, asks to look up an issue, or asks to align/create the branch for a task. The tracker (Azure DevOps, Jira, or plain git with no tracker) comes from the project profile. In Spanish, also trigger on "la tarea/issue NNNN", "mira el ticket", "alinea/crea la rama". Read-only on the tracker; it hands off comment/update text and never posts.
+description: Read a work item from the project's tracker (Azure DevOps, Jira, or git) and align the git branch to it. Read-only; hands off updates.
 ---
 
 # Work item

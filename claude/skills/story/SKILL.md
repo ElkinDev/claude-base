@@ -1,6 +1,6 @@
 ---
 name: story
-description: Single entry point for taking on a work item and driving it through the full delivery pipeline (branch, plan, TDD, quality gates, end-to-end and automation tests, definition of done, evidence). Use when starting real work on a task, not a trivial edit. Triggers, EN "let's start / take on / kick off / pick up story|work item NNNN", "new story NNNN". In Spanish, also trigger on "arranquemos / tomemos / iniciemos / hagamos la story|historia|tarea NNNN", "nueva story NNNN". Also invocable as /story NNNN. It orchestrates the existing skills and keeps every STOP gate; for a one-off work-item lookup or branch alignment only, use work-item directly instead.
+description: Single entry point that drives a work item through branch, plan, TDD, quality gates, and evidence. Use when starting real work on a task.
 ---
 
 # Story

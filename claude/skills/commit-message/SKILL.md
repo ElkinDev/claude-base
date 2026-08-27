@@ -1,6 +1,6 @@
 ---
 name: commit-message
-description: Compose a Conventional Commits message (type(scope): subject, 50-char title, continuous-line body) from the staged diff and hand it off as text. Use when preparing a commit or when asked for a commit message. In Spanish, also trigger on "mensaje de commit", "arma/prepara el commit", "como quedaria el commit", "el commit". Never runs git commit unless the project allows it; never adds AI attribution.
+description: Compose a Conventional Commits message from the staged diff and hand it off as text. Use when preparing a commit.
 ---
 
 # Commit Message - Conventional Commits, 50-char title, continuous-line body

@@ -1,6 +1,6 @@
 ---
 name: subagent-delegation
-description: Delegate heavy or parallelizable work to subagents to keep the main context lean. Use when a task needs broad codebase search, multi-file reading, or several independent investigations whose file dumps would bloat the working context. Not for single-file edits or work that needs the full conversation.
+description: Delegate heavy or parallelizable work to subagents to keep the main context lean. Use for broad searches or multi-file reads.
 ---
 
 # Subagent Delegation

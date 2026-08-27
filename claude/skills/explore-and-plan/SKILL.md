@@ -1,6 +1,6 @@
 ---
 name: explore-and-plan
-description: Front-end for new or non-trivial work. Explore the real code, frame the problem, propose 2-3 approaches with tradeoffs and a recommendation, get alignment, then hand off to TDD. Use before building a feature or a change whose approach is not yet clear. In Spanish, also trigger on "crea un plan", "planifica", "analiza la tarea/story", "como encararias". Not for trivial edits or already-specced work.
+description: Explore real code, frame the problem, and propose approaches with tradeoffs before handing off to TDD. Use before non-trivial work.
 ---
 
 # Explore and Plan

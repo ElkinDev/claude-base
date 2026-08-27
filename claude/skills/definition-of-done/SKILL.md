@@ -1,6 +1,6 @@
 ---
 name: definition-of-done
-description: Verify work is truly complete before declaring done. Use when user asks "is it done?", "is it complete?", "finished?", or when about to say "implementation complete". In Spanish, also trigger on "ya esta?", "esta listo/terminado?", "cerramos?", "damos por hecho?". Checks all 7 mandatory checkboxes.
+description: Verify work is truly complete against seven mandatory checkboxes. Use when asked if it is done or finished.
 ---
 
 # Definition of Done - MANDATORY CHECKLIST

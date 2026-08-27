@@ -1,6 +1,6 @@
 ---
 name: spec-first-debug
-description: When ANY test fails (unit, integration, e2e), follow this workflow before touching code or tests. The canonical spec is the source of truth; a local spec file may have drifted. Never rig, never guess, never re-run a failing test as "transient" without a spec-grounded diagnosis. Use any time a test fails or behavior diverges from expectation.
+description: Follow spec-first debugging before touching code when any test fails; the canonical spec is the source of truth, never guess.
 ---
 
 # Spec-first debugging: the spec is the source of truth

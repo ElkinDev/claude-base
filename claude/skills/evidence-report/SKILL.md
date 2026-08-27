@@ -1,6 +1,6 @@
 ---
 name: evidence-report
-description: Generate and keep current a structured evidence pack (evidence.md, session.md, pr-comment.md) for the active task. Use when wrapping up or nearing the commit/PR, on "done", "finished", "wrap up", "generate evidence", or when producing the commit message or PR comment. In Spanish, also trigger on "listo", "terminé", "ya casi", "cerca del commit", "genera/deja la evidencia", "dame el commit", "armemos el PR". Create the folder early and keep it updated as the task progresses; do not wait for an explicit "done".
+description: Generate and keep current a structured evidence pack for the active task. Use when wrapping up, nearing commit or PR, or asked for evidence.
 ---
 
 # Evidence report

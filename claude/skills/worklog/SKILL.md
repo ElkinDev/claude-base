@@ -1,6 +1,6 @@
 ---
 name: worklog
-description: Maintain the cross-session worklog (per-task state + session summaries) so any session or worktree catches up cheaply, without re-reading the transcript. Use on "/worklog ...", and proactively save before asking a blocking question, on branch switch, and at milestones. In Spanish, also trigger on "guarda el worklog", "registra donde vamos", "retomemos la tarea".
+description: Maintain a cross-session worklog so any session or worktree resumes cheaply without re-reading the transcript. Save proactively at milestones.
 ---
 
 # Worklog

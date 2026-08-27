@@ -1,6 +1,6 @@
 ---
 name: session-handover
-description: Create handover notes for session continuation. Use at end of session or when preparing for restart.
+description: Create handover notes for session continuation. Use at the end of a session or before a restart.
 ---
 
 # Session Handover

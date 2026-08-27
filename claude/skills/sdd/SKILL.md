@@ -1,6 +1,6 @@
 ---
 name: sdd
-description: Spec-driven orchestrator for spec-governed work, greenfield projects, whole features, and autonomous multi-step builds driven by a written docs/ spec structure. It reads the specs (product, requirements, architecture/ADRs, features, plan/sprints), implements strictly to them via implementer/designer agents, and validates every deliverable against the feature spec and the sprint definition of done. Use for spec-driven, new-project, or autonomous work. Triggers, EN "spec-driven / SDD mode / new project / autonomous build". In Spanish, also trigger on "modo sdd / spec-driven / arranquemos el proyecto / construccion autonoma". Also invocable as /sdd. For a single task tied to a story or ticket, use /story instead.
+description: Spec-driven orchestrator that implements strictly from docs/ specs and validates every deliverable. Use for spec-driven, greenfield, or autonomous multi-step builds.
 ---
 
 # SDD (spec-driven development)

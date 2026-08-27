@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Audit test results against business rules and source code. Use when the user says "audit", pastes test results, or asks to review test failures. MUST be evidence-based. NO GUESSING.
+description: Audit test results against business rules and source code, evidence-based only. Use when asked to audit or review test failures.
 ---
 
 # Audit: Evidence-Based Test Result Analysis

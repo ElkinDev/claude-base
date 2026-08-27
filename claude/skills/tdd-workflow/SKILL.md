@@ -1,6 +1,6 @@
 ---
 name: tdd-workflow
-description: Enforce TDD workflow when implementing features, fixing bugs, or writing code. Use when user says "implement", "add feature", "create", "fix", "build". In Spanish, also trigger on "implementa", "crea", "haz", "construye", "arregla", "desarrolla". Ensures Spec -> Test -> Implement -> Verify cycle.
+description: Enforce the Spec, Test, Implement, Verify cycle when implementing features, fixing bugs, or writing code.
 ---
 
 # TDD Workflow

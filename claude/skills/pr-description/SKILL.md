@@ -1,6 +1,6 @@
 ---
 name: pr-description
-description: Compose a pull request TITLE and DESCRIPTION (Conventional Commits title + why-first body) from the branch diff and hand them off as text. Use when preparing a PR. In Spanish, also trigger on "arma el PR", "descripcion del PR", "titulo del PR", "el pull request". Never opens or sets a PR unless the project allows it; never adds AI attribution.
+description: Compose a PR title and description from the branch diff and hand them off as text. Use when preparing a pull request.
 ---
 
 # Pull Request - title + description (clean-code standard)

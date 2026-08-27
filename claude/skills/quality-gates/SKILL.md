@@ -1,6 +1,6 @@
 ---
 name: quality-gates
-description: Run the project's quality gates (format, types, lint, build, tests). ALL must pass before declaring done. In Spanish, also trigger on "valida", "corre los checks", "pasa los gates", "esta listo para PR". Use "no tests" to skip the test gate.
+description: Run the project's quality gates, format, types, lint, build, and tests, before declaring work done or ready for PR.
 ---
 
 # Quality Gates - ALL MUST PASS
