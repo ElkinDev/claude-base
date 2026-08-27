@@ -2,3 +2,10 @@
 # fixture tests, so they stay LF on every checkout, on Windows as well.
 claude/hooks/** text eol=lf
 project-template/scripts/hooks/** text eol=lf
+*.py text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+*.ps1 text eol=crlf
