@@ -1,0 +1,10 @@
+{
+  "session_id": "22223333-4444-5555-6666-777788889999",
+  "prompt_id": "ffff1111-2222-3333-4444-555566667777",
+  "transcript_path": "{FIXTURES}/session-transcript.jsonl",
+  "cwd": "{TMP}",
+  "hook_event_name": "TaskCompleted",
+  "task_id": "7766554433221100",
+  "task_subject": "Day 0 step 7: landing hooks, the board and the session audit",
+  "task_description": "the description must not win over the subject"
+}

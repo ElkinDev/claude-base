@@ -60,6 +60,15 @@
             "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\.claude\\hooks\\worklog-snapshot.ps1\""
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/session-audit-hook.py\"",
+            "timeout": 60
+          }
+        ]
       }
     ],
     "Stop": [
@@ -68,6 +77,15 @@
           {
             "type": "command",
             "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\.claude\\hooks\\worklog-snapshot.ps1\""
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/landing.py\"",
+            "timeout": 20
           }
         ]
       }
@@ -92,6 +110,29 @@
             "type": "command",
             "command": "python \"%USERPROFILE%/.claude/hooks/alarm-big-result.py\"",
             "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/landing.py\"",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/landing.py\"",
+            "timeout": 20
           }
         ]
       }

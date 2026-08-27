@@ -1,0 +1,10 @@
+{
+  "session_id": "55554444-3333-2222-1111-000099998888",
+  "prompt_id": "eeee1111-2222-3333-4444-555566667777",
+  "transcript_path": "{FIXTURES}/session-transcript.jsonl",
+  "cwd": "{TMP}",
+  "permission_mode": "bypassPermissions",
+  "hook_event_name": "Stop",
+  "stop_hook_active": true,
+  "last_assistant_message": "a blocked turn must never land"
+}

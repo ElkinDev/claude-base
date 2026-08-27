@@ -1,0 +1,10 @@
+{
+  "session_id": "33334444-5555-6666-7777-888899990000",
+  "prompt_id": "aaaa2222-3333-4444-5555-666677778888",
+  "transcript_path": "{FIXTURES}/session-transcript.jsonl",
+  "cwd": "{TMP}",
+  "hook_event_name": "TaskCompleted",
+  "task_id": "1100223344556677",
+  "task_name": "Union of the four landed branches",
+  "task_description": "the description must not win over the name"
+}

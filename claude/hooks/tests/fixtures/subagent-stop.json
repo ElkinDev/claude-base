@@ -1,0 +1,13 @@
+{
+  "session_id": "11112222-3333-4444-5555-666677778888",
+  "prompt_id": "cccc1111-2222-3333-4444-555566667777",
+  "transcript_path": "{FIXTURES}/session-transcript.jsonl",
+  "cwd": "{TMP}",
+  "permission_mode": "bypassPermissions",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_id": "abcdef1234567890",
+  "agent_type": "general-purpose",
+  "agent_transcript_path": "{FIXTURES}/agent-transcript.jsonl",
+  "last_assistant_message": "fallback text that must not be used"
+}

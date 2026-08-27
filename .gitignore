@@ -20,3 +20,5 @@ session.json
 .claude.json
 .sync-source.json
 .claude-accounts/
+__pycache__/
+*.pyc

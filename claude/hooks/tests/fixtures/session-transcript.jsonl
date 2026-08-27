@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"Finish the wave."}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Wave closed. Two files written and the gate is queued."}]}}

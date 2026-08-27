@@ -1,0 +1,10 @@
+{
+  "session_id": "99998888-7777-6666-5555-444433332222",
+  "prompt_id": "dddd1111-2222-3333-4444-555566667777",
+  "transcript_path": "{FIXTURES}/session-transcript.jsonl",
+  "cwd": "{TMP}",
+  "permission_mode": "bypassPermissions",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "fallback text that must not be used"
+}
