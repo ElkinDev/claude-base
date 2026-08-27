@@ -1,0 +1,87 @@
+{
+ "root": "C:\\Users\\dev\\.claude\\projects",
+ "generated_at": "2026-08-27T18:43:23.452Z",
+ "by_project": {
+  "C--Repo": {
+   "sessions": 3,
+   "api_calls": 3477,
+   "input_tokens": {
+    "uncached": 67740,
+    "cache_create": 24923347,
+    "cache_read": 632522432,
+    "total": 657513519,
+    "pct_cached": 96.2
+   },
+   "output_tokens": 2261916,
+   "cache_breaks_over_100k": 50
+  },
+  "C--Repo-myapp-b01": {
+   "sessions": 1,
+   "api_calls": 93,
+   "input_tokens": {
+    "uncached": 186,
+    "cache_create": 829816,
+    "cache_read": 69628619,
+    "total": 70458621,
+    "pct_cached": 98.8
+   },
+   "output_tokens": 68187,
+   "cache_breaks_over_100k": 1
+  },
+  "C--Repo-thirdapp": {
+   "sessions": 1,
+   "api_calls": 342,
+   "input_tokens": {
+    "uncached": 2491,
+    "cache_create": 1816146,
+    "cache_read": 62164526,
+    "total": 63983163,
+    "pct_cached": 97.2
+   },
+   "output_tokens": 61823,
+   "cache_breaks_over_100k": 3
+  }
+ },
+ "cache_breaks": [
+  {
+   "ts": "2026-08-26T19:31:33.383Z",
+   "session": "df7316a8-1a5f-41b5-9d91-30b8c91033ec",
+   "project": "C--Repo-myapp-r8",
+   "uncached": 709163,
+   "total": 709163,
+   "kind": "main"
+  },
+  {
+   "ts": "2026-08-26T19:31:28.671Z",
+   "session": "7925656b-3375-447a-a194-d743744ee175",
+   "project": "C--Repo-myapp-b01",
+   "uncached": 700340,
+   "total": 700340,
+   "kind": "main"
+  },
+  {
+   "ts": "2026-08-26T19:31:21.575Z",
+   "session": "0b0f8db2-6b0f-4e81-9afb-16e2015333d0",
+   "project": "C--Repo",
+   "uncached": 685044,
+   "total": 685044,
+   "kind": "main"
+  },
+  {
+   "ts": "2026-08-27T15:56:39.852Z",
+   "session": "4a512d43-6a7c-4edd-a9f1-969777b2e888",
+   "project": "C--Repo",
+   "uncached": 510883,
+   "total": 544591,
+   "kind": "main"
+  },
+  {
+   "ts": "2026-08-27T02:26:23.664Z",
+   "session": "0b0f8db2-6b0f-4e81-9afb-16e2015333d0",
+   "project": "C--Repo",
+   "uncached": 443830,
+   "total": 464161,
+   "kind": "subagent"
+  }
+ ]
+}

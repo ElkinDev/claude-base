@@ -8,6 +8,12 @@ is left to optimize. The other inputs are the gate exit files the lanes write,
 `landings.md`, the field reports the owner files after a handoff,
 `ledger/meters-log.csv` and `ledger/tool-sizes.csv`.
 
+The two context KPIs `ledger-day.py` computes per session, compactions with
+their peak and floor and the characters the session writes per Agent launch,
+are pooled over the sessions of each side and printed in the optimize list, each
+with the one-line reading of what to cut. A baseline frozen before those KPIs
+existed carries no `context` block, and the cells then read `n/m`.
+
 Attribution: the current side counts only the sessions that started at or after
 the cap start, plus the ones the config names; every other session of the same
 window goes to a `pre-cap` row that is printed, never dropped, so the day's
@@ -82,6 +88,8 @@ DEFAULTS = {
 
 REOPEN_RE = re.compile(r"-r([2-9])'")
 BRANCH_RE = re.compile(r"Merge branch '([^']+)'")
+CHARS_PER_TOKEN = 4.0
+
 LEVER = {
     "forks": "F8, forks banned as readers",
     "status": "F9, status is a file, not an agent",
@@ -90,6 +98,8 @@ LEVER = {
     "cache": "F10, no account or model switch inside a session",
     "lane_ctx": "F1 and F3, 200k cap and 80-turn lanes",
     "model_mix": "section 19, Sonnet and Opus per task",
+    "compactions": "trim the compaction carry-over, hand work off before the cap",
+    "writing": "briefs by file path, not inline",
     "tool_results": "F5, no whole reads of large files",
 }
 
@@ -369,6 +379,25 @@ def measure(rep, cfg, cap_start, sessions=None, label="window"):
     merges = rep.get("features") or []
     reopened = [f for f in merges if REOPEN_RE.search(f.get("subject", ""))]
 
+    # The context KPIs of ledger-day: pooled over the side's sessions, from the
+    # raw per-session lists so the median and the p90 are the side's own and
+    # never an average of averages. A baseline frozen before the KPIs existed
+    # has no `context` block, and every field below then reads zero or None.
+    ctx_events, launch_chars, notif_chars = [], [], []
+    written_chars = result_chars = 0
+    ctx_seconds = 0.0
+    for entry in chosen:
+        ctx = entry.get("context") or {}
+        ctx_events.extend(ctx.get("events") or [])
+        launch_chars.extend(ctx.get("launch_chars") or [])
+        notif_chars.extend(ctx.get("notif_chars") or [])
+        written_chars += ctx.get("written_chars", 0)
+        result_chars += ctx.get("result_chars", 0)
+        ctx_seconds += ctx.get("active_seconds") or 0.0
+    ctx_hours = ctx_seconds / 3600.0
+    ctx_peaks = [e.get("peak", 0) for e in ctx_events if e.get("peak")]
+    ctx_floors = [e.get("floor", 0) for e in ctx_events if e.get("floor")]
+
     peaks = [a.get("ctx_peak", 0) for a in lanes]
     lane_turns = [a.get("turns", 0) for a in lanes]
     hours = []
@@ -407,6 +436,25 @@ def measure(rep, cfg, cap_start, sessions=None, label="window"):
         "lanes_over_80_turns": sum(1 for t in lane_turns if t > 80),
         "compactions": sum(a.get("compactions", 0) for a in lanes),
         "cache_measurable": rep.get("cache_measurable", False),
+        # context KPIs
+        "main_compactions": len(ctx_events),
+        "main_compaction_hours": round(ctx_hours, 2) if ctx_hours else None,
+        "main_compactions_per_hour": (round(len(ctx_events) / ctx_hours, 2)
+                                      if ctx_hours else None),
+        "ctx_peak_min": min(ctx_peaks) if ctx_peaks else None,
+        "ctx_peak_max": max(ctx_peaks) if ctx_peaks else None,
+        "ctx_floor_min": min(ctx_floors) if ctx_floors else None,
+        "ctx_floor_max": max(ctx_floors) if ctx_floors else None,
+        "launch_count": len(launch_chars),
+        "launch_chars_total": sum(launch_chars),
+        "launch_chars_median": med(launch_chars, 50),
+        "launch_chars_p90": med(launch_chars, 90),
+        "notif_count": len(notif_chars),
+        "notif_chars_total": sum(notif_chars),
+        "notif_chars_median": med(notif_chars, 50),
+        "notif_chars_p90": med(notif_chars, 90),
+        "written_chars": written_chars,
+        "result_chars": result_chars,
     }
 
 
@@ -613,7 +661,20 @@ def optimization_list(side, tool_totals, limit=5):
                 LEVER["model_mix"])
     for name, chars in tool_totals.most_common(3):
         add("tool results from %s (%.1f M characters, about %.1f M tokens read)"
-            % (name, chars / 1e6, chars / 4e6), chars / 4.0, LEVER["tool_results"])
+            % (name, chars / 1e6, chars / CHARS_PER_TOKEN / 1e6),
+            chars / CHARS_PER_TOKEN, LEVER["tool_results"])
+    # The two context KPIs, on the same token axis as everything above: a
+    # compaction costs about the floor it lands on, because that is the context
+    # every turn of the next cycle carries, and a written character costs about
+    # a quarter of a token on the way in.
+    if side.get("main_compactions"):
+        add(compaction_reading(side),
+            sum(e.get("floor", 0) for entry in side["sessions"]
+                for e in ((entry.get("context") or {}).get("events") or [])),
+            LEVER["compactions"])
+    if side.get("written_chars"):
+        add(writing_reading(side), side["written_chars"] / CHARS_PER_TOKEN,
+            LEVER["writing"])
     items.sort(key=lambda i: -i["tokens"])
     return items[:limit]
 
@@ -942,6 +1003,20 @@ def render(base, cur, pre, cfg, args, meters, tool_totals, run_now):
     else:
         add("No spend source above zero in this window yet.")
     add("")
+    add("Context and writing, always listed whether or not they reach the top "
+        "of the ranking, because they are the two the cap is measured on:")
+    add("")
+    if cur.get("main_compactions"):
+        add("- %s. Lever: %s." % (compaction_reading(cur), LEVER["compactions"]))
+    else:
+        add("- compactions: none inside the window, so there is nothing to "
+            "trim in the carry-over yet.")
+    if cur.get("written_chars"):
+        add("- %s. Lever: %s." % (writing_reading(cur), LEVER["writing"]))
+    else:
+        add("- orchestrator writing: no main transcript in the window, so the "
+            "launch and notification counters are zero.")
+    add("")
     add("One source is missing from the ranking whenever the tool-size log has "
         "no target column: the files re-read most, by path. The log records the "
         "time, the session, the tool and the size of every large result, and "
@@ -990,6 +1065,39 @@ def run_current(args, cap_start):
     return load_json(out)
 
 
+def thousands(value, digits=0):
+    """A token or character count in thousands, or `n/m` when it is missing."""
+    return "n/m" if value is None else num(value / 1000.0, digits, "k")
+
+
+def compaction_reading(side):
+    """The one-line reading of the compaction KPI, for the optimize list."""
+    return ("compactions %d in %s h (%s per hour), peak %s to %s, floor %s to "
+            "%s: the summary keeps too much" %
+            (side["main_compactions"], num(side["main_compaction_hours"], 1),
+             num(side["main_compactions_per_hour"], 2),
+             thousands(side["ctx_peak_min"]), thousands(side["ctx_peak_max"]),
+             thousands(side["ctx_floor_min"]), thousands(side["ctx_floor_max"])))
+
+
+def writing_reading(side):
+    """The one-line reading of the writing KPI, for the optimize list."""
+    return ("%s chars written per %d Agent launch(es), %s of them launch "
+            "prompts (median %s, p90 %s chars), %s chars back in notifications "
+            "(median %s, p90 %s), %s chars of tool results" %
+            (thousands(side["written_chars"], 1), side["launch_count"],
+             thousands(side["launch_chars_total"], 1),
+             num(side["launch_chars_median"], 0),
+             num(side["launch_chars_p90"], 0),
+             thousands(side["notif_chars_total"], 1),
+             num(side["notif_chars_median"], 0),
+             num(side["notif_chars_p90"], 0),
+             thousands(side["result_chars"], 1)))
+
+
+# --------------------------------------------------------------------------
+# Rendering
+# --------------------------------------------------------------------------
 def freeze_baseline(path, cfg, label=None):
     """Annotate a ledger-day payload as a frozen baseline, in place and once.
 

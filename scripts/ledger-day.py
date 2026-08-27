@@ -28,7 +28,34 @@ tools are cross-checks whose results are printed next to it. The analyzer has
 no `--until`, so its totals cover "since the window start until now", which is
 the same thing only when the script runs at the window end.
 
-The markdown row format never changes. The `--json` payload carries more than
+Two context KPIs are computed per window and per session, from the main
+transcripts only, because both describe the orchestrator context and a subagent
+transcript is a different context:
+
+KPI 1, compactions. A boundary is the user row the harness writes after a
+compaction (`isCompactSummary`, or a body that starts with "This session is
+being continued"); the `system` row that carries `compactMetadata` right before
+it is read only for the cross-check fields `preTokens` and `postTokens`. For
+each boundary inside the window, `peak` is the context of the last assistant row
+before it and `floor` the context of the first assistant row after it, where the
+context of an assistant row is `input_tokens + cache_creation_input_tokens +
+cache_read_input_tokens` of its usage block. The neighbours are taken from the
+whole file, never clipped to the window, so a boundary on the window edge still
+reports both sides. The rate is the boundary count over the session's active
+hours in the window, first to last row with a timestamp inside it.
+
+KPI 2, writing volume. `launch_chars` is the length of the `prompt` input of
+every `Agent` (or `Task`) tool_use inside the window; `notif_chars` is the
+length of every user row classified as a task notification; `written_chars` is
+everything the session itself wrote, the text blocks of its assistant rows plus
+the JSON of every tool_use input, which is the measure that answers "how much
+does the orchestrator type"; `result_chars` is the length of every tool_result
+block in the window, printed next to it for contrast. Launches and
+notifications are reported as count, total, median and p90.
+
+The markdown row format gained two columns for those KPIs, so the first
+run after this change starts a fresh table under the same title. The `--json`
+payload carries more than
 the row does, for `ledger-compare.py`: per project `fresh` (uncached input plus
 cache write plus output), `by_model` (fable, opus, sonnet, haiku, synthetic,
 other, each split into main contexts and subagents), `kind_tokens` and
@@ -167,8 +194,11 @@ JSON_SCHEMA = 2
 
 LEDGER_HEADER = ("| Time | Window | Project | Tokens (in+out, k) | Quota points "
                  "| Merged features | Points per feature | Waste % "
-                 "| forks / status / narration / probes / cache (k) |")
-LEDGER_SEP = "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+                 "| forks / status / narration / probes / cache (k) "
+                 "| Compactions (n, per h, peak k, floor k) "
+                 "| Writing (launches, own k, notif k, results k chars) |")
+LEDGER_SEP = ("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- "
+              "| --- |")
 LEDGER_TITLE = "## Waste ledger, 08:00 and 18:00"
 
 
@@ -296,6 +326,105 @@ def classify_wake(entry, tool_names):
     return "human"
 
 
+def text_of(content):
+    """The plain text of a message body, whether it is a string or blocks."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(b.get("text", "") for b in content
+                       if isinstance(b, dict) and b.get("type") == "text")
+    return ""
+
+
+def result_chars_of(block):
+    """Characters of one tool_result block, string body or block list."""
+    body = block.get("content")
+    if isinstance(body, str):
+        return len(body)
+    if isinstance(body, list):
+        return sum(len(b.get("text", "")) for b in body if isinstance(b, dict))
+    return 0
+
+
+def ctx_of_usage(usage):
+    """Context an assistant row carried: uncached input plus both cache halves."""
+    if not usage:
+        return 0
+    return (usage.get("input_tokens", 0)
+            + usage.get("cache_creation_input_tokens", 0)
+            + usage.get("cache_read_input_tokens", 0))
+
+
+def char_stats(values):
+    """Count, total, median and p90 of a list of character counts."""
+    return {"count": len(values), "total": sum(values),
+            "median": percentile(values, 50), "p90": percentile(values, 90)}
+
+
+def empty_context():
+    """The context KPI block a session with no main transcript reports."""
+    return {"compactions": [], "launch_chars": [], "notif_chars": [],
+            "written_chars": 0, "result_chars": 0, "result_count": 0,
+            "win_first": None, "win_last": None}
+
+
+def merge_context(into, other):
+    """Fold one transcript's context KPIs into a session or project total."""
+    into["compactions"].extend(other["compactions"])
+    into["launch_chars"].extend(other["launch_chars"])
+    into["notif_chars"].extend(other["notif_chars"])
+    into["written_chars"] += other["written_chars"]
+    into["result_chars"] += other["result_chars"]
+    into["result_count"] += other["result_count"]
+    for key in ("win_first", "win_last"):
+        value = other[key]
+        if value is None:
+            continue
+        if into[key] is None:
+            into[key] = value
+        elif key == "win_first":
+            into[key] = min(into[key], value)
+        else:
+            into[key] = max(into[key], value)
+    return into
+
+
+def context_summary(ctx):
+    """The reported shape of one context KPI block.
+
+    `active_hours` is the span of the rows inside the window; a session with a
+    single row in the window has no span, so its rate is reported as None
+    rather than as a division by zero.
+    """
+    events = sorted(ctx["compactions"], key=lambda c: (c["ts"] or dt.datetime.min))
+    peaks = [c["peak"] for c in events if c["peak"]]
+    floors = [c["floor"] for c in events if c["floor"]]
+    hours = None
+    seconds = 0.0
+    if ctx["win_first"] and ctx["win_last"] and ctx["win_last"] > ctx["win_first"]:
+        seconds = (ctx["win_last"] - ctx["win_first"]).total_seconds()
+        hours = seconds / 3600.0
+    return {
+        "compactions": len(events),
+        "active_hours": round(hours, 2) if hours else None,
+        # kept unrounded so pooling several sessions does not round twice
+        "active_seconds": seconds,
+        "per_hour": round(len(events) / hours, 2) if hours else None,
+        "peak_min": min(peaks) if peaks else 0,
+        "peak_max": max(peaks) if peaks else 0,
+        "floor_min": min(floors) if floors else 0,
+        "floor_max": max(floors) if floors else 0,
+        "events": events,
+        "launches": char_stats(ctx["launch_chars"]),
+        "notifications": char_stats(ctx["notif_chars"]),
+        "launch_chars": list(ctx["launch_chars"]),
+        "notif_chars": list(ctx["notif_chars"]),
+        "written_chars": ctx["written_chars"],
+        "result_chars": ctx["result_chars"],
+        "result_count": ctx["result_count"],
+    }
+
+
 def scan_file(path, start, end):
     """Scan one transcript into deduplicated turns inside the window.
 
@@ -316,8 +445,13 @@ def scan_file(path, start, end):
     file_start = None
     first_human = None
     last_ts = None
+    ctx_kpi = empty_context()
+    last_ctx = 0            # context of the last assistant row seen so far
+    awaiting_floor = None   # boundary whose first assistant row is still ahead
+    pending_meta = None     # compactMetadata of the system row before a boundary
     empty = {"turns": [], "compactions": 0, "first_user_class": None,
-             "file_start": None, "first_human": None, "last_ts": None}
+             "file_start": None, "first_human": None, "last_ts": None,
+             "context": empty_context()}
     try:
         fh = open(path, encoding="utf-8", errors="ignore")
     except OSError:
@@ -335,20 +469,73 @@ def scan_file(path, start, end):
                     file_start = when
                 if last_ts is None or when > last_ts:
                     last_ts = when
+            in_window = when is not None and start <= when < end
+            if in_window:
+                if ctx_kpi["win_first"] is None or when < ctx_kpi["win_first"]:
+                    ctx_kpi["win_first"] = when
+                if ctx_kpi["win_last"] is None or when > ctx_kpi["win_last"]:
+                    ctx_kpi["win_last"] = when
+            if kind == "system":
+                # The row the harness writes for the compaction itself; it is
+                # read only for the pre and post token cross-check.
+                if o.get("compactMetadata"):
+                    pending_meta = o.get("compactMetadata") or {}
+                continue
             if kind == "user":
                 cls = classify_wake(o, tool_names)
                 if first_user_class is None:
                     first_user_class = cls
                 if cls == "human" and first_human is None and when is not None:
                     first_human = when
-                if cls == "compaction" and when and start <= when < end:
-                    compactions += 1
+                if cls == "compaction":
+                    if in_window:
+                        compactions += 1
+                        boundary = {
+                            "ts": when, "uuid": o.get("uuid"),
+                            "peak": last_ctx, "floor": 0,
+                            "pre_tokens": (pending_meta or {}).get("preTokens"),
+                            "post_tokens": (pending_meta or {}).get("postTokens"),
+                        }
+                        ctx_kpi["compactions"].append(boundary)
+                        awaiting_floor = boundary
+                    pending_meta = None
+                elif in_window:
+                    body = (o.get("message") or {}).get("content")
+                    if cls == "task_notification":
+                        ctx_kpi["notif_chars"].append(len(text_of(body)))
+                    if isinstance(body, list):
+                        for b in body:
+                            if isinstance(b, dict) and b.get("type") == "tool_result":
+                                ctx_kpi["result_chars"] += result_chars_of(b)
+                                ctx_kpi["result_count"] += 1
                 last_wake = cls
                 continue
             if kind != "assistant":
                 continue
             msg = o.get("message") or {}
             content = msg.get("content") or []
+            # Context KPIs run over every assistant row, not over the grouped
+            # turns, because the peak and the floor are properties of the row
+            # next to the boundary and one response is written as several rows.
+            row_ctx = ctx_of_usage(msg.get("usage"))
+            if row_ctx:
+                last_ctx = row_ctx
+                if awaiting_floor is not None:
+                    awaiting_floor["floor"] = row_ctx
+                    awaiting_floor = None
+            if in_window and isinstance(content, list):
+                for b in content:
+                    if not isinstance(b, dict):
+                        continue
+                    if b.get("type") == "text":
+                        ctx_kpi["written_chars"] += len(b.get("text") or "")
+                    elif b.get("type") == "tool_use":
+                        args = b.get("input") or {}
+                        ctx_kpi["written_chars"] += len(
+                            json.dumps(args, ensure_ascii=False))
+                        if b.get("name") in LAUNCH_TOOLS:
+                            ctx_kpi["launch_chars"].append(
+                                len(args.get("prompt") or ""))
             key = msg.get("id") or o.get("requestId") or o.get("uuid")
             turn = turns.get(key)
             if turn is None:
@@ -388,7 +575,8 @@ def scan_file(path, start, end):
         ordered[-1]["final"] = True
     return {"turns": ordered, "compactions": compactions,
             "first_user_class": first_user_class, "file_start": file_start,
-            "first_human": first_human, "last_ts": last_ts}
+            "first_human": first_human, "last_ts": last_ts,
+            "context": ctx_kpi}
 
 
 # --------------------------------------------------------------------------
@@ -667,7 +855,48 @@ def session_out(entry):
     out["main_ctx_p50"] = percentile(ctx, 50)
     out["main_ctx_p90"] = percentile(ctx, 90)
     out["main_ctx_max"] = max(ctx) if ctx else 0
+    out["context"] = context_summary(entry.get("context") or empty_context())
     return out
+
+
+def project_context(sessions):
+    """Pool the per-session context KPIs into the project's row.
+
+    The rate divides by the sum of the sessions' active hours and not by the
+    window, because two sessions of the same project run at the same time and a
+    compaction belongs to the session that hit its cap.
+    """
+    events = []
+    launches, notifs = [], []
+    written = results = result_count = 0
+    seconds = 0.0
+    for s in sessions:
+        ctx = s.get("context") or {}
+        events.extend(ctx.get("events") or [])
+        launches.extend(ctx.get("launch_chars") or [])
+        notifs.extend(ctx.get("notif_chars") or [])
+        written += ctx.get("written_chars", 0)
+        results += ctx.get("result_chars", 0)
+        result_count += ctx.get("result_count", 0)
+        seconds += ctx.get("active_seconds") or 0.0
+    hours = seconds / 3600.0
+    peaks = [c["peak"] for c in events if c["peak"]]
+    floors = [c["floor"] for c in events if c["floor"]]
+    return {
+        "compactions": len(events),
+        "active_hours": round(hours, 2) if hours else None,
+        "active_seconds": seconds,
+        "per_hour": round(len(events) / hours, 2) if hours else None,
+        "peak_min": min(peaks) if peaks else 0,
+        "peak_max": max(peaks) if peaks else 0,
+        "floor_min": min(floors) if floors else 0,
+        "floor_max": max(floors) if floors else 0,
+        "launches": char_stats(launches),
+        "notifications": char_stats(notifs),
+        "written_chars": written,
+        "result_chars": results,
+        "result_count": result_count,
+    }
 
 
 def build_report(args, start, end, now):
@@ -715,13 +944,14 @@ def build_report(args, start, end, now):
             "id": session[:8], "project": name, "turns": 0, "tokens": 0,
             "ctx_peak": 0, "subagents": 0, "forks": 0, "fresh": 0,
             "started": None, "fork_tokens": 0, "main_ctx": [],
-            "buckets": collections.Counter()})
+            "buckets": collections.Counter(), "context": empty_context()})
         entry["turns"] += len(turns)
         entry["tokens"] += tokens
         entry["fresh"] += fresh
         entry["ctx_peak"] = max(entry["ctx_peak"], max(t["ctx"] for t in turns))
         if kind == "main":
             entry["main_ctx"].extend(t["ctx"] for t in turns)
+            merge_context(entry["context"], scan["context"])
         started = scan["file_start"]
         if started and (entry["started"] is None or started < entry["started"]):
             entry["started"] = started
@@ -845,6 +1075,9 @@ def build_report(args, start, end, now):
         waste_turns = (proj["fork_tokens"] + proj["buckets"]["status"]
                        + proj["buckets"]["narration"] + proj["buckets"]["probes"])
         n_features = len(features) if name == CONFIG_FEATURE_PROJECT else 0
+        sessions_out = [session_out(s) for s in
+                        sorted(proj["sessions"].values(),
+                               key=lambda s: -s["tokens"])]
         out_rows.append({
             "project": name,
             "folders": sorted(proj["folders"]),
@@ -871,9 +1104,8 @@ def build_report(args, start, end, now):
             "main_ctx_p90": percentile(proj["main_ctx"], 90),
             "main_ctx_max": max(proj["main_ctx"]) if proj["main_ctx"] else 0,
             "lanes": sorted(proj["lanes"], key=lambda a: -a["tokens"]),
-            "sessions": [session_out(s) for s in
-                         sorted(proj["sessions"].values(),
-                                key=lambda s: -s["tokens"])],
+            "sessions": sessions_out,
+            "context": project_context(sessions_out),
             "analyzer_tokens": analyzer_totals.get(name, {}).get("tokens"),
         })
     return {
@@ -889,6 +1121,21 @@ def build_report(args, start, end, now):
     }
 
 
+def render_context_cells(ctx):
+    """The two KPI cells of a ledger row: compactions, then writing volume."""
+    ctx = ctx or project_context([])
+    rate = "-" if ctx["per_hour"] is None else "%.2f" % ctx["per_hour"]
+    peak = ("%.0f to %.0f" % (k(ctx["peak_min"]), k(ctx["peak_max"]))
+            if ctx["compactions"] else "-")
+    floor = ("%.0f to %.0f" % (k(ctx["floor_min"]), k(ctx["floor_max"]))
+             if ctx["compactions"] else "-")
+    compactions = "%d / %s / %s / %s" % (ctx["compactions"], rate, peak, floor)
+    writing = "%d / %.1f / %.1f / %.1f" % (
+        ctx["launches"]["count"], k(ctx["written_chars"]),
+        k(ctx["notifications"]["total"]), k(ctx["result_chars"]))
+    return compactions, writing
+
+
 def render_row(rep, row):
     """One markdown row of the ledger table."""
     ppf = "-" if row["points_per_feature"] is None else "%.2f" % row["points_per_feature"]
@@ -897,11 +1144,13 @@ def render_row(rep, row):
         k(row["fork_tokens"]), k(row["buckets"].get("status", 0)),
         k(row["buckets"].get("narration", 0)), k(row["buckets"].get("probes", 0)),
         cache)
-    return "| %s | %s to %s | %s | %.1f | %.1f | %d | %s | %.1f%% | %s |" % (
-        rep["now"].strftime("%Y-%m-%d %H:%M"),
-        rep["start"].strftime("%m-%d %H:%M"), rep["end"].strftime("%m-%d %H:%M"),
-        row["project"], k(row["tokens"]), row["points"], row["features"],
-        ppf, row["waste_pct"], buckets)
+    compactions, writing = render_context_cells(row.get("context"))
+    return ("| %s | %s to %s | %s | %.1f | %.1f | %d | %s | %.1f%% | %s | %s | %s |"
+            % (rep["now"].strftime("%Y-%m-%d %H:%M"),
+               rep["start"].strftime("%m-%d %H:%M"),
+               rep["end"].strftime("%m-%d %H:%M"),
+               row["project"], k(row["tokens"]), row["points"], row["features"],
+               ppf, row["waste_pct"], buckets, compactions, writing))
 
 
 def append_ledger(path, rep):
@@ -920,7 +1169,12 @@ def append_ledger(path, rep):
                      "the window's tokens, because several projects can share "
                      "one account. "
                      "`n/m` means the bucket was not measurable, and the daily "
-                     "file says why.\n\n")
+                     "file says why. The compaction cell reads count / per hour "
+                     "/ peak range / floor range in thousands of tokens, and the "
+                     "writing cell reads Agent launches / own writing / task "
+                     "notifications / tool results in thousands of characters; "
+                     "both are zero on a window with no main-transcript "
+                     "activity.\n\n")
         parts.append(LEDGER_HEADER + "\n" + LEDGER_SEP + "\n")
     for row in rep["rows"]:
         parts.append(render_row(rep, row) + "\n")
@@ -1001,6 +1255,53 @@ def render_daily(rep):
                 % (s["id"], s["project"], s["turns"], k(s["tokens"]),
                    k(s["ctx_peak"]), s["subagents"], s["forks"]))
         add("")
+        add("#### Context KPIs, main transcripts only")
+        add("")
+        add("Peak is the context of the last assistant row before a compaction "
+            "boundary, floor the context of the first assistant row after it, "
+            "both as uncached input plus cache read plus cache creation. Own "
+            "writing is the text the session wrote plus the JSON of every tool "
+            "call it made; the launch column counts only the `prompt` of an "
+            "`Agent` call.")
+        add("")
+        add("| Session | Compactions | Active h | Per h | Peak k | Floor k "
+            "| Launches | Launch chars med / p90 | Own writing k "
+            "| Notifications | Notif chars med / p90 | Tool results k |")
+        add("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+        for s in row["sessions"]:
+            c = s.get("context") or {}
+            if not (c.get("compactions") or c.get("launches", {}).get("count")
+                    or c.get("written_chars")):
+                continue
+            add("| %s | %d | %s | %s | %.0f to %.0f | %.0f to %.0f | %d | %d / %d "
+                "| %.1f | %d | %d / %d | %.1f |"
+                % (s["id"], c["compactions"],
+                   "-" if c["active_hours"] is None else "%.2f" % c["active_hours"],
+                   "-" if c["per_hour"] is None else "%.2f" % c["per_hour"],
+                   k(c["peak_min"]), k(c["peak_max"]),
+                   k(c["floor_min"]), k(c["floor_max"]),
+                   c["launches"]["count"], c["launches"]["median"],
+                   c["launches"]["p90"], k(c["written_chars"]),
+                   c["notifications"]["count"], c["notifications"]["median"],
+                   c["notifications"]["p90"], k(c["result_chars"])))
+        add("")
+        events = [(s["id"], e) for s in row["sessions"]
+                  for e in ((s.get("context") or {}).get("events") or [])]
+        if events:
+            add("Every compaction of the window, with the harness's own "
+                "`compactMetadata` next to the measured pair:")
+            add("")
+            add("| Session | Boundary | Peak k | Floor k | preTokens k "
+                "| postTokens k | Row uuid |")
+            add("| --- | --- | --- | --- | --- | --- | --- |")
+            for sid, e in sorted(events, key=lambda x: (x[1]["ts"] or dt.datetime.min)):
+                add("| %s | %s | %.1f | %.1f | %s | %s | %s |"
+                    % (sid, e["ts"].strftime("%H:%M:%S") if e["ts"] else "-",
+                       k(e["peak"]), k(e["floor"]),
+                       "-" if e["pre_tokens"] is None else "%.1f" % k(e["pre_tokens"]),
+                       "-" if e["post_tokens"] is None else "%.1f" % k(e["post_tokens"]),
+                       e["uuid"] or "-"))
+            add("")
     add("## Quota")
     add("")
     add("Weekly meter column `%s`, %d sample(s) inside the window, account(s) %s. "
