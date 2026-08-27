@@ -28,6 +28,19 @@ tools are cross-checks whose results are printed next to it. The analyzer has
 no `--until`, so its totals cover "since the window start until now", which is
 the same thing only when the script runs at the window end.
 
+The markdown row format never changes. The `--json` payload carries more than
+the row does, for `ledger-compare.py`: per project `fresh` (uncached input plus
+cache write plus output), `by_model` (fable, opus, sonnet, haiku, synthetic,
+other, each split into main contexts and subagents), `kind_tokens` and
+`kind_fresh`, `main_ctx_p50/p90/max` and a `lanes` list with one entry per
+subagent transcript (turns, tokens, fresh, peak and p50 context, compactions,
+models, first entry, first human prompt, last entry). Each session also carries
+`fresh`, `started`, `fork_tokens`, its own `buckets` and its main-context
+percentiles (`main_turns`, `main_ctx_p50/p90/max`), so a comparison can split a
+window by session without a second scan; the cache-break bucket stays
+project-level, because the analyzer reports it that way. The payload carries
+`schema` and `script_sha256`.
+
 Usage:
     python ledger-day.py [--since 24h | --since "2026-08-27 08:00"]
                          [--until "2026-08-27 18:00"]
@@ -45,6 +58,7 @@ import collections
 import csv
 import datetime as dt
 import glob
+import hashlib
 import json
 import os
 import re
@@ -146,6 +160,10 @@ STATUS_CMD_RE = re.compile(
 # a reset; anything smaller is the noise the status line writes every few
 # seconds (values of 63, 66 and 65 within the same minute are normal).
 RESET_DROP = 25
+
+# Version of the `--json` payload. Bumped when a field changes meaning, never
+# when one is added; `ledger-compare.py` reads it to say which side is stale.
+JSON_SCHEMA = 2
 
 LEDGER_HEADER = ("| Time | Window | Project | Tokens (in+out, k) | Quota points "
                  "| Merged features | Points per feature | Waste % "
@@ -284,16 +302,26 @@ def scan_file(path, start, end):
     One API response is written as several assistant lines sharing a requestId,
     one per content block; they are grouped so a turn carries all of its tool
     calls, and the usage is taken from the block that reports the most output.
+
+    Three times come from the whole file and not from the window, because the
+    compare places a session against the cap start and measures a lane from its
+    own first prompt: `file_start` (first entry), `first_human` (first human
+    prompt) and `last_ts` (last entry).
     """
     turns = collections.OrderedDict()
     tool_names = {}
     last_wake = None
     compactions = 0
     first_user_class = None
+    file_start = None
+    first_human = None
+    last_ts = None
+    empty = {"turns": [], "compactions": 0, "first_user_class": None,
+             "file_start": None, "first_human": None, "last_ts": None}
     try:
         fh = open(path, encoding="utf-8", errors="ignore")
     except OSError:
-        return {"turns": [], "compactions": 0, "first_user_class": None}
+        return empty
     with fh:
         for line in fh:
             try:
@@ -302,10 +330,17 @@ def scan_file(path, start, end):
                 continue
             kind = o.get("type")
             when = local_ts(o.get("timestamp") or "")
+            if when is not None:
+                if file_start is None or when < file_start:
+                    file_start = when
+                if last_ts is None or when > last_ts:
+                    last_ts = when
             if kind == "user":
                 cls = classify_wake(o, tool_names)
                 if first_user_class is None:
                     first_user_class = cls
+                if cls == "human" and first_human is None and when is not None:
+                    first_human = when
                 if cls == "compaction" and when and start <= when < end:
                     compactions += 1
                 last_wake = cls
@@ -325,7 +360,8 @@ def scan_file(path, start, end):
                     continue
                 turn = {"ts": when, "model": msg.get("model") or "?",
                         "tools": [], "cmds": [], "tokens": 0, "ctx": 0,
-                        "out": 0, "wake": last_wake or "unknown"}
+                        "out": 0, "in": 0, "cc": 0, "cr": 0,
+                        "wake": last_wake or "unknown"}
                 turns[key] = turn
             if isinstance(content, list):
                 for b in content:
@@ -341,17 +377,18 @@ def scan_file(path, start, end):
                             turn["cmds"].append(cmd)
             usage = msg.get("usage")
             if usage and usage.get("output_tokens", 0) >= turn["out"]:
-                ctx = (usage.get("input_tokens", 0)
-                       + usage.get("cache_creation_input_tokens", 0)
-                       + usage.get("cache_read_input_tokens", 0))
+                turn["in"] = usage.get("input_tokens", 0)
+                turn["cc"] = usage.get("cache_creation_input_tokens", 0)
+                turn["cr"] = usage.get("cache_read_input_tokens", 0)
+                turn["ctx"] = turn["in"] + turn["cc"] + turn["cr"]
                 turn["out"] = usage.get("output_tokens", 0)
-                turn["ctx"] = ctx
-                turn["tokens"] = ctx + turn["out"]
+                turn["tokens"] = turn["ctx"] + turn["out"]
     ordered = list(turns.values())
     if ordered:
         ordered[-1]["final"] = True
     return {"turns": ordered, "compactions": compactions,
-            "first_user_class": first_user_class}
+            "first_user_class": first_user_class, "file_start": file_start,
+            "first_human": first_human, "last_ts": last_ts}
 
 
 # --------------------------------------------------------------------------
@@ -583,6 +620,56 @@ def k(n):
     return round(n / 1000.0, 1)
 
 
+def fresh_of(turn):
+    """Tokens that were not read from the cache: uncached input, cache write, output."""
+    return turn["in"] + turn["cc"] + turn["out"]
+
+
+MODEL_FAMILIES = (("fable", "fable"), ("opus", "opus"), ("sonnet", "sonnet"),
+                  ("haiku", "haiku"), ("synthetic", "synthetic"))
+
+
+def model_family(model):
+    """Group a model id into the family the compare reports by."""
+    low = (model or "").lower()
+    for needle, name in MODEL_FAMILIES:
+        if needle in low:
+            return name
+    return "other"
+
+
+def percentile(values, p):
+    """Nearest-rank percentile of a list, 0 when it is empty."""
+    if not values:
+        return 0
+    s = sorted(values)
+    i = max(0, min(len(s) - 1, int(round((p / 100.0) * (len(s) - 1)))))
+    return s[i]
+
+
+def sha256_of(path):
+    """Hex digest of a file, or None when it cannot be read."""
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
+def session_out(entry):
+    """One session for the payload: the context list becomes its percentiles."""
+    ctx = entry.pop("main_ctx", [])
+    out = dict(entry)
+    out["main_turns"] = len(ctx)
+    out["main_ctx_p50"] = percentile(ctx, 50)
+    out["main_ctx_p90"] = percentile(ctx, 90)
+    out["main_ctx_max"] = max(ctx) if ctx else 0
+    return out
+
+
 def build_report(args, start, end, now):
     """Collect every source and compute the per-project rows."""
     notes = []
@@ -594,7 +681,9 @@ def build_report(args, start, end, now):
         "tokens": 0, "turns": 0, "sessions": {}, "folders": set(),
         "buckets": collections.Counter(), "bucket_turns": collections.Counter(),
         "forks": 0, "fork_tokens": 0, "cache_tokens": 0, "cache_breaks": 0,
-        "compactions": 0})
+        "compactions": 0, "fresh": 0, "by_model": {}, "main_ctx": [],
+        "lanes": [], "kind_tokens": collections.Counter(),
+        "kind_fresh": collections.Counter()})
     main_sessions = []
     for path, folder, session, kind in iter_transcripts(
             args.projects_dir, start, args.max_file_mb, skipped):
@@ -606,31 +695,68 @@ def build_report(args, start, end, now):
         proj = projects[name]
         proj["folders"].add(folder)
         tokens = sum(t["tokens"] for t in turns)
+        fresh = sum(fresh_of(t) for t in turns)
         proj["tokens"] += tokens
+        proj["fresh"] += fresh
         proj["turns"] += len(turns)
         proj["compactions"] += scan["compactions"]
+        proj["kind_tokens"][kind] += tokens
+        proj["kind_fresh"][kind] += fresh
+        for turn in turns:
+            fam = proj["by_model"].setdefault(model_family(turn["model"]), {
+                "tokens": 0, "fresh": 0, "turns": 0, "main": 0, "subagent": 0})
+            fam["tokens"] += turn["tokens"]
+            fam["fresh"] += fresh_of(turn)
+            fam["turns"] += 1
+            fam[kind] += turn["tokens"]
+        if kind == "main":
+            proj["main_ctx"].extend(t["ctx"] for t in turns)
         entry = proj["sessions"].setdefault(session, {
             "id": session[:8], "project": name, "turns": 0, "tokens": 0,
-            "ctx_peak": 0, "subagents": 0, "forks": 0})
+            "ctx_peak": 0, "subagents": 0, "forks": 0, "fresh": 0,
+            "started": None, "fork_tokens": 0, "main_ctx": [],
+            "buckets": collections.Counter()})
         entry["turns"] += len(turns)
         entry["tokens"] += tokens
+        entry["fresh"] += fresh
         entry["ctx_peak"] = max(entry["ctx_peak"], max(t["ctx"] for t in turns))
+        if kind == "main":
+            entry["main_ctx"].extend(t["ctx"] for t in turns)
+        started = scan["file_start"]
+        if started and (entry["started"] is None or started < entry["started"]):
+            entry["started"] = started
         is_fork = False
         if kind == "subagent":
             entry["subagents"] += 1
             meta = path[:-6] + ".meta.json"
+            meta_data = {}
             if os.path.exists(meta):
                 try:
                     with open(meta, encoding="utf-8") as fh:
-                        is_fork = bool(json.load(fh).get("isFork"))
+                        meta_data = json.load(fh) or {}
+                    is_fork = bool(meta_data.get("isFork"))
                 except (OSError, ValueError):
-                    is_fork = False
+                    meta_data, is_fork = {}, False
             if not is_fork and scan["first_user_class"] == "compaction":
                 is_fork = True
             if is_fork:
                 entry["forks"] += 1
+                entry["fork_tokens"] += tokens
                 proj["forks"] += 1
                 proj["fork_tokens"] += tokens
+            ctxs = [t["ctx"] for t in turns]
+            proj["lanes"].append({
+                "id": os.path.basename(path)[:-6].replace("agent-", "")[:16],
+                "session": session[:8], "type": meta_data.get("agentType") or "?",
+                "desc": (meta_data.get("description") or "")[:80],
+                "fork": is_fork, "turns": len(turns), "tokens": tokens,
+                "fresh": fresh, "ctx_peak": max(ctxs),
+                "ctx_p50": percentile(ctxs, 50),
+                "compactions": scan["compactions"],
+                "models": sorted({model_family(t["model"]) for t in turns}),
+                "started": scan["file_start"], "first_human": scan["first_human"],
+                "last_ts": scan["last_ts"],
+            })
         else:
             main_sessions.append(path)
         if is_fork:
@@ -640,6 +766,7 @@ def build_report(args, start, end, now):
             if bucket:
                 proj["buckets"][bucket] += turn["tokens"]
                 proj["bucket_turns"][bucket] += 1
+                entry["buckets"][bucket] += turn["tokens"]
     sources.append("own transcript scan of %s (window-exact on both ends)"
                    % args.projects_dir)
 
@@ -736,11 +863,22 @@ def build_report(args, start, end, now):
             "cache_tokens": proj["cache_tokens"],
             "cache_breaks": proj["cache_breaks"],
             "compactions": proj["compactions"],
-            "sessions": sorted(proj["sessions"].values(),
-                               key=lambda s: -s["tokens"]),
+            "fresh": proj["fresh"],
+            "by_model": proj["by_model"],
+            "kind_tokens": dict(proj["kind_tokens"]),
+            "kind_fresh": dict(proj["kind_fresh"]),
+            "main_ctx_p50": percentile(proj["main_ctx"], 50),
+            "main_ctx_p90": percentile(proj["main_ctx"], 90),
+            "main_ctx_max": max(proj["main_ctx"]) if proj["main_ctx"] else 0,
+            "lanes": sorted(proj["lanes"], key=lambda a: -a["tokens"]),
+            "sessions": [session_out(s) for s in
+                         sorted(proj["sessions"].values(),
+                                key=lambda s: -s["tokens"])],
             "analyzer_tokens": analyzer_totals.get(name, {}).get("tokens"),
         })
     return {
+        "schema": JSON_SCHEMA,
+        "script_sha256": sha256_of(os.path.abspath(__file__)),
         "now": now, "start": start, "end": end, "rows": out_rows,
         "account_points": round(account_points, 1), "accounts": accounts,
         "quota_samples": samples, "resets": resets, "weekly_col": weekly_col,

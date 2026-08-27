@@ -11,5 +11,20 @@
   "repo": null,
   "branch": "main",
   "ledger_dir": null,
-  "_repo": "Absolute path of the repository whose merge commits count as shipped features, or null when no repository is watched. CLAUDE_LEDGER_DIR overrides `ledger_dir`, and `ledger_dir` overrides the default, which is the `ledger` folder next to the folder holding this script."
+  "_repo": "Absolute path of the repository whose merge commits count as shipped features, or null when no repository is watched. CLAUDE_LEDGER_DIR overrides `ledger_dir`, and `ledger_dir` overrides the default, which is the `ledger` folder next to the folder holding this script.",
+  "compare": {
+    "baseline": "baseline.json",
+    "baseline_label": "the window before the change",
+    "cap_start": "2026-01-31 09:00",
+    "capped_sessions": [],
+    "pre_cap_sessions": [],
+    "thresholds": {"cost_pct": 15.0, "speed_pct": 15.0, "quality_count": 1.0},
+    "min_features": 3,
+    "raw_tokens_per_point": 85000000,
+    "gates_dir": null,
+    "landings": null,
+    "field_reports": null,
+    "kit_dir": null
+  },
+  "_compare": "Read by ledger-compare.py. `baseline` is the frozen ledger-day payload the current window is measured against, relative to the ledger directory unless absolute, and `baseline_label` is the one line naming what that window was. `cap_start` is the moment the change under test began: sessions that started before it are printed in a `pre-cap` row instead of counted, and `capped_sessions` and `pre_cap_sessions` override that by session id prefix for the few sessions the clock gets wrong. `thresholds` is the size a delta must reach to read better or worse: a percentage on cost and speed, a count on quality that is divided by the rate's denominator, so one defect over five features is a step of 0.2. `min_features` is how many merged features the current side needs before a per-feature KPI gets a verdict. `raw_tokens_per_point` calibrates the estimated quota points a window with no meter samples falls back to. The four paths are the gate exit files, the landings file, the folder of owner reports filed after a handoff, and the device kit's evidence folder; null takes the default beside this script."
 }

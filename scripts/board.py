@@ -56,13 +56,20 @@ def landings_path():
     )
 
 
-def ledger_path():
-    ledger = (
+def ledger_dir():
+    return (
         os.environ.get("CLAUDE_LEDGER_DIR")
         or DEFAULT_LEDGER
         or os.path.join(board_dir(), "ledger")
     )
-    return os.path.join(ledger, "ledger.md")
+
+
+def ledger_path():
+    return os.path.join(ledger_dir(), "ledger.md")
+
+
+def compare_path():
+    return os.path.join(ledger_dir(), "compare.md")
 
 
 def now():
@@ -158,8 +165,10 @@ def render(data):
 
     lines += [
         "",
-        "Landings land in `%s`. The token ledger is `%s`."
-        % (landings_path(), ledger_path()),
+        "Landings land in `%s`. The token ledger is `%s`. Whether the current "
+        "way of working is better or worse than the window it is measured "
+        "against, with the deltas and what is left to optimize, is `%s`."
+        % (landings_path(), ledger_path(), compare_path()),
         "",
     ]
     return "\n".join(lines)
