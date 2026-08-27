@@ -7,6 +7,17 @@ description: Law sheet for running a band of implementer agents: dispatch, lane 
 
 Every line below is a law. Cite laws by their words in briefs; never paraphrase one.
 
+## Session roles
+
+- Flat model: Fable 5 runs only in the orchestrator pane; every implementation and every script runs in an Opus agent launched from it in the worktree concerned; the orchestrator reviews and merges; the worktree of a merged branch is removed in the same turn as the merge.
+- Every session is one of two things, orchestrator or worker; everything else is an agent.
+- Orchestrator: exactly one per train, Fable 5 at 200k, in the pane the owner watches (for example Herdr `w3:p1`); it launches agents, reviews their reports, merges and keeps the board; it never writes code, reads images or keeps long notes.
+- Worker: an Opus 5 session that implements one brief in one worktree with no subagents and no orchestration; it exists only when the work must run on another account (for example `cc a`) or must outlive the orchestrator (a device bench longer than the orchestrator's day); it closes at landing.
+- Everything else is an agent launched by the orchestrator with the Agent tool (implementer, reviewer, general-purpose on Opus).
+- Forbidden: a session that exists to launch a single agent and take notes; a Fable context outside the orchestrator pane; a per-worktree notes file (the checkpoint is the agent's report plus the board line; findings worth keeping go to `docs/` in main before the worktree is removed).
+- Concurrency: three to five Opus agents in flight at all times while the backlog has items whose inputs are ready; the shared device lock (for example the S21U bench) is the only serialization point, never implementation.
+- Merge gate: no merge to main without the adversarial reviewer agent's disposition (CLEAR, or BLOCK with numbered findings).
+
 ## Dispatch and briefs
 
 - The orchestrator owns dispatch, sequencing, merging, pushing and every conversation with the owner.
@@ -70,6 +81,7 @@ Every line below is a law. Cite laws by their words in briefs; never paraphrase 
 
 ## Merge and union
 
+- No merge to main without the `reviewer` agent's disposition: CLEAR merges, BLOCK returns its numbered findings to the implementer for one fix round and then a second review, infrastructure landings are not exempt, and every merge cites the verdict in the owner-facing landings file as `review: CLEAR <date>` or `review: BLOCK <n> findings, fixed in <sha>, CLEAR <date>`.
 - Merge the batch first, then run one union over it, then resume by message the single lane a real failure belongs to.
 - The union is the arbiter: the full suite and the visual baselines run there once per batch, orchestrator-owned with no agent alive behind it, never skipped, and with the build cache disabled after merging any wave that mutated its own tree.
 - Never merge into a checkout a union is building from; stop that gate gently, merge, then relaunch one union over the batch.
