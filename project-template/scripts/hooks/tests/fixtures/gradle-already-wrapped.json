@@ -1,0 +1,11 @@
+{
+  "session_id": "fixture-wrapped",
+  "cwd": "__PROJECT__",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "python \"__PROJECT__/scripts/hooks/run-logged.py\" --log \"__PROJECT__/build/tool-logs/20260827-120000-gradlew-test.log\" -- './gradlew test'",
+    "description": "Already wrapped build"
+  },
+  "tool_use_id": "toolu_fixture_wrapped"
+}

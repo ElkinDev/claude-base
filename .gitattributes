@@ -1,0 +1,4 @@
+# Hooks and their fixtures: read by python and by Git Bash, and compared as text by the
+# fixture tests, so they stay LF on every checkout, on Windows as well.
+claude/hooks/** text eol=lf
+project-template/scripts/hooks/** text eol=lf

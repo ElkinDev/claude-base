@@ -1,0 +1,11 @@
+{
+  "session_id": "fixture-post-big",
+  "cwd": "__PROJECT__",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "./gradlew test"
+  },
+  "tool_response": "__BIGRESPONSE__",
+  "tool_use_id": "toolu_fixture_post_big"
+}

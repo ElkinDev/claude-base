@@ -1,0 +1,27 @@
+Starting a Gradle Daemon (subsequent builds will be faster)
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugResValues
+> Task :app:processDebugManifest
+> Task :app:compileDebugKotlin FAILED
+e: file:///C:/Repo/myapp/app/src/main/java/com/example/budget/BudgetRepository.kt:88:31 Unresolved reference: monthlyCap
+e: file:///C:/Repo/myapp/app/src/main/java/com/example/budget/BudgetRepository.kt:104:17 Type mismatch: inferred type is String but Long was expected
+> Task :app:compileDebugJavaWithJavac SKIPPED
+BudgetRepositoryTest > capIsClampedToTheMonth FAILED
+    java.lang.AssertionError at BudgetRepositoryTest.kt:52
+BudgetRepositoryTest > capSurvivesARestart PASSED
+41 tests completed, 1 failed, 2 skipped
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:compileDebugKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+   > Compilation error. See log for more details
+
+* Try:
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+
+BUILD FAILED in 1m 12s
+14 actionable tasks: 6 executed, 8 up-to-date

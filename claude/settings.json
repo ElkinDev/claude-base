@@ -71,6 +71,30 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/guard-read.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/alarm-big-result.py\"",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

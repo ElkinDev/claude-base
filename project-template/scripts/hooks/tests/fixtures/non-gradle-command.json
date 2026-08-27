@@ -1,0 +1,11 @@
+{
+  "session_id": "fixture-plain",
+  "cwd": "__PROJECT__",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git status --porcelain",
+    "description": "Show the working tree state"
+  },
+  "tool_use_id": "toolu_fixture_plain"
+}

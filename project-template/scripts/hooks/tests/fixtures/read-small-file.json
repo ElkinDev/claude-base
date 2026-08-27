@@ -1,0 +1,10 @@
+{
+  "session_id": "fixture-small",
+  "cwd": "__PROJECT__",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "__SMALLFILE__"
+  },
+  "tool_use_id": "toolu_fixture_small"
+}
