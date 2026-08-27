@@ -72,6 +72,10 @@ function Apply-Role {
     else { $env:CLAUDE_CODE_DISABLE_1M_CONTEXT = "1" }
 }
 $roleTag = if ($Role -eq "lane") { "" } else { "-$Role" }
+# Agents never use the browser: orchestrator and lane sessions start without the Chrome
+# integration, which keeps its instructions and tools out of every context. Pass --chrome
+# explicitly, or use -Role research, when a session needs the browser.
+if ($Role -ne "research" -and -not ($extraStr -match "chrome")) { $extraStr += " --no-chrome" }
 # -Workspace takes the id (w8) or the number the UI shows (5); the number is resolved here.
 function Herdr-Workspace-Args {
     if (-not $Workspace) { return @() }
