@@ -7,6 +7,12 @@ the log path, the build result, the failed tasks and errors, and the tail.
 
 Nothing is lost, it moves to disk. Commands that are not gradle, and commands already
 wrapped by run-logged.py, are left untouched (the hook exits 0 without output).
+
+The rewrite travels in hookSpecificOutput.updatedInput, a documented PreToolUse field. The
+hooks reference, section "PreToolUse decision control", describes it as: "Modifies the
+tool's input parameters before execution. Replaces the entire input object, so include
+unchanged fields alongside modified ones. Combine with "allow" to auto-approve, or "ask" to
+show the modified input to the user."
 """
 import json
 import os
@@ -19,6 +25,11 @@ GRADLE_SCRIPTS = {"gradle-lockrun.ps1", "lane-gate.sh"}
 SEGMENT_SPLIT = re.compile(r"\|\||&&|[;|\n]")
 ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 PREFIX_WORDS = {"time", "nice", "exec"}
+POWERSHELL = {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}
+SHELLS = {"bash", "bash.exe", "sh", "sh.exe"}
+FILE_FLAGS = {"-file", "-f", "/file"}
+INLINE_FLAGS = {"-c", "-command", "-encodedcommand"}
+LEADING_CD = re.compile(r"^\s*(?:cd\s+[^&;|]+&&\s*)+", re.IGNORECASE)
 RUNNER = "run-logged.py"
 SLUG_CAP = 40
 
@@ -27,25 +38,74 @@ def basename(token):
     return token.strip("\"'").replace("\\", "/").rsplit("/", 1)[-1].lower()
 
 
-def is_gradle(command):
-    """True only when gradle, or one of its wrapper scripts, is the command word of a segment.
+def strip_prefixes(tokens):
+    """Drop everything that runs before the command word: env assignments, time, timeout N.
 
-    A command that merely mentions gradle in its text, such as a grep, must not be wrapped:
-    the digest would swallow its output.
+    The loop repeats until nothing changes, because the prefixes come in any order:
+    `timeout 600 JAVA_HOME=x ./gradlew test` needs the env pass to run again after the
+    timeout pass.
     """
-    for segment in SEGMENT_SPLIT.split(command):
-        tokens = segment.split()
+    changed = True
+    while changed and tokens:
+        changed = False
         while tokens and (ENV_ASSIGNMENT.match(tokens[0]) or tokens[0] in PREFIX_WORDS):
             tokens.pop(0)
-        if len(tokens) > 1 and tokens[0] == "timeout":
-            tokens = tokens[2:]
-        if not tokens:
-            continue
-        if basename(tokens[0]) in GRADLE_COMMANDS:
-            return True
-        if any(basename(token) in GRADLE_SCRIPTS for token in tokens):
+            changed = True
+        if len(tokens) > 1 and basename(tokens[0]) == "timeout":
+            del tokens[:2]
+            changed = True
+    return tokens
+
+
+def command_word(segment):
+    """The basename of the program a segment actually runs, looking through one launcher.
+
+    Only the command word counts. A script named as an argument is not a run:
+    `git log -- scripts/lane-gate.sh` and `cat scripts/gradle-lockrun.ps1` must keep their
+    own output. The two gradle wrappers are launched as `powershell -File <script>` and
+    `bash <script>`, so those forms resolve to the script they execute; `-c` and
+    `-Command` do not, because what follows is a command string, and the segment split
+    already reaches the words inside it.
+    """
+    tokens = strip_prefixes(segment.split())
+    if not tokens:
+        return ""
+    head = basename(tokens[0])
+    rest = tokens[1:]
+    if head in POWERSHELL:
+        for i, token in enumerate(rest):
+            if token.lower() in FILE_FLAGS and i + 1 < len(rest):
+                return basename(rest[i + 1])
+        return head
+    if head in SHELLS:
+        if any(token.lower() in INLINE_FLAGS for token in rest):
+            return head
+        for token in rest:
+            if not token.startswith("-"):
+                return basename(token)
+    return head
+
+
+def is_gradle(command):
+    """True only when gradle, or one of its wrapper scripts, is the command word of a segment."""
+    for segment in SEGMENT_SPLIT.split(command):
+        word = command_word(segment)
+        if word in GRADLE_COMMANDS or word in GRADLE_SCRIPTS:
             return True
     return False
+
+
+def split_leading_cd(command):
+    """Separate a leading `cd <dir> &&` chain from the command it introduces.
+
+    run-logged.py runs its argument in a fresh bash, so a cd inside the wrapper would move
+    that child and not the session shell the agent keeps using. The chain stays outside the
+    wrapper, where it still applies to the session, and only the rest is wrapped.
+    """
+    match = LEADING_CD.match(command)
+    if not match:
+        return "", command
+    return match.group(0).strip(), command[match.end():].strip()
 
 
 def slug(command):
@@ -64,9 +124,13 @@ def posix(path):
 
 def rewrite(command, project_dir):
     runner = posix(os.path.join(os.path.dirname(os.path.abspath(__file__)), RUNNER))
+    prefix, wrapped = split_leading_cd(command)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    log = posix(os.path.join(project_dir, "build", "tool-logs", "%s-%s.log" % (stamp, slug(command))))
-    return 'python "%s" --log "%s" -- %s' % (runner, log, shell_quote(command)), log
+    log = posix(os.path.join(project_dir, "build", "tool-logs", "%s-%s.log" % (stamp, slug(wrapped))))
+    new_command = 'python "%s" --log "%s" -- %s' % (runner, log, shell_quote(wrapped))
+    if prefix:
+        new_command = "%s %s" % (prefix, new_command)
+    return new_command, log
 
 
 def main():

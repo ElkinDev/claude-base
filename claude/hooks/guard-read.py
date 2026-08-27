@@ -7,6 +7,8 @@ Two rules, and nothing else is ever denied:
    which is allowed.
 2. Any file above 150 KB is denied unless the call already carries a limit of 400 lines or
    fewer. The reason names the size and the line count and offers the slice commands.
+   Images and PDFs are exempt from this rule: they are read as pixels and pages, a slice of
+   them means nothing, and a device screenshot is over 150 KB every time.
 
 Any internal failure exits 0 without output, so the hook can never block a Read.
 """
@@ -15,6 +17,7 @@ import os
 import sys
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+SIZE_EXEMPT_EXTENSIONS = IMAGE_EXTENSIONS + (".pdf",)
 SIZE_LIMIT_BYTES = 150 * 1024
 ALLOWED_LIMIT_LINES = 400
 
@@ -76,6 +79,9 @@ def main():
                 "%s stays on disk: delegate the look to a lane or a fork and ask for a "
                 "written description, or open it yourself outside the session." % path
             )
+            return 0
+
+        if extension in SIZE_EXEMPT_EXTENSIONS:
             return 0
 
         size = os.path.getsize(path)

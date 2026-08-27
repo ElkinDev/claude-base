@@ -84,9 +84,14 @@ class Workspace:
         with open(self.small, "w", encoding="utf-8", newline="\n") as handle:
             for i in range(100):
                 handle.write("line %d\n" % i)
+        # A device screenshot is over the size limit every time, so the fixture is too:
+        # the size rule must not be what stops a lane from looking at one.
         self.image = os.path.join(root, "screenshot.png")
         with open(self.image, "wb") as handle:
-            handle.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 2048)
+            handle.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * (300 * 1024))
+        self.pdf = os.path.join(root, "report.pdf")
+        with open(self.pdf, "wb") as handle:
+            handle.write(b"%PDF-1.7\n" + b"\x00" * (300 * 1024))
         self.ledger = os.path.join(root, "ledger")
 
     def replacements(self):
@@ -95,6 +100,7 @@ class Workspace:
             "__BIGFILE__": self.big,
             "__SMALLFILE__": self.small,
             "__IMAGE__": self.image,
+            "__PDF__": self.pdf,
             "__BIGRESPONSE__": BIG_RESPONSE,
         }
 
@@ -114,6 +120,8 @@ def test_gradle_command_is_wrapped(ws):
     assert "gradlew :app:assembleDebug --stacktrace" in command, command
     assert out["updatedInput"]["description"] == "Build the debug variant", out
     assert out["updatedInput"]["timeout"] == 600000, out
+    assert command.startswith("cd "), "the leading cd must stay in the session shell: %s" % command
+    assert command.index("cd ") < command.index("run-logged.py"), command
 
 
 def test_wrapped_command_is_untouched(ws):
@@ -148,13 +156,65 @@ def test_grep_that_mentions_gradle_is_untouched(ws):
     assert stdout == "", "a command that only mentions gradle must be left alone, got: %s" % stdout
 
 
-def test_gradle_behind_cd_env_and_timeout_is_wrapped(ws):
-    payload = fixture("non-gradle-command.json", ws.replacements()).replace(
-        "git status --porcelain",
-        "cd C:/Repo/myapp-w99 && JAVA_HOME=C:/jbr timeout 600 ./gradlew :app:testDebugUnitTest")
+def bash_command(ws, command):
+    return fixture("non-gradle-command.json", ws.replacements()).replace(
+        "git status --porcelain", command)
+
+
+def wrapped_command(ws, command):
+    """Run the filter over a command and return the rewritten command line, or "" if untouched."""
+    payload = bash_command(ws, command)
     code, stdout = run_hook(FILTER_HOOK, payload, {"CLAUDE_PROJECT_DIR": PROJECT_DIR})
-    assert code == 0, code
-    assert "run-logged.py" in decision(stdout)["updatedInput"]["command"], stdout
+    assert code == 0, "the hook must exit 0, got %d" % code
+    if not stdout:
+        return ""
+    return decision(stdout)["updatedInput"]["command"]
+
+
+def test_gradle_behind_cd_env_and_timeout_is_wrapped(ws):
+    command = wrapped_command(
+        ws, "cd C:/Repo/myapp-w99 && JAVA_HOME=C:/jbr timeout 600 ./gradlew :app:testDebugUnitTest")
+    assert "run-logged.py" in command, command
+
+
+def test_timeout_before_the_env_prefix_is_wrapped(ws):
+    """The prefix strip has to run again after `timeout N`, or the env assignment behind it
+    is read as the command word and the build escapes the filter."""
+    command = wrapped_command(ws, "timeout 600 JAVA_HOME=C:/jbr ./gradlew :app:test")
+    assert "run-logged.py" in command, command
+    assert "gradlew :app:test" in command, command
+
+
+def test_the_leading_cd_stays_outside_the_wrapper(ws):
+    """run-logged.py runs its argument in a fresh bash, so a cd inside it would not move the
+    session shell. The chain stays in front and only the gradle part is wrapped."""
+    command = wrapped_command(ws, "cd C:/Repo/myapp-w99 && ./gradlew :app:testDebugUnitTest")
+    assert command.startswith("cd C:/Repo/myapp-w99 && python "), command
+    assert command.count("cd C:/Repo/myapp-w99") == 1, "the cd must not also be wrapped: %s" % command
+    quoted = command[command.index(" -- ") + 4:]
+    assert quoted == "'./gradlew :app:testDebugUnitTest'", quoted
+
+
+def test_git_log_naming_a_gradle_script_is_untouched(ws):
+    """The script name is an argument here, not the command word. Wrapping this would
+    replace the git output with a gradle-shaped digest of nothing."""
+    command = wrapped_command(ws, "git log --oneline -5 -- scripts/lane-gate.sh")
+    assert command == "", "git log must keep its own output, got: %s" % command
+
+
+def test_cat_of_a_gradle_script_is_untouched(ws):
+    command = wrapped_command(ws, "cat scripts/gradle-lockrun.ps1")
+    assert command == "", "reading a script is not running it, got: %s" % command
+
+
+def test_the_wrapper_scripts_are_wrapped_when_they_are_actually_run(ws):
+    """Both wrappers are launched through a launcher in this repo, so the command word is
+    found one token in: `bash <script>` and `powershell -File <script>`."""
+    gate = wrapped_command(ws, "bash /c/Repo/myapp/scripts/lane-gate.sh w99 /tmp/scratch /c/Repo/myapp --app")
+    assert "run-logged.py" in gate, gate
+    lockrun = wrapped_command(
+        ws, "powershell -NoProfile -File scripts/gradle-lockrun.ps1 -Repo C:/Repo/myapp -Tag w99 -Phases a")
+    assert "run-logged.py" in lockrun, lockrun
 
 
 def test_digest_keeps_what_matters(ws):
@@ -219,10 +279,22 @@ def test_image_is_denied_for_the_orchestrator(ws):
 
 
 def test_image_is_allowed_for_a_lane(ws):
+    """The fixture image is over the size limit on purpose: every device screenshot is, and
+    a lane that cannot open one cannot report what the phone showed."""
+    assert os.path.getsize(ws.image) > 150 * 1024, "the fixture must be above the size limit"
     payload = fixture("read-image.json", ws.replacements())
     code, stdout = run_hook(GUARD_HOOK, payload, {"CLAUDE_ROLE": None})
     assert code == 0, code
     assert stdout == "", "a lane reads images, got: %s" % stdout
+
+
+def test_large_pdf_is_allowed(ws):
+    """A PDF is read as pages, so a line limit means nothing and the size rule cannot apply."""
+    assert os.path.getsize(ws.pdf) > 150 * 1024, "the fixture must be above the size limit"
+    payload = fixture("read-pdf.json", ws.replacements())
+    code, stdout = run_hook(GUARD_HOOK, payload, {"CLAUDE_ROLE": None})
+    assert code == 0, code
+    assert stdout == "", "a PDF must not be denied by size, got: %s" % stdout
 
 
 def test_big_file_is_denied_without_a_limit(ws):
@@ -292,11 +364,17 @@ TESTS = [
     test_non_gradle_command_is_untouched,
     test_grep_that_mentions_gradle_is_untouched,
     test_gradle_behind_cd_env_and_timeout_is_wrapped,
+    test_timeout_before_the_env_prefix_is_wrapped,
+    test_the_leading_cd_stays_outside_the_wrapper,
+    test_git_log_naming_a_gradle_script_is_untouched,
+    test_cat_of_a_gradle_script_is_untouched,
+    test_the_wrapper_scripts_are_wrapped_when_they_are_actually_run,
     test_digest_keeps_what_matters,
     test_digest_cuts_the_middle_not_the_ends,
     test_run_logged_writes_the_log_and_returns_the_exit_code,
     test_image_is_denied_for_the_orchestrator,
     test_image_is_allowed_for_a_lane,
+    test_large_pdf_is_allowed,
     test_big_file_is_denied_without_a_limit,
     test_big_file_is_allowed_with_a_limit,
     test_small_file_is_allowed,

@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/scripts/hooks/filter-gradle-output.py\"",
+            "command": "python \"${CLAUDE_PROJECT_DIR}/scripts/hooks/filter-gradle-output.py\"",
             "timeout": 10
           }
         ]

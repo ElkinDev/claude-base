@@ -8,6 +8,10 @@ exit code so the caller still sees success or failure.
 Usage:
     python run-logged.py --log <path> -- <command>
 
+The command runs in a fresh bash, so nothing it does to its own shell survives it. A
+leading `cd <dir> &&` must therefore stay outside this call, in the session shell, and only
+the part after it is passed here; the filter hook splits the command that way.
+
 The digest keeps the build result line, the failed tasks, kotlin and compiler errors, the
 failing test lines, the test count summaries, the "What went wrong" block and the tail of
 the output. It is capped by lines and by characters, always cutting from the middle so the
