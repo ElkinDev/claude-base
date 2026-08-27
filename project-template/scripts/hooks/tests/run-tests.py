@@ -290,6 +290,8 @@ TESTS = [
     test_wrapped_command_is_untouched,
     test_rewrite_is_idempotent,
     test_non_gradle_command_is_untouched,
+    test_grep_that_mentions_gradle_is_untouched,
+    test_gradle_behind_cd_env_and_timeout_is_wrapped,
     test_digest_keeps_what_matters,
     test_digest_cuts_the_middle_not_the_ends,
     test_run_logged_writes_the_log_and_returns_the_exit_code,
