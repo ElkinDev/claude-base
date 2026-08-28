@@ -188,7 +188,11 @@ to "write a brief now" mid-task produces a partial brief at 5x the price).
 ## 8. Install and use
 
 The hooks install with the rest of the toolkit (`install.ps1`); `claude/settings.json` wires
-them. If you wire them by hand, the events are:
+them. They are wired per config directory: with account profiles (`docs/ACCOUNTS.md`), the
+default directory is the only one that has them until each profile is synced with
+`cc <profile> -p -s`, and a session on an unsynced profile compacts with no checkpoint and no
+warning. Running sessions pick the hooks up as soon as the file changes, no restart needed.
+If you wire them by hand, the events are:
 
 ```json
 "PreCompact": [

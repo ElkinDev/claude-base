@@ -100,6 +100,10 @@ The separator is not optional. Without it PowerShell tries to bind those flags t
 
 Dates do not work for this. A modification date only says which file is newer, not whether the profile drifted from what it was given, and Claude Code rewrites `settings.json` on its own whenever you touch `/config`.
 
+**The model stays with the profile.** The merge takes everything from the default except `model`, which the profile keeps when it already has one. The model is the one setting that differs between accounts on purpose (an agents-only account runs a cheaper model than the orchestrator's account), and a sync that promoted it to the default's model went unnoticed until the agents came up on the expensive one.
+
+**Hooks live per config directory, so a sync is part of installing them.** A hook added to `~\.claude\settings.json` exists only for the default account. Every session opened through a profile keeps running without it until that profile is synced, and nothing warns you: the first sign was a session that compacted with no checkpoint. After changing hooks in the default, run `cc <profile> -p -s` for every profile (`-p` prepares without opening a session). The shortcut of the default account itself is not a profile: `cc <default> -p -s` reports that there is nothing to prepare, because that directory is the source. Running sessions pick the new hooks up without a restart; the hook that logs tool results started writing rows for three open sessions within the same minute as the sync.
+
 ## The traps
 
 These are the ones that caused real damage, not hypotheticals.

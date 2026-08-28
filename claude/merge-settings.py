@@ -17,6 +17,11 @@ Rules:
   5. Output is UTF-8 without BOM, written atomically, and only when something changed.
      PowerShell 5.1 writes a BOM with Set-Content -Encoding utf8, and Node's JSON.parse
      rejects a leading BOM, which is why this is not done in PowerShell.
+  6. Keys that describe the account rather than the tooling stay as the destination has
+     them (PROFILE_KEYS, today just `model`). A sync exists to carry hooks, permissions and
+     the status line to every profile; the model is the one thing that differs between
+     profiles on purpose, an agents-only account runs a cheaper model than the
+     orchestrator's, and a sync that quietly promoted it was found the hard way.
 
 Usage:  python merge-settings.py <source.json> <destination.json>
 Exit:   0 when merged or already up to date, 1 when nothing could be done safely.
@@ -46,14 +51,20 @@ def read_json(path, required):
     return data, True
 
 
-def merge(source, dest):
+# top-level keys the destination keeps when it already has them (rule 6)
+PROFILE_KEYS = ("model",)
+
+
+def merge(source, dest, top=True):
     """Return (result, changes). Neither argument is mutated."""
     out = dict(dest)
     changes = 0
     for key, value in source.items():
         current = out.get(key)
+        if top and key in PROFILE_KEYS and key in out:
+            continue
         if isinstance(value, dict) and isinstance(current, dict):
-            sub, n = merge(value, current)
+            sub, n = merge(value, current, top=False)
             if n:
                 out[key] = sub
                 changes += n
@@ -78,6 +89,9 @@ def main():
 
     result, changes = merge(source, dest)
     dest_only = [k for k in dest if k not in source]
+    kept = [k for k in PROFILE_KEYS if k in dest and k in source and source[k] != dest[k]]
+    for key in kept:
+        print("settings: {} stays {!r} (profile key, default has {!r})".format(key, dest[key], source[key]))
 
     if not changes:
         print("settings: already up to date, {} keys".format(len(result)))
