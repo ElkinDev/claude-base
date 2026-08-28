@@ -134,3 +134,4 @@ if ($Permissions -eq 'bypass') {
 }
 Write-Output ""
 Write-Output "Done. If you use Herdr, run its Claude integration too (see herdr\README.md)."
+Write-Output "Run: python scripts\doctor.py"

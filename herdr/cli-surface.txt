@@ -1,0 +1,14 @@
+agent list
+agent prompt
+agent wait
+agent send-keys
+agent rename
+agent get
+tab create
+tab list
+pane run
+pane read
+pane rename
+workspace list
+notification show
+server reload-config

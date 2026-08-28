@@ -9,6 +9,12 @@ reproduced on another machine.
 - `config.toml` - the personal Herdr config (keymap, sounds, toasts). Copy it to the config path.
 - `hotkey/launch-herdr.cmd` - launcher that opens Herdr in its own Windows Terminal window.
 - `hotkey/setup-hotkey.ps1` - creates the global Ctrl+Alt+N shortcut that runs the launcher.
+- `verified-version.txt` - the Herdr build this kit was verified against.
+- `cli-surface.txt` - the subcommands the kit drives, one per line, probed by
+  `python scripts/doctor.py`.
+
+How to drive a pane from a session (naming, prompting, waiting, trust dialogs, slash commands): see
+the `herdr-driving` skill in `claude/skills/herdr-driving/`.
 
 ## Install on a new machine
 1. Install Herdr (Windows preview build). After install, `herdr.exe` lives under
@@ -17,11 +23,31 @@ reproduced on another machine.
    - Windows: `%APPDATA%\herdr\config.toml`
    - macOS / Linux: `~/.config/herdr/config.toml`
    Herdr live-reloads it; a running server also reloads with `herdr server reload-config`.
-3. Install the Claude integration so Herdr sees Claude Code sessions. Herdr writes its own
-   SessionStart hook at `%USERPROFILE%\.claude\hooks\herdr-agent-state.ps1` and wires it in your
-   Claude settings. That file is managed by Herdr (reinstalling or updating overwrites it), so do not
-   hand-edit it; add custom hooks beside it instead.
+3. Install the Claude integration so Herdr sees Claude Code sessions:
+   ```
+   herdr integration install claude
+   ```
+   Herdr writes its own SessionStart hook at `%USERPROFILE%\.claude\hooks\herdr-agent-state.ps1`
+   and wires it in your Claude settings. That file is managed by Herdr (reinstalling or updating
+   overwrites it), so do not hand-edit it; add custom hooks beside it instead. `herdr integration
+   status` lists every integration and where its file went.
 4. Set up the global hotkey (optional, see below).
+5. Run `python scripts/doctor.py` and check the herdr lines are all `ok`.
+
+## The verified version and the surface file
+`verified-version.txt` holds one line, the exact `herdr --version` output this kit was checked
+against. `cli-surface.txt` holds the subcommands the kit calls, one per line. The doctor compares
+the installed version with the first and probes `herdr <subcommand> --help` for every line of the
+second.
+
+When Herdr updates:
+1. `python scripts/doctor.py`.
+2. A `warn herdr` line only says the build moved. A `FAIL herdr <subcommand>` says the surface
+   moved: read the new `--help` and fix the code that drives it, which is one of
+   `claude/claude-account.ps1`, `scripts/compact-at-boundary.py`, `claude/hooks/landing.py`,
+   `claude/hooks/alarm-big-result.py`.
+3. When every line is `ok` again, update `cli-surface.txt` and `verified-version.txt` in the same
+   commit as the fix, so the two files always describe a build that was actually driven.
 
 ## Keymap (from config.toml)
 The prefix is remapped to `Ctrl+A` (Herdr default is `Ctrl+B`). Press the prefix, then the action

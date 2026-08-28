@@ -1,5 +1,15 @@
 # Install
 
+## 0. Check the machine first
+```
+python scripts/doctor.py
+```
+One line per check, `ok | warn | FAIL`. It exits 1 only when a required tool is missing (git,
+Python 3.8+, Claude Code, and on Windows the Git Bash the hooks run through), so fix every FAIL
+before installing. Herdr is optional: when it is absent you get a warning and nothing else, and
+when it is present the doctor also probes the subcommands this kit drives. `--json` prints the same
+checks for a script.
+
 ## 1. User-level engine
 Installs the skills, hooks, and status line into `%USERPROFILE%\.claude`, and sets up
 `settings.json` (an existing one is backed up, never overwritten).
@@ -50,18 +60,29 @@ CLAUDE.project.md
 See `herdr/README.md`. In short:
 1. Install Herdr; copy `herdr/config.toml` to `%APPDATA%\herdr\config.toml`
    (`~/.config/herdr/config.toml` on macOS/Linux).
-2. Run Herdr's Claude integration so it tracks Claude Code sessions.
+2. Run `herdr integration install claude` so Herdr tracks Claude Code sessions.
 3. Install the Ctrl+Alt+N hotkey:
    ```
    powershell -ExecutionPolicy Bypass -File .\herdr\hotkey\setup-hotkey.ps1
    ```
 
 ## 4. Another device (clone and go)
-1. Clone this repo.
+1. Clone this repo and run `python scripts\doctor.py`.
 2. Run `install.ps1` (user scope).
-3. Copy `herdr/config.toml` into place and run the Herdr Claude integration.
+3. Copy `herdr/config.toml` into place and run `herdr integration install claude`.
 4. Run `herdr/hotkey/setup-hotkey.ps1`.
 5. Review the defaults in `settings.json` (permission mode, model, effort) and adjust.
+
+## When Herdr updates
+Herdr is a preview build and its CLI moves. The kit drives a small surface of it from
+`claude\claude-account.ps1`, `scripts\compact-at-boundary.py`, `claude\hooks\landing.py` and
+`claude\hooks\alarm-big-result.py`, so a renamed subcommand breaks those silently.
+
+After every Herdr update run `python scripts\doctor.py`. A `warn herdr` line means the installed
+version differs from the one the kit was verified against; a `FAIL herdr <subcommand>` means that
+subcommand is gone or renamed. For each FAIL, read the new `herdr <subcommand> --help`, fix the code
+that drives it, then update `herdr\cli-surface.txt` and `herdr\verified-version.txt` in the same
+commit as the fix. The `herdr-driving` skill holds the verified behaviour of each call.
 
 ## What the installer does not touch
 - It never deletes anything under `~/.claude`; it merges skills and hooks and backs up settings.

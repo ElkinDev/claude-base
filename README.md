@@ -40,13 +40,16 @@ project-template/           -> copy into each project
   docs/                     spec structure for spec-driven projects (for /sdd)
 herdr/                      Herdr multiplexer config + the Ctrl+Alt+N global hotkey
 scripts/                    zero-token tooling: usage ledger and board, compaction watcher and report,
-                            evidence-path resolver
+                            evidence-path resolver, preflight doctor
 docs/                       status line, accounts, permissions, memory notes, context economics
 install.ps1                 installer (user scope, and -Project to scaffold a project)
 ```
 
 ## Quickstart
 ```
+# check the machine has what the kit needs (git, python, claude, Git Bash, optionally Herdr)
+python scripts\doctor.py
+
 # user-level engine
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 
