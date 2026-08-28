@@ -80,3 +80,12 @@ As a contributor, I add support for another agent by following the adapter contr
 
 - The adapter contract doc defines required mappings, fidelity declaration, and tests.
 - A new adapter lands without modifying canonical content, and the matrix is regenerated/updated in the same PR.
+
+## US-012 Adopt the kit in a company repository without breaking its rules
+
+As a developer on a team whose repository already carries company rules, hooks and lint wiring, I install the kit into that repository knowing it cannot break anything, so trying it costs me nothing.
+
+- A dry run prints the full plan before anything is written, and the plan is the whole truth: nothing else is touched.
+- The repository's own `CLAUDE.md`, `.claude/` files, git hooks, `core.hooksPath`, pre-commit and lint wiring survive the install untouched; the kit version of a file I already have arrives as `<name>.new` for me to merge by hand.
+- The run tells me where the backup went and the one command that puts everything back.
+- One switch keeps every file the kit added out of the team's history until I decide otherwise, and the run reminds me to check the team's policy on AI tooling before committing any of it.

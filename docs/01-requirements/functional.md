@@ -49,3 +49,10 @@ Each FR is a testable capability. Feature specs in `03-features/` reference thes
 - FR-042: Shipped settings use safe permission defaults and a secrets deny list (SSH keys, key files, env files, cloud credentials). The aggressive personal mode (bypass permissions, dangerous-mode skip) is documented as an explicit local opt-in, never shipped as default.
 - FR-043: CI runs on a Windows, macOS, and Linux matrix: lint (shellcheck, markdown lint, PSScriptAnalyzer while any PowerShell remains), the sanitization guard, installer smoke tests, and hook parity tests.
 - FR-044: Releases are semver tags with a changelog. A release checklist gates publishing (license holder filled, guard green, matrix green, capability matrix current).
+
+## Safe adoption
+
+- FR-045: The installer never overwrites and never deletes a file it did not write. It tells its own files apart by the hash recorded in the managed-file manifest; a file that differs from that record, or that the manifest never heard of, is kept exactly as it is and the kit version lands beside it as `<name>.new`. `--force` overwrites, still after a backup, and never deletes.
+- FR-046: Before any write that replaces existing content, the installer copies the file into `<kit home>/backups/<stamp>/` under its original absolute path, and records in that folder's `manifest.txt` what it overwrote, what it created, which files of the operator's it kept and which `.new` proposals it left. Each line is written before the change it describes, so a run that stops halfway still leaves a record that can be rolled back. Every run that recorded anything ends by naming the backup folder and the exact rollback command.
+- FR-047: `--dry-run` prints the full plan, one line per file with its action, and writes nothing at all, not even the manifest, verified by hashing the target tree before and after.
+- FR-048: A documented rollback command restores one backup: the overwritten files go back to their original paths, the files that run created are removed, their entries leave the manifest, and a file changed after the backup was taken is skipped with its reason unless the operator passes `--force`.

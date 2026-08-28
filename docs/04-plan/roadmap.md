@@ -5,7 +5,7 @@ Sprints are scope units, not calendar units: a sprint is done when its definitio
 | Sprint | Theme | Features | Exit guarantee |
 |---|---|---|---|
 | 01 | Safety net and portable core | F10, F02, CI skeleton from F11 | The repo can never regress into leaking private content, and the core hooks run on three OSes |
-| 02 | Cross-platform install | F01, settings render, safe defaults (ADR-009), ps1 retirement | A fresh machine on any OS installs the engine with one command |
+| 02 | Cross-platform install | F01, F13, settings render, safe defaults (ADR-009), ps1 retirement | A fresh machine on any OS installs the engine with one command, and an existing repository keeps everything it already had |
 | 03 | Unification | F07, F08, F09, docs/WORKLOG.md | The best of the private setups lives here, generic and guarded |
 | 04 | Multi-agent interchange | F03, F04, F05 | One AGENTS.md drives Claude Code, Codex, and OpenCode |
 | 05 | Cursor, docs, release | F06, F11 completion, F12 | v0.1.0 public, matrix honest, docs complete |

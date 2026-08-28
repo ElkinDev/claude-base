@@ -4,6 +4,7 @@ This folder holds two kinds of documents.
 
 ## Reference docs (shipped with the toolkit)
 
+- `ADOPTION.md`: installing into a repository that already has company rules, hooks and lint wiring: what the kit writes, what it never touches, how to keep every kit file out of the team's history, and how to roll a whole run back.
 - `EVIDENCE.md`: where evidence lives (beside the repository, never inside it), the pack layout, the portable spec grammar, and the resolver every skill calls.
 - `MEMORY.md`: conventions for the agent's persistent file-based memory.
 - `STATUSLINE.md`: statusline wiring and customization.
@@ -20,7 +21,7 @@ This repo dogfoods its own spec-driven workflow. The folders below are the sourc
 - `00-product/`: vision, scope, and the domain model.
 - `01-requirements/`: functional requirements (FR-xxx), non-functional requirements (NFR-xxx), and user stories (US-xxx).
 - `02-architecture/`: architecture overview, data contracts, security and privacy, and the ADRs (numbered decisions).
-- `03-features/`: one spec per feature (F01 to F12), each mapping the FR/US it satisfies.
+- `03-features/`: one spec per feature (F01 to F13), each mapping the FR/US it satisfies.
 - `04-plan/`: roadmap, backlog, and `sprints/` with one file per sprint carrying its scope and definition of done.
 
 There is no `05-design/` folder because the toolkit has no UI.

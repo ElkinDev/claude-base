@@ -11,14 +11,18 @@ when it is present the doctor also probes the subcommands this kit drives. `--js
 checks for a script.
 
 ## 1. User-level engine
-Installs the skills, hooks, and status line into `%USERPROFILE%\.claude`, and sets up
-`settings.json` (an existing one is backed up, never overwritten).
+Installs the skills, hooks, and status line into `%USERPROFILE%\.claude` (or `$KIT_HOME` when you
+set it), and sets up `settings.json`. See the plan first, then run it:
 ```
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -DryRun
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
-If you already had a `settings.json`, the installer writes `settings.json.new` next to it and backs
-up the original. Merge the two by hand: keep your own keys and add the `statusLine` block and the
-`worklog` SessionStart / PreCompact / SessionEnd / Stop hooks, and the compaction hooks (PreCompact checkpoint with summary steering, PostCompact summary persistence, SessionStart recovery; see `docs/CONTEXT-ECONOMICS.md`).
+Nothing you already have is overwritten or deleted. Any file the installer did not write itself is
+backed up, kept exactly as it is, and the kit version lands beside it as `<name>.new` for you to
+merge by hand. If you already had a `settings.json`, that means `settings.json.new`: keep your own
+keys and add the `statusLine` block and the `worklog` SessionStart / PreCompact / SessionEnd / Stop
+hooks, and the compaction hooks (PreCompact checkpoint with summary steering, PostCompact summary
+persistence, SessionStart recovery; see `docs/CONTEXT-ECONOMICS.md`).
 
 Requirements: Windows PowerShell 5.1+, `git` on PATH, and a terminal font with emoji for the status
 line glyphs.
@@ -28,6 +32,11 @@ Scaffold a project so it gets the working rules, a profile to fill, and the bran
 ```
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Project C:\Repo\my-app
 ```
+Adopting the kit in a repository that already has rules of its own (a company `CLAUDE.md`, git
+hooks, pre-commit or husky wiring) is a case of its own, and `docs/ADOPTION.md` covers it end to
+end: what the run touches, what it never touches, how to keep every kit file out of the team's
+history with `-LocalOnly`, and how to roll the whole thing back. Read it before you install into a
+repository you share.
 Then pick a profile: copy the closest `project-template\profiles\*.md` over `my-app\CLAUDE.project.md`
 and fill in the blanks (tracker, gate commands, integration branch, evidence root, git discipline).
 
@@ -50,7 +59,11 @@ The installer copies the agents folder by wildcard, so the project gets all five
 - `implementer-light` the same at lower effort, for mechanical slices (tests, strings, docs, renames)
 - `reviewer` adversarial review of a branch diff before merge; a disposition, never a fix
 
-If you keep the project rules local (not committed), add to the project's `.git/info/exclude`:
+If you keep the project rules local (not committed), re-run the project command with `-LocalOnly`:
+it appends exactly the paths that run manages to the exclude file git actually reads, which is not
+always `.git/info/exclude` (in a worktree or a submodule it lives in the common directory, and the
+installer asks git for it). To do it by hand, append to the file `git rev-parse --git-path
+info/exclude` prints:
 ```
 CLAUDE.project.md
 .claude/
@@ -180,6 +193,39 @@ that drives it, then update `herdr\cli-surface.txt` and `herdr\verified-version.
 commit as the fix. The `herdr-driving` skill holds the verified behaviour of each call.
 
 ## What the installer does not touch
-- It never deletes anything under `~/.claude`; it merges skills and hooks and backs up settings.
+
+It deletes nothing, ever, in either scope, with or without `-Force`. It knows which files are its
+own because it records a sha256 per file in `<kit home>/.kit-manifest.json`, and it treats
+everything else as yours.
+
+- A file that matches its manifest record is a kit file nobody changed, so a re-run refreshes it,
+  after copying it into `<kit home>/backups/<stamp>/`.
+- A file that differs from the record, or that the manifest never heard of, is yours. It is backed
+  up, left exactly as it is, and the kit version is written beside it as `<name>.new` for you to
+  merge. `-Force` overwrites it instead, still after a backup.
+- A file whose content already matches is skipped in silence, so a re-run of an up-to-date install
+  writes nothing at all, not even the manifest. The one thing such a run does change is a record
+  that was lost: a file that is byte for byte the kit's goes back into the manifest, because
+  without the record a rollback would no longer be allowed to remove it.
+- `-DryRun` prints the full plan, one line per file with its action, and writes nothing.
+- In a project it writes only `CLAUDE.md`, `CLAUDE.project.md` and `.claude/`, plus `docs/` on the
+  runs you pass `-Sdd` to, and it names those paths in the preflight before it plans anything. It
+  never writes a git hook, never sets `core.hooksPath`, and never adds a CI file. Existing husky,
+  pre-commit, lefthook, CODEOWNERS and editorconfig wiring is listed in the preflight and then
+  left alone.
+- `-LocalOnly` (project scope) appends the paths that run manages inside the repository, the `.new`
+  proposals included and a file of your own never, to the exclude file git reads for that working
+  tree, without ever duplicating a line. Everything under `.claude/` goes in as the single folder
+  line `.claude/`, so whatever the team later puts in that folder is hidden with it.
 - It does not write the Herdr hook (`herdr-agent-state.ps1`); Herdr's own integration owns that file.
-- Project scaffolding skips files that already exist unless you pass `-Force`.
+
+Every run that wrote anything ends by naming its backup folder and the command that reverses it:
+```
+python scripts\kit-restore.py --list
+python scripts\kit-restore.py --stamp <stamp>
+```
+A run killed from outside, by Ctrl+C at the console or by `Stop-Process`, never gets to print that,
+but the backup folder holds every line it had written by then, `--list` shows it with the files it
+holds, and rolling that stamp back puts them back. The copies carry your bytes, not your Windows
+file attributes: a read-only file comes back writable.
+`docs/ADOPTION.md` has the full story, including the manual rollback list.

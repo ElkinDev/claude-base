@@ -43,11 +43,16 @@ herdr/                      Herdr multiplexer config, the Ctrl+Alt+N global hotk
                             version and the CLI surface the kit drives
 scripts/                    zero-token tooling: usage ledger and board, compaction watcher and report,
                             evidence-path resolver, preflight doctor
+  kit-restore.py            roll one install back: restores what it replaced, removes what it created
   sanitize-check.py         guard that blocks a push carrying a personal path, a real address, a
                             credential shape or a private name, and a commit once the optional
                             pre-commit hook is installed
-docs/                       status line, accounts, permissions, evidence, memory notes, context economics
-install.ps1                 installer (user scope, and -Project to scaffold a project)
+docs/                       status line, accounts, permissions, adoption, evidence, memory notes,
+                            context economics
+install.ps1                 installer (user scope, and -Project to scaffold a project). It never
+                            overwrites or deletes a file it did not write; -DryRun shows the plan
+install/                    what the installer runs on: lib.ps1 the ownership rule, backup.ps1 the
+                            backup record, adopt.ps1 the preflight and the exclude file
 ```
 
 ## Quickstart
@@ -59,6 +64,9 @@ python scripts\doctor.py
 # (add --pre-commit to check what a commit is about to record as well)
 python scripts\sanitize-check.py --install-hook
 
+# see the whole plan first, one line per file, writing nothing
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -DryRun
+
 # user-level engine
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 
@@ -69,7 +77,10 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Permissions ask
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Project C:\Repo\my-app
 # then copy the closest project-template\profiles\*.md over my-app\CLAUDE.project.md and fill it
 ```
-See `INSTALL.md` for a full setup, including another machine, Herdr, and the hotkey.
+See `INSTALL.md` for a full setup, including another machine, Herdr, and the hotkey. Installing into
+a repository that already has company rules, git hooks or lint wiring is covered on its own in
+`docs/ADOPTION.md`: the kit never overwrites or deletes what it did not write, it backs up before
+every write, and one command rolls a whole run back.
 
 ## Several accounts
 Claude Code has no native multi-account support, so switching between a personal, work and client
@@ -88,6 +99,7 @@ profile through a junction, and the PowerShell 5.1 JSON parse that silently sign
 | Document | What it covers |
 |---|---|
 | `INSTALL.md` | full setup, another machine, Herdr, the global hotkey |
+| `docs/ADOPTION.md` | adopting the kit in a repository that already has rules: what it writes, what it never touches, how to keep it local, how to roll it back |
 | `docs/EVIDENCE.md` | where evidence lives (beside the repo, not in it), the spec grammar, and the resolver |
 | `docs/ACCOUNTS.md` | several Claude Code accounts, shortcuts, and the traps |
 | `docs/PERMISSIONS.md` | what bypass mode trades, and how to change it |
