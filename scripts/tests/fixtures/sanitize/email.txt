@@ -1,0 +1,3 @@
+sanitize-ok: all seeded leak fixture
+Seeded on purpose.
+Reported by first.last@acme-corp.io during the migration.

@@ -1,0 +1,3 @@
+sanitize-ok: all seeded leak fixture
+Seeded on purpose.
+Server=db01;Database=orders;User Id=svc;Password=Sup3rSecretValue;

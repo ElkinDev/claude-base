@@ -1,0 +1,66 @@
+#!/bin/sh
+# kit sanitize guard v1
+#
+# Blocks a push that would publish a private identifier. Install it with
+# `python scripts/sanitize-check.py --install-hook`; git feeds this hook one line per ref on
+# stdin, `<local ref> <local sha> <remote ref> <remote sha>`.
+#
+# It fails closed. No checker or no usable python means no push, because a guard that lets a
+# push through when it cannot run is not a guard.
+
+set -u
+
+# The report names paths, and a path can carry anything. Ask python for utf-8 output so a
+# non-ascii name cannot crash the report on a console codepage that has no room for it.
+PYTHONIOENCODING=utf-8
+PYTHONUTF8=1
+export PYTHONIOENCODING PYTHONUTF8
+
+root=$(git rev-parse --show-toplevel 2>/dev/null)
+checker="$root/scripts/sanitize-check.py"
+
+if [ ! -f "$checker" ]; then
+	echo "sanitize guard: $checker is missing, so the push is blocked." >&2
+	echo "Restore the checker, or remove this hook deliberately." >&2
+	exit 1
+fi
+
+# The interpreter is probed, not assumed: on Windows `python3` is often the Store stub, which
+# exists on PATH and runs nothing.
+python_cmd=""
+for candidate in "py -3" "python" "python3"; do
+	# shellcheck disable=SC2086
+	if $candidate -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
+		python_cmd="$candidate"
+		break
+	fi
+done
+
+if [ -z "$python_cmd" ]; then
+	echo "sanitize guard: no python 3.8 or newer found (tried py -3, python, python3)." >&2
+	echo "The push is blocked. Install python, or run the checker by hand and remove this hook." >&2
+	exit 1
+fi
+
+status=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+	# A deletion pushes an all-zero local sha and has nothing to scan.
+	case "$local_sha" in
+		*[!0]*) ;;
+		*) continue ;;
+	esac
+	# The ref names are passed in so the checker scans the branch names this push would
+	# publish, and only those. They are not echoed here: a branch name can itself be the leak,
+	# and the checker is the only thing that knows how to print one safely. `read` splitting on
+	# whitespace is safe for them because `git check-ref-format` forbids a space in a ref name;
+	# a line that somehow arrives malformed leaves the sha fields empty and the checker fails
+	# the push rather than passing it.
+	# shellcheck disable=SC2086
+	if ! $python_cmd "$checker" --range "$remote_sha..$local_sha" \
+		--ref-name "$local_ref" --ref-name "$remote_ref"; then
+		echo "sanitize guard: blocked, this push would publish a private identifier" >&2
+		status=1
+	fi
+done
+
+exit $status

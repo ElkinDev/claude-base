@@ -3,7 +3,7 @@
 ## Layers
 
 1. Content (canonical source): `claude/` (engine: rules, settings, hooks, skills, statusline) and `project-template/` (project kit: CLAUDE.md, CLAUDE.project.md, AGENTS.md, `.claude/` wiring, agents, profiles, optional modules). Authored once, in Claude-native formats (ADR-003).
-2. Tooling: `install/` (the two thin bootstrap installers plus the shared install manifest) and `tools/` (sanitize guard, render helpers, parity test runner). Logic lives in the manifest and in single-source POSIX sh scripts (ADR-004, ADR-005).
+2. Tooling: `install/` (the two thin bootstrap installers plus the shared install manifest) and `tools/` (render helpers, parity test runner). Logic lives in the manifest and in single-source POSIX sh scripts (ADR-004, ADR-005). The sanitization guard shipped before this layout existed and lives in `scripts/` with the rest of the Python tooling (ADR-007, amended).
 3. Adapters: `adapters/<agent>/` holds one mapping spec per supported agent (what canonical content lands where, in which format, merged how) plus any agent-specific shim files. Adapters never own content (ADR-003, ADR-008).
 4. Quality: `.github/workflows/` CI matrix (lint, guard, install smoke, hook parity) and the release checklist (F11).
 
@@ -32,7 +32,8 @@ claude-base/
   install/
     install.sh  install.ps1  manifest.json
   tools/
-    sanitize-check.sh  parity/  render/
+    parity/  render/
+  scripts/                 zero-token python tooling, including the sanitization guard
   docs/                    reference docs + this spec tree
   herdr/                   optional third-party integration notes
 ```

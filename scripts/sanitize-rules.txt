@@ -1,0 +1,50 @@
+# Generic sanitization rules. One rule per line, `id<TAB>regex`, with an optional third
+# tab-separated column of flags. Rules are applied per line with Python `re`. Start a regex with
+# `(?i)` to make that rule case-insensitive. Lines starting with `#` are comments.
+#
+# Flags. `name` also applies the rule to every component of a scanned path, so a leak in a file
+# or directory name is caught the way one in the body is.
+#
+# Captures. A rule that captures a group called `name` can be cleared by an entry in
+# sanitize-allow.txt when that entry full-matches the captured name: the user in a home path,
+# the domain in an address, the org in a forge or tracker URL. A rule with no `name` group can
+# never be cleared, which is where every credential shape belongs.
+#
+# Every rule here describes the shape of a leak without naming anything: nothing in this file
+# may contain a real person, project, org or host. The real names live in the untracked
+# .sanitize/private-denylist.txt, which the checker merges when it is present.
+#
+# Two properties each new rule has to keep: it must not match its own line in this file, and
+# credential shapes must ask for a realistic length so the pattern text is not a match for
+# itself.
+
+# Personal home paths on any OS. The name class excludes the angle brackets, braces, brackets
+# and parentheses a placeholder is written with, so `C:\Users\<name>` and `/home/{user}` are not
+# matches in the first place; the bare-word placeholders (you, username, ...) are cleared by the
+# allowlist through the captured name. Windows paths are written with one backslash in a shell,
+# two in JSON and four in JSON that carries JSON, so any run of them is matched.
+home-windows	(?i)[a-z]:\\+users\\+(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})	name
+home-mac	/Users(?:/)(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})	name
+home-linux	/home(?:/)(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})	name
+
+# Real email addresses, with the domain captured. `git@host` is the ssh form of a git remote,
+# a service account and never a personal address, so it is not an address at all here; that is
+# a lookahead rather than an allow entry, because an allow entry would clear the whole line.
+email	(?<![\w.%+-])(?!(?i:git)@)[A-Za-z0-9._%+-]+@(?P<name>[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,24})	name
+
+# Tracker and forge org URLs whose org is not a placeholder, in both the https and the ssh form.
+# An angle-bracket placeholder is not a match because the org class excludes the brackets. The
+# lookbehind keeps docs subdomains and longer hosts out.
+tracker-azure	(?i)dev\.azure\.com[/:](?:v3/)?(?P<name>[A-Za-z0-9._~-]{1,64})
+tracker-jira	(?i)(?<![\w.])(?P<name>[A-Za-z0-9-]{2,64})\.atlassian\.net
+tracker-github	(?i)(?<![\w.])github\.com[/:](?P<name>[A-Za-z0-9._-]{1,64})
+
+# Credential shapes. None of them captures a name, so none of them can be allowlisted.
+key-private	-----BEGIN (?:[A-Z][A-Z ]+ )?PRIVATE KEY-----
+conn-password	(?i)\b(?:password|pwd)\s*=\s*[^\s;"'<>]{4,}
+token-bearer	(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{20,}
+token-aws	\bAKIA[0-9A-Z]{16}\b
+token-github	\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}\b
+token-github-pat	\bgithub_pat_[A-Za-z0-9_]{30,}\b
+token-slack	\bxox[abeprs]-[A-Za-z0-9-]{10,}\b
+api-key	(?i)\bapi[_-]?key\s*[:=]\s*\S{16,}

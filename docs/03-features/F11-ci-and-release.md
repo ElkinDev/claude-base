@@ -10,7 +10,7 @@ The GitHub Actions matrix that proves every promise (lint, guard, install smoke,
 
 - `ci.yml` on push and PR, matrix `windows-latest`, `macos-latest`, `ubuntu-latest`:
   - Lint: shellcheck on `*.sh`, PSScriptAnalyzer while any ps1 remains, a markdown linter tuned to the house style (long lines are correct, so no line-length rule), JSON validity for settings and manifest.
-  - Guard: `tools/sanitize-check.sh --all` plus the seeded-leak fixtures (F10).
+  - Guard: `python scripts/sanitize-check.py --all` plus the seeded-leak fixtures (F10).
   - Install smoke: user-scope install into a temp HOME (including one with spaces), verify phase green, re-run no-op check, `--dry-run` writes-nothing check; project scaffold with each optional flag into a temp dir.
   - Hook parity: the F02 fixture suite.
   - Optional-module smoke: evidence harness headless scenario (F08) and cross-agent hook fixtures (F09) on the matrix, allowed to be a separate job for speed.

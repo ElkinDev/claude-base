@@ -1,0 +1,3 @@
+sanitize-ok: all seeded leak fixture
+Seeded on purpose.
+open /Users/realuser/Library/Application Support/example-app

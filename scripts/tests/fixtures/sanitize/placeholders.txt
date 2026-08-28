@@ -1,0 +1,13 @@
+Every line here uses a sanctioned placeholder or an allowlisted reference, so the guard stays
+quiet. This fixture carries no waiver on purpose: it has to pass a full repository scan.
+C:\Users\<name>\Repo\example-app
+C:\Users\username\Repo\example-app
+/Users/<you>/Library/Application Support/example-app
+/home/you/evidence
+%USERPROFILE%\Documents
+~/evidence, {home}/evidence, {repo_parent}/evidence
+https://dev.azure.com/<your-org>/example-app/_workitems/edit/1234
+https://your-org.atlassian.net/browse/PROJ-1
+git@github.com:your-org/example-service.git
+tests@example.com
+https://github.com/ElkinDev/claude-base

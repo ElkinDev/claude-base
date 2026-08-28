@@ -43,6 +43,9 @@ herdr/                      Herdr multiplexer config, the Ctrl+Alt+N global hotk
                             version and the CLI surface the kit drives
 scripts/                    zero-token tooling: usage ledger and board, compaction watcher and report,
                             evidence-path resolver, preflight doctor
+  sanitize-check.py         guard that blocks a push carrying a personal path, a real address, a
+                            credential shape or a private name, and a commit once the optional
+                            pre-commit hook is installed
 docs/                       status line, accounts, permissions, evidence, memory notes, context economics
 install.ps1                 installer (user scope, and -Project to scaffold a project)
 ```
@@ -51,6 +54,10 @@ install.ps1                 installer (user scope, and -Project to scaffold a pr
 ```
 # check the machine has what the kit needs (git, python, claude, Git Bash, optionally Herdr)
 python scripts\doctor.py
+
+# install the guard that blocks a push carrying a personal path, an address or a secret
+# (add --pre-commit to check what a commit is about to record as well)
+python scripts\sanitize-check.py --install-hook
 
 # user-level engine
 powershell -ExecutionPolicy Bypass -File .\install.ps1

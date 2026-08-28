@@ -1,0 +1,4 @@
+sanitize-ok: all seeded leak fixture
+The line below leaks and carries a per-rule waiver. The test strips the whole-file waiver
+above so the per-rule one is the thing under test.
+set WORKDIR=C:\Users\realuser\src   # sanitize-ok: home-windows fixture for the waiver path

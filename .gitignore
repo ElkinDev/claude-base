@@ -25,3 +25,6 @@ __pycache__/
 
 # written by the PreCompact autosave hook in whatever folder a session runs in
 NOTES.autosave.md
+
+# the sanitization guard's private denylist: the real names, never committed (ADR-007)
+.sanitize/

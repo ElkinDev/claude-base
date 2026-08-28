@@ -1,0 +1,5 @@
+sanitize-ok: all seeded leak fixture
+Seeded on purpose: one tracker URL per forge, none of them a placeholder org.
+https://dev.azure.com/acme-corp/Delivery/_workitems/edit/1234
+https://acme-corp.atlassian.net/browse/AB-12
+git clone https://github.com/acme-corp/internal-tool.git
