@@ -36,5 +36,7 @@ Not scheduled. An item moves into a sprint file when it is chosen; it never gets
 
 ## Known small items
 
+- Sanitization guard (from the F10 review): a stdout closed outright (not a broken pipe) raises AttributeError on the final flush, unreachable from a git hook; a clean report cut short by a pager exits 1; under `ls-tree -t` a directory row and the file beneath it each yield a `private-path` finding; overlapping alternations in a private `regex:` line (`(a|a)+`) are documented, not detected.
+- Safe adoption (from the F13 review): `kit-restore.py` does not yet apply the broken-record rule that `install/lib.ps1` and the data contract state; a restore through rename does not carry an explicit ACE or the hidden attribute of the replaced file (`copymode` carries the read-only bit only).
 - `.gitignore` entry for `.sanitize/` ships with F10; verify nothing else personal-adjacent needs ignoring after Sprint 03 ports.
 - Evidence root on Linux distros without `~/Documents`: create-on-demand covers it; revisit only if users report friction.
