@@ -27,7 +27,12 @@ project-template/           -> copy into each project
   CLAUDE.project.md         the active profile to fill per project
   profiles/                 examples: azure-devops-dotnet, jira-git, plain-git, personal-notes
   .claude/settings.local.json   project hook wiring (branch hooks)
-  .claude/agents/           implementer, implementer-light, reviewer, designer templates (for /sdd)
+  .claude/agents/           five agent templates for /sdd; the installer copies the folder whole
+    analyst.md              decision-shaping analysis with file:line citations, read-only toward the repo
+    designer.md             UI and design deliverables from the design brief and the feature specs
+    implementer.md          implements a feature or sprint slice strictly from the written specs
+    implementer-light.md    the same at lower effort, for mechanical slices (tests, strings, docs, renames)
+    reviewer.md             adversarial review of a branch diff before merge; a disposition, never a fix
   docs/                     spec structure for spec-driven projects (for /sdd)
 herdr/                      Herdr multiplexer config + the Ctrl+Alt+N global hotkey
 docs/                       status line, accounts, permissions, and memory notes
