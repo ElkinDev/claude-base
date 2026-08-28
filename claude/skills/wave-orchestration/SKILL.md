@@ -17,7 +17,7 @@ Every line below is a law. Cite laws by their words in briefs; never paraphrase 
 - Worker: an Opus 5 session that implements one brief in one worktree with no subagents and no orchestration; it exists only when the work must run on another account (for example `cc a`) or must outlive the orchestrator (a device bench longer than the orchestrator's day); it closes at landing.
 - Everything else is an agent launched by the orchestrator with the Agent tool (implementer, reviewer, general-purpose on Opus).
 - Forbidden: a session that exists to launch a single agent and take notes; a Fable context outside the orchestrator pane; a per-worktree notes file (the checkpoint is the agent's report plus the board line; findings worth keeping go to `docs/` in main before the worktree is removed).
-- Concurrency: three to five Opus agents in flight at all times while the backlog has items whose inputs are ready; the shared device lock (for example the S21U bench) is the only serialization point, never implementation.
+- Concurrency: three to five Opus agents in flight at all times while the backlog has items whose inputs are ready, serializing at two points only, the shared device lock for bench work and the machine build mutex for implementation gates, which is why at most three implementation agents are in flight.
 - Merge gate: no merge to main without the adversarial reviewer agent's disposition (CLEAR, or BLOCK with numbered findings).
 
 ## Dispatch and briefs

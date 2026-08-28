@@ -27,7 +27,7 @@ project-template/           -> copy into each project
   CLAUDE.project.md         the active profile to fill per project
   profiles/                 examples: azure-devops-dotnet, jira-git, plain-git, personal-notes
   .claude/settings.local.json   project hook wiring (branch hooks)
-  .claude/agents/           implementer + designer templates (for /sdd)
+  .claude/agents/           implementer, implementer-light, reviewer, designer templates (for /sdd)
   docs/                     spec structure for spec-driven projects (for /sdd)
 herdr/                      Herdr multiplexer config + the Ctrl+Alt+N global hotkey
 docs/                       status line, accounts, permissions, and memory notes
