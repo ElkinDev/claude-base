@@ -4,6 +4,8 @@ Not scheduled. An item moves into a sprint file when it is chosen; it never gets
 
 ## Decisions pending (maintainer)
 
+- F10 sanitization guard moved up: the repository went public on 2026-08-28 before the guard existed, and the first scan afterwards found private project names in tests and fixtures, fixed by a history rewrite and a forced push the same morning. F10's "history starts clean" assumption no longer holds; the pre-push check is the next thing to build, and the commits that existed before the rewrite stay reachable by hash on the host until it garbage-collects them or support is asked to purge them.
+
 - Repo name before going public: keep `claude-base` (honest, searchable) or rename to something agent-neutral. Decide before Sprint 05 executes F12.
 - herdr folder depth: keep the minimal integration note (F12 baseline) or absorb the fuller private kit's extras (settings reference, launchers) after sanitization.
 - Statusline default glyphs: keep current cosmetic defaults or switch to plain ASCII defaults with glyphs as documented opt-in.
