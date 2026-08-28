@@ -182,7 +182,7 @@ class LedgerFixture(unittest.TestCase):
         # Two feature merges and one merge that is listed but not counted.
         cls.git_log = os.path.join(cls.tmp, "git-log.txt")
         with open(cls.git_log, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write("aaa1111|2026-08-27 09:10:00 -0500|Merge branch 'r42-lists-r1' [skip ci]\n")
+            fh.write("aaa1111|2026-08-27 09:10:00 -0500|Merge branch 'vc-lists-r1' [skip ci]\n")
             fh.write("bbb2222|2026-08-27 10:20:00 -0500|Merge branch 'spec-f33-w2' [skip ci]\n")
             fh.write("ccc3333|2026-08-27 11:30:00 -0500|Merge pull request #7 from a fork\n")
 
@@ -299,7 +299,7 @@ class LedgerFixture(unittest.TestCase):
         with open(os.path.join(ledger_dir, "daily", daily[0]), encoding="utf-8") as fh:
             breakdown = fh.read()
         self.assertIn("## Sources that ran", breakdown)
-        self.assertIn("Merge branch 'r42-lists-r1'", breakdown)
+        self.assertIn("Merge branch 'vc-lists-r1'", breakdown)
         self.assertIn("Merge pull request #7", breakdown)
 
 

@@ -21,7 +21,6 @@ LANDING = os.path.join(os.path.dirname(HERE), "landing.py")
 BOARD_CANDIDATES = [
     os.environ.get("BOARD_PY") or "",
     os.path.normpath(os.path.join(HERE, "..", "..", "..", "scripts", "board.py")),
-    r"C:\Repo\myapp-evidence\scripts\board.py",
     r"C:\Repo\claude-base\scripts\board.py",
 ]
 
