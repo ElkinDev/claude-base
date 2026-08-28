@@ -185,10 +185,13 @@ Where the files land: checkpoints and summaries go to `~/.claude/checkpoints/<pr
 (`CLAUDE_CHECKPOINT_DIR` overrides), outside every repository, so they need no ignore rule.
 The autosave is the exception: it is written to `NOTES.autosave.md` in the session's `cwd`,
 where the next session finds it, and that is usually a repository. It is a dump of the last
-messages and is not for commit; add it to `.gitignore`, or to `.git/info/exclude` in a team
-repository whose `.gitignore` you do not own, before the first compaction there, because the
-hook creates it without asking and `git add -A` would take it. The old habit of a hand-kept
-`NOTES.md` is gone from the toolkit: no hook reads or writes one.
+messages and is not for commit, so the hook makes git ignore it before writing it: when
+`git check-ignore` does not already cover the name, it appends it to the repository's local
+exclude list (`.git/info/exclude`, shared by every worktree of that repository), never to the
+team's `.gitignore`. That holds on any machine and in any project where the hook is
+installed, with nothing to remember before the first compaction; `git add -A` in a team
+repository does not pick the file up. The old habit of a hand-kept `NOTES.md` is gone from
+the toolkit: no hook reads or writes one.
 
 Nothing in the flow asks the model to write anything before compaction. The checkpoint is
 computed from disk, which is both cheaper (no output tokens) and more reliable (a model asked

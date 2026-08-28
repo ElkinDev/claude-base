@@ -5,15 +5,60 @@ the last stretch is never unrecoverable. Tool results, tool calls and thinking a
 stdin: the hook JSON (session_id, transcript_path, trigger, cwd, custom_instructions).
 Keeps the last 40 text messages, each cut at 1,500 characters, and trims the file to its
 last 200 KB. Never blocks the compaction: every failure exits 0 silently.
+
+The file lands in a repository more often than not, and it is a dump of the conversation, so
+before writing it the hook makes sure git ignores it: if `git check-ignore` does not already
+cover it, the name is appended to the repository's local exclude list (`.git/info/exclude`,
+shared by all worktrees of that repository) and never to the team's `.gitignore`. Idempotent,
+silent outside a repository or without git, and enough for any machine or project where the
+hook is installed: nobody has to remember the rule before the first compaction.
 """
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime
 
 KEEP = 40
 PER_MSG = 1500
 FILE_CAP = 200_000
+AUTOSAVE_NAME = "NOTES.autosave.md"
+
+
+def git(cwd, *args):
+    try:
+        proc = subprocess.run(["git", "-C", cwd] + list(args), capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=10)
+    except Exception:
+        return None, ""
+    return proc.returncode, (proc.stdout or "").strip()
+
+
+def ensure_excluded(cwd, name=AUTOSAVE_NAME):
+    """Make git ignore <name> under cwd through the local exclude list. Returns True when the
+    name is ignored after the call, False when cwd is not a repository or git is unavailable."""
+    code, _ = git(cwd, "check-ignore", "-q", name)
+    if code == 0:
+        return True  # .gitignore or the exclude list already covers it
+    if code is None or code != 1:
+        return False  # no git, or not inside a repository (128)
+    code, exclude = git(cwd, "rev-parse", "--git-path", "info/exclude")
+    if code != 0 or not exclude:
+        return False
+    if not os.path.isabs(exclude):
+        exclude = os.path.join(cwd, exclude)
+    try:
+        os.makedirs(os.path.dirname(exclude), exist_ok=True)
+        current = open(exclude, encoding="utf-8", errors="replace").read() if os.path.isfile(exclude) else ""
+        if name not in current.splitlines():
+            with open(exclude, "a", encoding="utf-8", newline="\n") as handle:
+                if current and not current.endswith("\n"):
+                    handle.write("\n")
+                handle.write(name + "\n")
+    except Exception:
+        return False
+    code, _ = git(cwd, "check-ignore", "-q", name)
+    return code == 0
 
 
 def texts_of(entry):
@@ -61,7 +106,8 @@ def main():
             if len(text) > PER_MSG:
                 text = text[:PER_MSG] + " [cut]"
             out.append(f"\n**{role}:** {text}\n")
-        target = os.path.join(cwd, "NOTES.autosave.md")
+        target = os.path.join(cwd, AUTOSAVE_NAME)
+        ensure_excluded(cwd)
         prev = ""
         if os.path.isfile(target):
             prev = open(target, encoding="utf-8", errors="replace").read()
