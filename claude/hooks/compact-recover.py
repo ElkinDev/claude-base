@@ -43,7 +43,7 @@ def main():
     if os.path.isfile(notes):
         out.append(f"NOTES.md ({notes}), first 40 lines:\n{head(notes, 40).rstrip()}")
     else:
-        out.append(f"No NOTES.md in {cwd}. If this is a lane, write one now (goal, acceptance list, done, next).")
+        out.append(f"No NOTES.md in {cwd}, which is correct: an agent keeps no notes file; its checkpoint is its report (law of 2026-08-27).")
     briefs = os.environ.get("CLAUDE_BRIEFS_DIR")
     if briefs and os.path.isdir(briefs):
         files = sorted(glob.glob(os.path.join(briefs, "*.md")), key=os.path.getmtime)

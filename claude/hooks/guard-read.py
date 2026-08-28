@@ -2,9 +2,11 @@
 
 Two rules, and nothing else is ever denied:
 
-1. Image files are denied when CLAUDE_ROLE is "orchestrator". A pane that coordinates does
-   not need pixels; a lane or a fork looks and reports. An unset CLAUDE_ROLE means "lane",
-   which is allowed.
+1. Image files are denied when CLAUDE_ROLE is "orchestrator" and the Read comes from the
+   pane itself. A pane that coordinates does not need pixels; an agent it launches looks and
+   reports. A subagent inherits the variable, so it is recognised by its payload instead:
+   agent_id or agent_type present, or a transcript_path under a subagents directory. An
+   unset CLAUDE_ROLE means "lane", which is allowed.
 2. Any file above 150 KB is denied unless the call already carries a limit of 400 lines or
    fewer. The reason names the size and the line count and offers the slice commands.
    Images and PDFs are exempt from this rule: they are read as pixels and pages, a slice of
@@ -73,7 +75,13 @@ def main():
 
         extension = os.path.splitext(path)[1].lower()
         role = (os.environ.get("CLAUDE_ROLE") or "lane").strip().lower()
-        if extension in IMAGE_EXTENSIONS and role == "orchestrator":
+        transcript = str(data.get("transcript_path") or "").replace("\\", "/")
+        is_subagent = bool(data.get("agent_id") or data.get("agent_type")) or "/subagents/" in transcript
+        trace = os.environ.get("GUARD_READ_TRACE")
+        if trace:
+            with open(trace, "a", encoding="utf-8") as t:
+                t.write("%s role=%s subagent=%s keys=%s\n" % (path, role, is_subagent, sorted(data.keys())))
+        if extension in IMAGE_EXTENSIONS and role == "orchestrator" and not is_subagent:
             deny(
                 "This pane runs as CLAUDE_ROLE=orchestrator and does not read images. "
                 "%s stays on disk: delegate the look to a lane or a fork and ask for a "

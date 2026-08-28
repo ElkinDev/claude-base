@@ -5,6 +5,8 @@ description: Law sheet for running a band of implementer agents: dispatch, lane 
 
 # Wave orchestration
 
+lane = an implementer agent with its worktree and branch; there are no lane sessions, and a lane report is the agent's single return.
+
 Every line below is a law. Cite laws by their words in briefs; never paraphrase one.
 
 ## Session roles
@@ -28,10 +30,10 @@ Every line below is a law. Cite laws by their words in briefs; never paraphrase 
 - After any compaction, restart or account switch the orchestrator re-reads this sheet before dispatching or resuming.
 - Continuation is a message to the same agent; the orchestrator's context is never forked, and a fresh agent that re-reads the repo never continues live work.
 - Stopped agents never resume: recover with a fresh lane per worktree briefed on disk truth, never relaunching over uncommitted work, and order every lane to commit and write a partial report before a planned cutover.
-- One feature implementation lane at a time; the rest of the band takes work that does not need the build mutex, such as specs, mockups, analysis, reviews, docs and scripts.
+- At most three implementation agents in flight, because their gates serialize on the machine build mutex and a fourth only waits; the band is filled to five with mutex-free work such as reviews, specs, mockups, analysis, docs and scripts.
 - The band is three to five lanes on the primary account when the approved queue feeds them; a secondary account runs one lane on simple tasks and stays well inside its quotas.
 - Zero lanes on an empty queue is the correct state; idle-filling is banned, and the band is called full only after enumerating the mutex-free work classes.
-- Orchestrator and lanes run with a capped context and only a research role runs uncapped; agent panes start one at a time and never steal the owner's focus or split the owner's pane.
+- Orchestrator and lanes run with a capped context and only a research role runs uncapped; the orchestrator holds the owner's pane and never splits it; agents are launched with the agent tool in the background, and the agents workspace hosts only worker sessions on another account.
 
 ## Lane conduct
 
@@ -41,8 +43,8 @@ Every line below is a law. Cite laws by their words in briefs; never paraphrase 
 - Never pause with an uncommitted tree: commit the checkpoint first, then wait.
 - An agent keeps no notes file; its checkpoint is its final report plus the board line, and findings worth keeping go to `docs/` in main before the worktree is removed.
 - No narration: no status pings, no per-phase messages, no waiting messages.
-- A lane ends its turn at most twice per gate, one interim naming the exit file and one final report; interims are at most five lines and only for a decision, a flag or error, or a checkpoint before sleeping on a queued gate.
-- The final report is at most ten lines plus pointers to the exit file, the test results and the diff stat; forensics go to the exit file, never into a message.
+- An agent returns once, with its final report; the only interim is the turn-70 checkpoint report, and a decision, flag or error that cannot wait is a message to the orchestrator of at most five lines.
+- The final report is at most fifteen lines plus pointers to the exit file, the test results and the diff stat; forensics go to the exit file, never into a message.
 - Red before green: prove the defect against the pre-change tree before the fix lands.
 - Prove the red by snapshot and checkout, never by a stash, whose ref is shared across worktrees.
 - Restore the tree before releasing the lock on every exit path, and abort the gate when the restore fingerprint does not match.
@@ -82,6 +84,7 @@ Every line below is a law. Cite laws by their words in briefs; never paraphrase 
 ## Merge and union
 
 - No merge to main without the `reviewer` agent's disposition: CLEAR merges, BLOCK returns its numbered findings to the implementer for one fix round and then a second review, infrastructure landings are not exempt, and every merge cites the verdict in the owner-facing landings file as `review: CLEAR <date>` or `review: BLOCK <n> findings, fixed in <sha>, CLEAR <date>`.
+- The reviewer is handed the brief, the diff range and the evidence paths only; never that the gate passed or that the implementer is confident, because both prime it to agree.
 - Merge the batch first, then run one union over it, then resume by message the single lane a real failure belongs to.
 - The union is the arbiter: the full suite and the visual baselines run there once per batch, orchestrator-owned with no agent alive behind it, never skipped, and with the build cache disabled after merging any wave that mutated its own tree.
 - Never merge into a checkout a union is building from; stop that gate gently, merge, then relaunch one union over the batch.
