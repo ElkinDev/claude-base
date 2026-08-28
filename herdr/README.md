@@ -80,3 +80,13 @@ that scripts can read and wait on. Verified on the Windows preview build:
   `herdr agent prompt w1:p5 /exit` delivers `C:/Program Files/Git/exit` and the session answers
   it as a question, one turn wasted and the command not run. Send slash commands from
   PowerShell, cmd or Python, or prefix the command with `MSYS_NO_PATHCONV=1`.
+- Select panes by name, never by pane id: Herdr renumbers workspaces when it restarts
+  (`w3:p1` became `w4:p1` overnight). The name that travels with the session is the one Claude
+  Code stores in the transcript (`claude --name <role>` at launch or `/rename <role>` inside;
+  the account launcher passes `--name <role>` on its own); Herdr reports it as
+  `terminal_title_stripped` (otherwise that field is a summary of the current task). Herdr's
+  own agent name, `herdr agent rename <pane> <name>` (`--clear` removes it), comes back as
+  `name` in `herdr agent list`; tab labels come from `herdr tab list` (default labels are bare
+  numbers); a `herdr pane rename` label is only visible in `pane get`, so scripts do not see
+  it. Inside a pane, `HERDR_PANE_ID`, `HERDR_TAB_ID` and `HERDR_WORKSPACE_ID` are in the
+  environment.

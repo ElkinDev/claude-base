@@ -17,7 +17,9 @@ stays armed as the ceiling for sessions that never go idle. Nothing here calls a
 
 Usage:
   python compact-at-boundary.py                       watch every Claude pane Herdr knows
-  python compact-at-boundary.py --panes w3:p1,w3:p3   watch these panes only
+  python compact-at-boundary.py --titles orques       watch the panes whose title matches (regex)
+  python compact-at-boundary.py --sessions f2109a6d   watch these session ids (prefixes)
+  python compact-at-boundary.py --panes w3:p1,w3:p3   watch these pane ids (Herdr renumbers them)
   python compact-at-boundary.py --status              one pass, print the table, exit
   python compact-at-boundary.py --dry-run             decide and log, never submit
   python compact-at-boundary.py --once                one pass with real submissions
@@ -32,6 +34,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -62,7 +65,7 @@ def log(message, quiet=False):
 # ---------------------------------------------------------------- Herdr
 
 def herdr_agents(herdr):
-    """Claude agents Herdr knows: [{pane, session, status, seq, cwd}]. Empty list on any failure."""
+    """Claude agents Herdr knows: [{pane, session, status, seq, cwd, title}]. Empty list on any failure."""
     try:
         proc = subprocess.run([herdr, "agent", "list"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
         payload = json.loads(proc.stdout or "{}")
@@ -82,8 +85,83 @@ def herdr_agents(herdr):
             "status": item.get("agent_status") or "unknown",
             "seq": item.get("state_change_seq"),
             "cwd": item.get("cwd") or "",
+            # two independent names: Herdr's own (`herdr agent rename`, survives everything the
+            # pane survives) and the terminal title Claude Code sets (`/rename` inside the session,
+            # otherwise an automatic summary of the current task)
+            "name": item.get("name") or "",
+            "title": item.get("terminal_title_stripped") or item.get("terminal_title") or "",
+            "tab": item.get("tab_id") or "",
+            "tab_label": "",
         })
     return out, ""
+
+
+def tab_labels(herdr):
+    """{tab_id: label} for the tabs that carry a real label. Herdr's default labels are bare
+    numbers and are ignored. The launcher creates tabs as `cc-<account>-<role>`, so the role
+    is on the tab whenever a session was opened with -Tab. Empty dict on any failure."""
+    try:
+        proc = subprocess.run([herdr, "tab", "list"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
+        payload = json.loads(proc.stdout or "{}")
+    except Exception:
+        return {}
+    result = payload.get("result")
+    tabs = result.get("tabs") if isinstance(result, dict) else result
+    out = {}
+    for item in tabs or []:
+        if not isinstance(item, dict):
+            continue
+        label = (item.get("label") or "").strip()
+        if item.get("tab_id") and label and not label.isdigit():
+            out[item["tab_id"]] = label
+    return out
+
+
+def select_agents(agents, panes="", sessions="", titles=""):
+    """The agents that match any selector; every agent when no selector is given.
+
+    panes:    comma-separated Herdr pane ids. Herdr renumbers workspaces when it restarts
+              (w3:p1 became w4:p1 overnight), so this is for one-off runs.
+    sessions: comma-separated Claude session id prefixes. Stable while the session lives.
+    titles:   case-insensitive regular expression on the pane's Herdr name and terminal title.
+              Survives both a Herdr restart and a session replacement as long as the new pane
+              keeps the naming convention (for example every orchestrator pane carrying the word).
+    """
+    want_panes = {p.strip() for p in panes.split(",") if p.strip()}
+    want_sessions = {s.strip().lower() for s in sessions.split(",") if s.strip()}
+    pattern = re.compile(titles, re.IGNORECASE) if titles else None
+    if not (want_panes or want_sessions or pattern):
+        return list(agents)
+    out = []
+    for agent in agents:
+        if agent["pane"] in want_panes:
+            out.append(agent)
+        elif any(agent["session"].lower().startswith(prefix) for prefix in want_sessions):
+            out.append(agent)
+        elif pattern and any(pattern.search(agent.get(key) or "") for key in NAME_KEYS):
+            out.append(agent)
+    return out
+
+
+# where a session's name can come from, most deliberate first: the name given with
+# `claude --name` or `/rename` (lives in the transcript, so it travels with the session),
+# Herdr's own agent name, the launcher's tab label, the terminal title
+NAME_KEYS = ("session_name", "name", "tab_label", "title")
+
+
+def label_of(agent):
+    return next((agent.get(key) for key in NAME_KEYS if agent.get(key)), "")
+
+
+def describe_selectors(args):
+    parts = []
+    if getattr(args, "panes", ""):
+        parts.append(f"--panes {args.panes}")
+    if getattr(args, "sessions", ""):
+        parts.append(f"--sessions {args.sessions}")
+    if getattr(args, "titles", ""):
+        parts.append(f"--titles {args.titles!r}")
+    return " ".join(parts)
 
 
 def submit(herdr, pane, prompt):
@@ -128,6 +206,38 @@ def last_context(path):
             continue
         return (usage.get("input_tokens") or 0) + (usage.get("cache_creation_input_tokens") or 0) + (usage.get("cache_read_input_tokens") or 0)
     return None
+
+
+def session_name(path, names):
+    """Name the session was given with `claude --name` or `/rename`: the last custom-title row
+    in its transcript. The read is incremental, each call scans only what was appended since the
+    previous one, so a rename made later is picked up without rereading the file."""
+    if not path:
+        return ""
+    entry = names.setdefault(path, {"offset": 0, "name": ""})
+    try:
+        size = os.path.getsize(path)
+        if size < entry["offset"]:
+            entry["offset"], entry["name"] = 0, ""
+        if size == entry["offset"]:
+            return entry["name"]
+        with open(path, "rb") as handle:
+            handle.seek(entry["offset"])
+            chunk = handle.read()
+    except Exception:
+        return entry["name"]
+    end = chunk.rfind(b"\n") + 1  # leave a half-written last line for the next pass
+    entry["offset"] += end
+    for raw in chunk[:end].splitlines():
+        if b'"custom-title"' not in raw:
+            continue
+        try:
+            row = json.loads(raw.decode("utf-8", "replace"))
+        except Exception:
+            continue
+        if row.get("type") == "custom-title" and row.get("customTitle"):
+            entry["name"] = str(row["customTitle"])
+    return entry["name"]
 
 
 # ---------------------------------------------------------------- decision
@@ -226,12 +336,24 @@ def one_pass(args, cfg, states, cache, quiet=False):
     if agents is None:
         log(error, quiet)
         return []
-    wanted = {p.strip() for p in args.panes.split(",") if p.strip()} if args.panes else None
+    labels = tab_labels(args.herdr) if getattr(args, "titles", "") else {}
+    names = states.setdefault("_names", {})
+    for agent in agents:
+        agent["tab_label"] = labels.get(agent.get("tab", ""), "")
+        agent["session_name"] = session_name(transcript_for(agent["session"], cache), names) if agent["session"] else ""
+    selected = select_agents(agents, getattr(args, "panes", ""), getattr(args, "sessions", ""), getattr(args, "titles", ""))
+    selectors = describe_selectors(args)
+    if selectors and not selected:
+        # say it once, not every 30 seconds: this is what a Herdr renumbering looks like
+        if not states.get("_nomatch"):
+            known = ", ".join(f"{a['pane']} {a['session'][:8]} '{label_of(a)}'" for a in agents) or "no Claude pane"
+            log(f"no Claude pane matches {selectors}; Herdr knows {known}; waiting", quiet)
+        states["_nomatch"] = True
+    elif states.pop("_nomatch", None):
+        log(f"{selectors} matches again: " + ", ".join(a["pane"] for a in selected), quiet)
     rows = []
     now = time.time()
-    for agent in agents:
-        if wanted and agent["pane"] not in wanted:
-            continue
+    for agent in selected:
         session = agent["session"]
         if not session:
             continue
@@ -242,7 +364,7 @@ def one_pass(args, cfg, states, cache, quiet=False):
         # the session is waiting for input, which is the boundary this watcher looks for
         status = "idle" if agent["status"] in cfg["idle_states"] else agent["status"]
         action, reason = decide(state, status, agent["seq"], ctx, now, cfg)
-        rows.append((agent["pane"], session[:8], agent["status"], ctx, action, reason))
+        rows.append((agent["pane"], session[:8], agent["status"], ctx, action, reason, label_of(agent)))
         if action == "fire":
             if args.dry_run:
                 log(f"{agent['pane']} {session[:8]} would submit {args.prompt!r}: {reason} (dry run)", quiet)
@@ -257,17 +379,19 @@ def one_pass(args, cfg, states, cache, quiet=False):
 
 
 def print_table(rows, cfg):
-    print(f"{'pane':8} {'session':9} {'status':8} {'context':>9} {'pct':>5}  decision")
-    for pane, session, status, ctx, action, reason in rows:
+    print(f"{'pane':8} {'session':9} {'title':20} {'status':8} {'context':>9} {'pct':>5}  decision")
+    for pane, session, status, ctx, action, reason, title in rows:
         pct = f"{ctx / cfg['window']:.0%}" if ctx else "?"
-        print(f"{pane:8} {session:9} {status:8} {ctx if ctx is not None else '?':>9} {pct:>5}  {action}: {reason}")
+        print(f"{pane:8} {session:9} {title[:20]:20} {status:8} {ctx if ctx is not None else '?':>9} {pct:>5}  {action}: {reason}")
     if not rows:
         print("(no Claude agents reported by Herdr)")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--panes", default="", help="comma-separated Herdr pane ids to watch; default all Claude panes")
+    parser.add_argument("--panes", default="", help="comma-separated Herdr pane ids to watch (Herdr renumbers them on restart); default all Claude panes")
+    parser.add_argument("--sessions", default="", help="comma-separated Claude session id prefixes to watch")
+    parser.add_argument("--titles", default="", help="case-insensitive regular expression on the pane title, e.g. orques|orchestr")
     parser.add_argument("--window", type=int, default=200000, help="context window in tokens (default 200000)")
     parser.add_argument("--threshold", type=float, default=0.65, help="fraction of the window that arms a compaction (default 0.65)")
     parser.add_argument("--idle", type=int, default=90, help="seconds of continuous idleness before submitting (default 90)")
@@ -281,6 +405,11 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="never submit, only log what would happen")
     parser.add_argument("--stop", action="store_true", help="ask the running watcher to exit")
     args = parser.parse_args()
+    if args.titles:
+        try:
+            re.compile(args.titles, re.IGNORECASE)
+        except re.error as error:
+            parser.error(f"--titles is not a valid regular expression: {error}")
 
     if args.stop:
         os.makedirs(STATE_DIR, exist_ok=True)
@@ -307,7 +436,7 @@ def main():
     if other:
         print(f"another watcher is running (pid {other}); use --stop first")
         return 1
-    log(f"watcher start pid {os.getpid()} panes={args.panes or 'all'} window={args.window} threshold={args.threshold} idle={args.idle}s cooldown={args.cooldown}s interval={args.interval}s dry_run={args.dry_run}")
+    log(f"watcher start pid {os.getpid()} select={describe_selectors(args) or 'all Claude panes'} window={args.window} threshold={args.threshold} idle={args.idle}s cooldown={args.cooldown}s interval={args.interval}s dry_run={args.dry_run}")
     try:
         while True:
             one_pass(args, cfg, states, cache)

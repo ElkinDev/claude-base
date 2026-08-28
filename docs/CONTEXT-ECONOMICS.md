@@ -231,11 +231,28 @@ each pane) and reads the session transcripts under `~/.claude/projects`:
 python scripts/compact-at-boundary.py --status                  one pass, print the decision table
 python scripts/compact-at-boundary.py --once                    one pass with real submissions, then exit
 python scripts/compact-at-boundary.py --dry-run                 loop, log decisions, never submit
-python scripts/compact-at-boundary.py --panes w3:p1             watch one pane, real submissions
+python scripts/compact-at-boundary.py --titles "orques|orchestr"  watch the panes named like that, real submissions
+python scripts/compact-at-boundary.py --sessions f2109a6d       watch one session by id prefix
+python scripts/compact-at-boundary.py --panes w3:p1             watch one pane id (one-off runs only, see below)
 python scripts/compact-at-boundary.py --threshold 0.7 --idle 120 --cooldown 1200
 python scripts/compact-at-boundary.py --idle-states idle        count only Herdr's idle, not done
 python scripts/compact-at-boundary.py --stop                    ask the running watcher to exit
 ```
+
+**Select by name, not by pane.** Herdr renumbers workspaces when it restarts (`w3:p1` became
+`w4:p1` overnight and the watcher sat waiting on a pane that no longer existed), and a pane id
+means nothing on another machine. A session's stable identity is its name: `claude --name
+orchestrator` at launch, or `/rename orchestrator` inside the session, writes a `custom-title`
+row to the transcript, shows the name in the prompt box, the resume picker and the terminal
+title, and the account launcher passes `--name <role>` by itself (`cc work -o orchestrator`
+names the session `orchestrator`; `-- --name x` overrides). `--titles` is a regex matched, in
+this order, against that transcript name, Herdr's agent name (`herdr agent rename`), the tab
+label the launcher sets on `-Tab` launches (`cc-<account>-<role>`) and the terminal title.
+`herdr pane rename` sets a label that `agent list` does not return, so it is not matched.
+Convention: the launcher's roles, `orchestrator`, `lane` and `research`, with `-- --name
+lane-<feature>` when several lanes run at once; an unrelated name matches nothing
+and the watcher says so once (`no Claude pane matches --titles ...; Herdr knows ...`) and
+keeps polling until a pane with that name appears.
 
 One trap when submitting by hand: Git Bash rewrites a leading slash, so `herdr agent prompt
 w1:p5 /compact` arrives as `C:/Program Files/Git/compact` and the session answers it as a
@@ -245,7 +262,7 @@ or set `MSYS_NO_PATHCONV=1`.
 Run it in a spare pane where its log is visible, or hidden:
 
 ```powershell
-Start-Process -WindowStyle Hidden python -ArgumentList '"C:\path\to\claude-base\scripts\compact-at-boundary.py"','--panes','w3:p1'
+Start-Process -WindowStyle Hidden python -ArgumentList '"C:\path\to\claude-base\scripts\compact-at-boundary.py"','--titles','"orques|orchestr"'
 ```
 
 It keeps one instance through a lock file (the lock records a pid and is checked against a
@@ -256,7 +273,7 @@ the loop keeps polling until Herdr is back. What it does not survive is a logoff
 register it as a logon task once:
 
 ```powershell
-$action  = New-ScheduledTaskAction -Execute 'pythonw.exe' -Argument '"C:\path\to\claude-base\scripts\compact-at-boundary.py" --panes w3:p1'
+$action  = New-ScheduledTaskAction -Execute 'pythonw.exe' -Argument '"C:\path\to\claude-base\scripts\compact-at-boundary.py" --titles "orques|orchestr"'
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 Register-ScheduledTask -TaskName 'compact-at-boundary' -Action $action -Trigger $trigger -Force
 ```

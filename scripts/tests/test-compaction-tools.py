@@ -130,7 +130,65 @@ class TranscriptAndHerdrTest(unittest.TestCase):
         finally:
             watcher.subprocess.run = original
         self.assertEqual(error, "")
-        self.assertEqual(agents, [{"pane": "w3:p1", "session": "aaaaaaaa-1111-2222-3333-444444444444", "status": "idle", "seq": 10, "cwd": "C:\\work"}])
+        self.assertEqual(agents, [{"pane": "w3:p1", "session": "aaaaaaaa-1111-2222-3333-444444444444", "status": "idle", "seq": 10, "cwd": "C:\\work", "name": "", "title": "", "tab": "", "tab_label": ""}])
+
+    def test_select_agents_by_pane_session_prefix_or_name_regex(self):
+        agents = [
+            {"pane": "w4:p1", "session": "f2109a6d-0000", "name": "", "title": "NewOrquestrator", "session_name": "orchestrator"},
+            {"pane": "w4:p2", "session": "4a512d43-0000", "name": "analyst", "title": "Analizar epica y plan"},
+            {"pane": "w1:p7", "session": "445ce75b-0000", "name": "", "title": "", "tab_label": "cc-agents-orchestrator"},
+        ]
+        panes = lambda rows: [a["pane"] for a in rows]
+        self.assertEqual(panes(watcher.select_agents(agents)), ["w4:p1", "w4:p2", "w1:p7"])
+        self.assertEqual(panes(watcher.select_agents(agents, panes="w1:p7")), ["w1:p7"])
+        self.assertEqual(panes(watcher.select_agents(agents, sessions="F2109A6D")), ["w4:p1"])
+        self.assertEqual(panes(watcher.select_agents(agents, titles="orques|orchestr")), ["w4:p1", "w1:p7"])
+        self.assertEqual(panes(watcher.select_agents(agents, titles="agents")), ["w1:p7"])
+        self.assertEqual(watcher.label_of(agents[2]), "cc-agents-orchestrator")
+        self.assertEqual(panes(watcher.select_agents(agents, titles="^analyst$")), ["w4:p2"])
+        self.assertEqual(panes(watcher.select_agents(agents, panes="w1:p7", titles="analista")), ["w1:p7"])
+        self.assertEqual(panes(watcher.select_agents(agents, titles="nothing-like-this")), [])
+        self.assertEqual(panes(watcher.select_agents(agents, titles="^orchestrator$")), ["w4:p1"])
+        self.assertEqual(watcher.label_of(agents[0]), "orchestrator")
+
+    def test_session_name_follows_renames_incrementally(self):
+        path = self.write("named.jsonl", [assistant_row(1, 1000)])
+        names = {}
+        self.assertEqual(watcher.session_name(path, names), "")
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"type": "custom-title", "customTitle": "orchestrator", "sessionId": "x"}) + "\n")
+            handle.write(json.dumps({"type": "agent-name", "agentName": "orchestrator", "sessionId": "x"}) + "\n")
+        self.assertEqual(watcher.session_name(path, names), "orchestrator")
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(assistant_row(2, 2000)) + "\n")
+            handle.write('{"type":"custom-title","customTitle":"analyst"')  # half-written line
+        self.assertEqual(watcher.session_name(path, names), "orchestrator")
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(',"sessionId":"x"}\n')
+        self.assertEqual(watcher.session_name(path, names), "analyst")
+        self.assertEqual(watcher.session_name("", names), "")
+
+    def test_one_pass_logs_a_missing_selector_once(self):
+        session = "aaaaaaaa-1111-2222-3333-444444444444"
+        transcript = self.write(f"{session}.jsonl", [assistant_row(1, 150000)])
+        original_run, original_log = watcher.subprocess.run, watcher.log
+        lines = []
+        watcher.subprocess.run = lambda *a, **k: types.SimpleNamespace(stdout=json.dumps(HERDR_LIST), stderr="", returncode=0)
+        watcher.log = lambda message, quiet=False: lines.append(message)
+        args = types.SimpleNamespace(herdr="herdr", panes="", sessions="", titles="orques", dry_run=True, prompt="/compact")
+        states = {}
+        try:
+            self.assertEqual(watcher.one_pass(args, dict(CFG, idle_states={"idle"}), states, {session: transcript}, quiet=True), [])
+            self.assertEqual(watcher.one_pass(args, dict(CFG, idle_states={"idle"}), states, {session: transcript}, quiet=True), [])
+            args.titles = ""
+            args.sessions = "aaaaaaaa"
+            rows = watcher.one_pass(args, dict(CFG, idle_states={"idle"}), states, {session: transcript}, quiet=True)
+        finally:
+            watcher.subprocess.run, watcher.log = original_run, original_log
+        self.assertEqual(len([l for l in lines if l.startswith("no Claude pane matches")]), 1)
+        self.assertEqual(len([l for l in lines if "matches again" in l]), 1)
+        self.assertEqual(rows[0][0], "w3:p1")
+        self.assertNotIn("_nomatch", states)
 
     def test_one_pass_treats_done_as_a_boundary_state(self):
         session = "aaaaaaaa-1111-2222-3333-444444444444"

@@ -51,6 +51,12 @@ $NamesFile  = "$Base\.names.json"
 function Fail($m) { Write-Host "  FAILED: $m" -ForegroundColor Red; exit 1 }
 function Ok($m)   { Write-Host "  $m" -ForegroundColor DarkGray }
 
+# Every session is named after its role (`claude --name`). The name shows in the prompt box,
+# the /resume picker and the terminal title, and it is written to the session transcript, so
+# a person or a script finds "orchestrator" on any machine and in any terminal, whatever
+# pane or workspace number the multiplexer gives it. Pass `-- --name x` to choose another.
+if (-not (@($Extra) -contains "--name" -or @($Extra) -contains "-n")) { $Extra = @("--name", $Role) + @($Extra | Where-Object { $_ -ne $null }) }
+
 # Extra arguments travel inside a string when launching in a new tab or window, so
 # quote the ones carrying spaces.
 $extraStr = ""
@@ -237,7 +243,8 @@ function Show-Help {
     Write-Host "  -Delete          -d      delete the profile, removing junctions first"
     Write-Host "  -NoShare         -n      create it without linking skills or memory"
     Write-Host "  -Role <role>     -o      orchestrator | lane (default) | research; the first two cap"
-    Write-Host "                           the context at 200k, research runs uncapped"
+    Write-Host "                           the context at 200k, research runs uncapped; the role is also"
+    Write-Host "                           the session name (claude --name) unless you pass -- --name x"
     Write-Host "  -Workspace <n>   -x      with -Tab: Herdr workspace (number or id) for the new tab"
     Write-Host "  -Help            -h      this help"
     Write-Host ""
