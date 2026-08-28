@@ -54,8 +54,11 @@ function Ok($m)   { Write-Host "  $m" -ForegroundColor DarkGray }
 # Every session is named after its role (`claude --name`). The name shows in the prompt box,
 # the /resume picker and the terminal title, and it is written to the session transcript, so
 # a person or a script finds "orchestrator" on any machine and in any terminal, whatever
-# pane or workspace number the multiplexer gives it. Pass `-- --name x` to choose another.
-if (-not (@($Extra) -contains "--name" -or @($Extra) -contains "-n")) { $Extra = @("--name", $Role) + @($Extra | Where-Object { $_ -ne $null }) }
+# pane or workspace number the multiplexer gives it. Only when -Role was given: `--name` also
+# renames a session reopened with -c or -r, and a plain `cc work -- -c` must not turn the
+# orchestrator it resumes into "lane". Pass `-- --name x` to choose another name.
+$roleGiven = $PSBoundParameters.ContainsKey("Role")
+if ($roleGiven -and -not (@($Extra) -contains "--name" -or @($Extra) -contains "-n")) { $Extra = @("--name", $Role) + @($Extra | Where-Object { $_ -ne $null }) }
 
 # Extra arguments travel inside a string when launching in a new tab or window, so
 # quote the ones carrying spaces.
@@ -243,8 +246,8 @@ function Show-Help {
     Write-Host "  -Delete          -d      delete the profile, removing junctions first"
     Write-Host "  -NoShare         -n      create it without linking skills or memory"
     Write-Host "  -Role <role>     -o      orchestrator | lane (default) | research; the first two cap"
-    Write-Host "                           the context at 200k, research runs uncapped; the role is also"
-    Write-Host "                           the session name (claude --name) unless you pass -- --name x"
+    Write-Host "                           the context at 200k, research runs uncapped; when given, the role"
+    Write-Host "                           also names the session (claude --name), even one reopened with -c"
     Write-Host "  -Workspace <n>   -x      with -Tab: Herdr workspace (number or id) for the new tab"
     Write-Host "  -Help            -h      this help"
     Write-Host ""

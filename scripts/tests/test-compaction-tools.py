@@ -102,8 +102,12 @@ class DecideTest(unittest.TestCase):
 class TranscriptAndHerdrTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="compaction-tools-")
+        # keep test decisions out of the real watcher log, which is the owner's evidence
+        self._log_file = watcher.LOG_FILE
+        watcher.LOG_FILE = os.path.join(self.tmp, "watcher.log")
 
     def tearDown(self):
+        watcher.LOG_FILE = self._log_file
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def write(self, name, rows):

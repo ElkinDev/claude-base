@@ -45,6 +45,7 @@ $AccountsDir  = '.claude-accounts'   # folder under %USERPROFILE% holding the pr
 $AccountsFile = '.names.json'        # companion file inside it
 $KeyDefault   = 'default'            # key holding the display name of ~\.claude
 $KeyIcons     = 'icons'              # key holding "<profile name>": "<hex code point>"
+$UsageLogDir  = ''                   # set a folder to append quota changes to usage-log.csv there
 #
 # Expected shape:
 #     { "<KeyDefault>": "<display name for ~\.claude>",
@@ -154,7 +155,11 @@ if ($filled -gt $w) { $filled = $w } elseif ($filled -lt 0) { $filled = 0 }
 $barcol = if ($pct -ge 90) { '91' } elseif ($pct -ge 70) { '93' } else { '92' }
 $fill  = '=' * $filled
 $empty = '.' * ($w - $filled)
-$segs += "ctx [" + (C $barcol $fill) + (C '90' $empty) + "] $pct%"
+# The window size is the one Claude Code reports for this session (200k or 1M), so the
+# number after the slash says which window the session really runs with.
+$ctxSize = ''
+try { $cw = $j.context_window.context_window_size; if ($cw) { $ctxSize = '/' + [int]([double]$cw / 1000) + 'k' } } catch {}
+$segs += "ctx [" + (C $barcol $fill) + (C '90' $empty) + "] $pct%$ctxSize"
 
 # ---- weekly quota: how much is LEFT, not how much you have burned ----
 # rate_limits only shows up for claude.ai subscriptions, and only after the first API
@@ -181,6 +186,33 @@ if ($null -ne $used7d) {
   }
   $segs += C $colLeft $txt
 }
+
+# ---- 5-hour session window, same convention: what is LEFT ----
+$used5h = $j.rate_limits.five_hour.used_percentage
+if ($null -ne $used5h) {
+  $left5 = 100 - [int][math]::Floor([double]$used5h)
+  if ($left5 -lt 0) { $left5 = 0 } elseif ($left5 -gt 100) { $left5 = 100 }
+  $col5 = if ($left5 -le 15) { '91' } elseif ($left5 -le 40) { '93' } else { '92' }
+  $segs += C $col5 ("5h " + $left5 + "% left")
+}
+
+# ---- usage log: one CSV line per change of the quota pair, so a nightly ledger can read the
+# quota without spending a request. Off unless $UsageLogDir is set above. ----
+try {
+  if ($UsageLogDir -and ($null -ne $used7d -or $null -ne $used5h)) {
+    if (-not (Test-Path -LiteralPath $UsageLogDir)) { New-Item -ItemType Directory -Path $UsageLogDir | Out-Null }
+    $logFile = Join-Path $UsageLogDir 'usage-log.csv'
+    $acctName = if ($acct -and $acct.name) { $acct.name } else { 'default' }
+    $ctxPct = if ($null -ne $pct) { [int]$pct } else { -1 }
+    $pair = "$acctName,$([int][math]::Floor([double]($used5h -as [double]))),$([int][math]::Floor([double]($used7d -as [double])))"
+    $last = if (Test-Path -LiteralPath $logFile) { Get-Content -LiteralPath $logFile -Tail 1 } else { '' }
+    $lastPair = if ($last) { ($last -split ',')[1..3] -join ',' } else { '' }
+    if ($lastPair -ne $pair) {
+      if (-not (Test-Path -LiteralPath $logFile)) { [IO.File]::WriteAllText($logFile, "time,account,five_hour_used,seven_day_used,context_pct`n") }
+      [IO.File]::AppendAllText($logFile, ((Get-Date).ToString('yyyy-MM-dd HH:mm') + ",$pair,$ctxPct`n"))
+    }
+  }
+} catch {}
 
 $line = ($segs -join '  ')
 
