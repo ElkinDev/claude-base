@@ -36,7 +36,9 @@ commands to the real project.
 - Demo video required for front-end changes: optional
 
 ## Evidence
-- Evidence base path: `%USERPROFILE%\Documents\Evidence\example-service\<key>\`
+- Evidence root: `{repo_parent}/evidence`
+- One folder per issue under the root (`<root>/PROJ-123/`), plus a shared `mockups/`. The spec
+  grammar and the per-machine override are in the kit's `docs/EVIDENCE.md`.
 - Task subfolders: `01_testings/`, `02_PicturesPDF/`
 
 ## Environments

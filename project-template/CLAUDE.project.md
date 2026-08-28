@@ -33,7 +33,9 @@ then adjust. Keep it short and factual. No project code secrets here.
 - Demo video required for front-end changes: yes | no (if yes, how it is produced)
 
 ## Evidence
-- Evidence base path: <path, e.g. %USERPROFILE%\Documents\Evidence\<project>\<id>\>
+- Evidence root: {repo_parent}/evidence
+- Portable spec, resolved per machine; the grammar and the per-machine override are in the kit's
+  `docs/EVIDENCE.md`. One folder per item under the root, plus a shared `mockups/`.
 - Task subfolders: 01_testings/, 02_PicturesPDF/
 
 ## Environments

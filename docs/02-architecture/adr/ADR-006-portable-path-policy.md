@@ -4,11 +4,11 @@ Status: Proposed (2026-07-11)
 
 ## Context
 
-The content today mixes `%USERPROFILE%`, `$env:USERPROFILE`, and Windows-style joins, and the evidence convention once pointed at a personal absolute path. A public toolkit must never depend on a path that only exists on the author's machine, and its docs must read naturally on every OS.
+The content today mixes `%USERPROFILE%`, `$env:USERPROFILE`, and Windows-style joins, and the convention for where proof of work is kept once pointed at a personal absolute path. A public toolkit must never depend on a path that only exists on the author's machine, and its docs must read naturally on every OS.
 
 ## Decision
 
-All shipped content uses portable forms, in this order of preference: `~` in prose and docs, `$CLAUDE_PROJECT_DIR` for project-relative hook wiring, render tokens (`{HOME}`, `{GITBASH}`) in templates the installer processes, and profile variables for anything the user may relocate. The evidence root is the profile variable `evidence_root`, defaulting to `~/Documents/Evidence/<project>/<id>/`, created on demand. Absolute personal paths and drive-letter paths are forbidden outside clearly marked OS-specific examples, and the sanitization guard flags personal home paths in any form.
+All shipped content uses portable forms, in this order of preference: `~` in prose and docs, `$CLAUDE_PROJECT_DIR` for project-relative hook wiring, render tokens (`{HOME}`, `{GITBASH}`) in templates the installer processes, and profile variables for anything the user may relocate. The evidence root is the profile's `Evidence root:` line, a spec in the token grammar of `docs/EVIDENCE.md` defaulting to `{repo_parent}/evidence`, resolved per machine by `scripts/evidence-path.py` and created on demand, so evidence sits beside the repository and never inside it. Absolute personal paths and drive-letter paths are forbidden outside clearly marked OS-specific examples, and the sanitization guard flags personal home paths in any form.
 
 ## Alternatives considered
 

@@ -19,7 +19,12 @@ Scaffold a project so it gets the working rules, a profile to fill, and the bran
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Project C:\Repo\my-app
 ```
 Then pick a profile: copy the closest `project-template\profiles\*.md` over `my-app\CLAUDE.project.md`
-and fill in the blanks (tracker, gate commands, integration branch, evidence path, git discipline).
+and fill in the blanks (tracker, gate commands, integration branch, evidence root, git discipline).
+
+The evidence root is a portable spec, not a path: it defaults to `{repo_parent}/evidence`, so
+evidence sits beside the repository and is never committed. A machine that already keeps evidence
+somewhere else writes one `Evidence root:` line in `CLAUDE.local.md`. See `docs/EVIDENCE.md`, and
+check what a project resolves to with `python scripts\evidence-path.py --print-spec`.
 
 For a spec-driven project (a new build governed by a `docs/` spec structure), add `-Sdd` to also
 scaffold `.claude/agents/` and the `docs/` spec structure, then drive it with `/sdd`:

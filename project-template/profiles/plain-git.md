@@ -33,7 +33,9 @@ or slug you use for the branch and the evidence folder.
 - Demo video required for front-end changes: no
 
 ## Evidence
-- Evidence base path: optional. If you want one, `%USERPROFILE%\Documents\Evidence\my-tool\<slug>\`
+- Evidence root: `{repo_parent}/evidence`
+- Optional on a small project, but it costs nothing: the root sits beside the repository and each
+  item gets `<root>/<slug>/`. See the kit's `docs/EVIDENCE.md`.
 - Task subfolders: `01_testings/` when a validation is worth replaying
 
 ## Environments

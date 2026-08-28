@@ -21,11 +21,17 @@ In order: current git branch name (convention `<id>-<slug>`, take the leading to
 recent commits (`git log`), then ask. The folder name is the id (digits, or the tracker key).
 
 ## 2. Resolve the base folder (project-aware)
-The evidence base path is defined in the project profile (`CLAUDE.project.md`). Read it from there.
-- If the profile defines no base, default to `%USERPROFILE%\Documents\Evidence\<project>\<id>\`,
-  where `<project>` is the repo folder name.
-- Never reuse a path from another project. If the base is ambiguous, ASK.
-Create the folder if missing; reuse and overwrite if it exists.
+Evidence lives outside the repository, beside it. Never compose the path by hand; ask the resolver,
+which reads the `Evidence root:` line of the profile and falls back to `<repo parent>/evidence`:
+```
+python <kit>/scripts/evidence-path.py --id <id> --create
+```
+It prints one absolute path for the OS at hand and creates the folder. `--mockups` gives the shared
+mockups folder instead. The convention, the spec grammar and the precedence rules are in
+`docs/EVIDENCE.md`.
+- Never reuse a path from another project. If the resolver exits non-zero, fix the profile line
+  rather than inventing a path.
+Reuse and overwrite the folder if it already exists.
 
 ## 3. Gather
 - `git diff <integration-branch>...HEAD --stat` and `--name-only`

@@ -9,8 +9,11 @@ The design is two layers:
 - A **user-level engine** (`claude/`) that applies everywhere: the skills, the hooks (worklog,
   branch helpers, document-to-markdown), the status line, and the base settings.
 - A **per-project profile** (`project-template/`) that carries everything stack- or tracker-specific
-  (gate commands, integration branch, evidence path, git discipline). The skills read the profile,
+  (gate commands, integration branch, evidence root, git discipline). The skills read the profile,
   so the same skills serve Azure DevOps, Jira, or plain git without edits.
+
+Evidence stays out of the repository: it lands beside it, under a root written as a portable spec
+and resolved per machine by `scripts/evidence-path.py`. See `docs/EVIDENCE.md`.
 
 ## What is inside
 ```
@@ -36,7 +39,8 @@ project-template/           -> copy into each project
     reviewer.md             adversarial review of a branch diff before merge; a disposition, never a fix
   docs/                     spec structure for spec-driven projects (for /sdd)
 herdr/                      Herdr multiplexer config + the Ctrl+Alt+N global hotkey
-scripts/                    zero-token tooling: usage ledger and board, compaction watcher and report
+scripts/                    zero-token tooling: usage ledger and board, compaction watcher and report,
+                            evidence-path resolver
 docs/                       status line, accounts, permissions, memory notes, context economics
 install.ps1                 installer (user scope, and -Project to scaffold a project)
 ```
@@ -72,6 +76,7 @@ profile through a junction, and the PowerShell 5.1 JSON parse that silently sign
 | Document | What it covers |
 |---|---|
 | `INSTALL.md` | full setup, another machine, Herdr, the global hotkey |
+| `docs/EVIDENCE.md` | where evidence lives (beside the repo, not in it), the spec grammar, and the resolver |
 | `docs/ACCOUNTS.md` | several Claude Code accounts, shortcuts, and the traps |
 | `docs/PERMISSIONS.md` | what bypass mode trades, and how to change it |
 | `docs/STATUSLINE.md` | status line segments, wiring, and customization |

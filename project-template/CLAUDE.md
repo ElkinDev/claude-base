@@ -1,7 +1,7 @@
 # Working rules (base)
 
 Portable working rules for a project. Anything project-specific (tracker, stack, gate commands,
-paths, integration branch, git discipline, evidence base, local environment) lives in
+paths, integration branch, git discipline, evidence root, local environment) lives in
 `CLAUDE.project.md`, not here. Each rule states its intent; follow it only where that intent
 applies. A rule without its reason breaks on the first edge case.
 
@@ -100,8 +100,10 @@ show the correct way with a concrete example.
 
 ## Evidence
 Keep a structured evidence pack per task (evidence-report): evidence.md, session.md, pr-comment.md.
-The base path comes from `CLAUDE.project.md`. Create it early and keep it current, so it is ready at
-commit/PR time, not rebuilt at the end.
+It lives outside the repository, beside it, under the root the `Evidence root:` line of
+`CLAUDE.project.md` declares; resolve it with the kit's `scripts/evidence-path.py`, never by hand.
+Create the folder early and keep it current, so it is ready at commit/PR time, not rebuilt at the
+end.
 
 ## Memory
 Use the native file-based memory. Keep the index tight, one line per fact, one fact per file.

@@ -10,8 +10,8 @@ Ship the private Playwright evidence harness as an optional, fully parameterized
 
 - Location and install: `project-template/testing/` installed under `--testing`; requires Node; the installer says so when Node is absent and skips.
 - Contents, rewritten generically from the private originals: `evidence.config.ts` and `evidence-reporter.ts` (Playwright config recording 1280x720 video per test, routing artifacts into the story's `01_testings/` folder), `record-demo.mjs` (scripted demo recording, WebM to H.264 via ffmpeg-static), `preflight.mjs` (validate saved auth state and warm the target route), `shot.mjs` (single screenshot helper), `validate-pdf.mjs` (assert a downloaded PDF has real text content), `RECORDING.md` (the guide), and an `example.env` documenting every variable.
-- Parameterization: base URL, ports, credentials source, auth-state path, evidence root (defaulting to the profile's `evidence_root`), story id and slug come from env or CLI args; test data names are neutral fixtures. Nothing in the module names a real org, tenant, port set, or person (FR-036).
-- Conventions preserved: `tests/<id>-<slug>/<case>.spec.ts` naming; artifacts land in `<evidence-root>/<project>/<id>/01_testings/`.
+- Parameterization: base URL, ports, credentials source, auth-state path, evidence root (resolved by `scripts/evidence-path.py` from the profile's `Evidence root:` line), story id and slug come from env or CLI args; test data names are neutral fixtures. Nothing in the module names a real org, tenant, port set, or person (FR-036).
+- Conventions preserved: `tests/<id>-<slug>/<case>.spec.ts` naming; artifacts land in `<evidence-root>/<id>/01_testings/`.
 - The evidence-report skill's docs link to this module as the recording arm of the evidence pack.
 
 ## Edge cases

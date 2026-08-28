@@ -40,7 +40,7 @@ Common: exit 0 on the happy path and on any internal error (hooks never break a 
 
 ## Profile contract (`CLAUDE.project.md`)
 
-Sections every profile fills: Identity (project name, description), Tracker (kind, org/project or URL as placeholders, id format), Stack and quality gates (exact commands), Git discipline (base branch, branch naming, hand-off vs auto-commit), Testing and e2e (commands, evidence expectations), Evidence (root, defaulting to `~/Documents/Evidence/<project>/<id>/`), Environments. Skills must resolve every project-specific value from here; a skill containing a literal org, solution, or port is a bug (FR-031).
+Sections every profile fills: Identity (project name, description), Tracker (kind, org/project or URL as placeholders, id format), Stack and quality gates (exact commands), Git discipline (base branch, branch naming, hand-off vs auto-commit), Testing and e2e (commands, evidence expectations), Evidence (the `Evidence root:` line, a portable spec defaulting to `{repo_parent}/evidence`), Environments. Skills must resolve every project-specific value from here; a skill containing a literal org, solution, or port is a bug (FR-031).
 
 ## AGENTS.md marked sections (project scope)
 
@@ -48,7 +48,9 @@ Managed sections are delimited by HTML comments `<!-- cb:<section-id> -->` ... `
 
 ## Evidence pack layout
 
-`<evidence-root>/<project>/<id>/`: `evidence.md`, `session.md`, `pr-comment.md`, `01_testings/` (test artifacts, recordings), `02_PicturesPDF/` (images, PDFs). The harness writes recordings into `01_testings/`; the evidence-report skill assembles the documents.
+The evidence root lives outside the repository, beside it, and is written as a portable spec resolved per machine by `scripts/evidence-path.py` (grammar, precedence and examples in `docs/EVIDENCE.md`; default `{repo_parent}/evidence`).
+
+`<evidence-root>/<id>/`: `evidence.md`, `session.md`, `pr-comment.md`, `01_testings/` (test artifacts, recordings), `02_PicturesPDF/` (images, PDFs). The harness writes recordings into `01_testings/`; the evidence-report skill assembles the documents. Shared owner-facing folders sit beside the item folders under the same root, at least `<evidence-root>/mockups/`, one self-contained HTML file per visual change named `mockup-<id>-<slug>.html`.
 
 ## Capability matrix (`docs/AGENTS-SUPPORT.md`)
 

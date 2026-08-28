@@ -4,6 +4,7 @@ This folder holds two kinds of documents.
 
 ## Reference docs (shipped with the toolkit)
 
+- `EVIDENCE.md`: where evidence lives (beside the repository, never inside it), the pack layout, the portable spec grammar, and the resolver every skill calls.
 - `MEMORY.md`: conventions for the agent's persistent file-based memory.
 - `STATUSLINE.md`: statusline wiring and customization.
 - `ACCOUNTS.md`: running several Claude Code accounts, the shortcuts, and the traps.

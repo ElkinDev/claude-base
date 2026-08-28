@@ -33,4 +33,4 @@
 - Tier 1: full fidelity (Claude Code). Tier 2: rules, skills, and workflow prompts with documented gaps (Codex, OpenCode, Cursor). Tier 3: community adapters, not maintained here.
 - Render: producing an agent-specific artifact from canonical content at install time. Rendered artifacts are never committed to this repo.
 - Managed file: a file the installer owns and may refresh on re-run; user-modified copies are backed up, never deleted.
-- Placeholder: the only allowed form for anything environment-specific, for example `<your-org>`, `~/Documents/Evidence/<project>/<id>/`.
+- Placeholder: the only allowed form for anything environment-specific, for example `<your-org>`, `{repo_parent}/evidence`, `<evidence-root>/<id>/`.

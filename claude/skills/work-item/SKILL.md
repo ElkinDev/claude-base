@@ -71,7 +71,9 @@ PR-only come from the profile (default: `main`, PR-only).
      also repoints it on the next git call);
    - write the id to `.claude/.active-story` (keep it out of version control) so the `branch-check`
      hook stays aligned;
-   - set up the evidence folder (see the `evidence-report` skill).
+   - set up the evidence folder with `python <kit>/scripts/evidence-path.py --id <id> --create`,
+     which resolves the root beside the repository and creates the item folder (see
+     `docs/EVIDENCE.md` and the `evidence-report` skill).
 
 ## 5. Hand off
 When the task is done, generate the evidence pack (`evidence-report`). The pr-comment file is the

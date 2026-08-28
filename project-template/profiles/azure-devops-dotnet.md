@@ -40,7 +40,9 @@ with the real values; do not commit secrets.
   ffmpeg cannot x264). The human attaches it to the PR.
 
 ## Evidence
-- Evidence base path: `%USERPROFILE%\Documents\Evidence\example-app\<id>\`
+- Evidence root: `{repo_parent}/evidence`
+- One folder per item under the root (`<root>/<id>/`), plus a shared `mockups/`. The spec grammar
+  and the per-machine override are in the kit's `docs/EVIDENCE.md`.
 - Task subfolders: `01_testings/`, `02_PicturesPDF/`
 
 ## Environments

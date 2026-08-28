@@ -19,7 +19,7 @@ Each FR is a testable capability. Feature specs in `03-features/` reference thes
 - FR-012: The markitdown read hook is optional: an installer flag wires it only when Python and the markitdown package are present, and the installer says clearly when it skipped it.
 - FR-013: A single hook registry document lists every hook, its event, its scope (user or project), the file that wires it, and its OS support. No hook exists outside the registry.
 - FR-014: The base-branch list used by hooks (default `main,master,devel,HEAD`) is configurable per repo without editing the hook scripts.
-- FR-015: All user-facing paths use portable tokens (`~`, `$CLAUDE_PROJECT_DIR`, profile variables). The evidence root is a profile variable defaulting to `~/Documents/Evidence/<project>/<id>/`.
+- FR-015: All user-facing paths use portable tokens (`~`, `$CLAUDE_PROJECT_DIR`, profile variables). The evidence root is a profile line carrying a portable spec, resolved per machine by `scripts/evidence-path.py` and defaulting to `{repo_parent}/evidence`, so evidence sits beside the repository and never inside it (`docs/EVIDENCE.md`).
 
 ## Multi-agent
 
