@@ -98,7 +98,7 @@ Verified by reading the bundled code of 2.1.248; behaviour may change in later v
 | `DISABLE_COMPACT=1` | also disables manual `/compact`. |
 | blocking limit | 20000 tokens below the threshold; above it, turns are refused until compaction. |
 | precomputed compaction | recent versions compute the summary ahead of the threshold so the switch is fast; it does not change the level. |
-| PreCompact hook | receives `session_id`, `transcript_path`, `cwd`, `trigger` (`manual` or `auto`) and `custom_instructions`. Its **stdout is joined into the custom instructions of the summarizer**, for manual and automatic compactions alike. Exit code 2 cancels the compaction. Subagent compactions run the hook but ignore its instructions. |
+| PreCompact hook | receives `session_id`, `transcript_path`, `cwd`, `trigger` (`manual` or `auto`) and `custom_instructions`. Its **stdout is joined into the custom instructions of the summarizer**, for manual and automatic compactions alike. Exit code 2 cancels the compaction. A subagent's compaction runs the hook too, with `agent_id` and `agent_type` added and the parent's `session_id` and `transcript_path`, but its summarizer ignores the instructions. |
 | PostCompact hook | receives the same fields plus `compact_summary`. Its stdout is only a display message, never context. |
 | SessionStart hook, matcher `compact` | runs right after compaction; its stdout becomes context. This is where recovery pointers belong. |
 
@@ -248,13 +248,35 @@ Run it in a spare pane where its log is visible, or hidden:
 Start-Process -WindowStyle Hidden python -ArgumentList '"C:\path\to\claude-base\scripts\compact-at-boundary.py"','--panes','w3:p1'
 ```
 
-It keeps one instance through a lock file, logs to `~/.claude/compact-at-boundary.log`, and
-survives the death of any Claude session because it is not one. It does not survive the death
-of Herdr; a Scheduled Task at logon restarts it.
+It keeps one instance through a lock file (the lock records a pid and is checked against a
+live process, so a stale lock from a reboot does not block the next start), logs to
+`~/.claude/compact-at-boundary.log`, and survives the death of any Claude session because it
+is not one. It also survives Herdr going away: each pass logs `herdr agent list failed` and
+the loop keeps polling until Herdr is back. What it does not survive is a logoff or a reboot;
+register it as a logon task once:
+
+```powershell
+$action  = New-ScheduledTaskAction -Execute 'pythonw.exe' -Argument '"C:\path\to\claude-base\scripts\compact-at-boundary.py" --panes w3:p1'
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+Register-ScheduledTask -TaskName 'compact-at-boundary' -Action $action -Trigger $trigger -Force
+```
+
+`pythonw.exe` runs without a console window; give its full path if it is not on PATH. Starting
+before Herdr is up is fine for the reason above. `Unregister-ScheduledTask -TaskName
+'compact-at-boundary' -Confirm:$false` removes it.
 
 Defaults: window 200000, threshold 0.65, idle 90 seconds, cooldown 900 seconds, interval 30
 seconds. Set `--window 1000000` only if the session really runs with the 1M window; the
 threshold is a fraction of that number.
+
+**Replacing a session.** `claude -c` or `-r` reopens a session with the context it had, the
+summary and everything after it, so it costs what the session cost at that point and continues
+the same trajectory. A new session that is handed the newest checkpoint and summary starts a
+few thousand tokens in. When a session has to go (a version upgrade, a window that died, a
+context that drifted), cut over at a committed checkpoint: commit or list the uncommitted work,
+close, open new, and give it the paths of the newest files under `~/.claude/checkpoints/<project>/`
+as its first prompt. `compact-recover.py` only runs after a compaction, so a fresh session gets
+that pointer from you. Nothing in the old transcript is needed after that.
 
 ## 9. What was refuted, and why
 

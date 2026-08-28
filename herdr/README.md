@@ -57,3 +57,26 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\hotkey\setup-hotkey.ps1
 Pass a different key or launcher if you want: `-Hotkey "Ctrl+Alt+H" -Target "C:\path\launch-herdr.cmd"`.
 The `.lnk` must stay in the Start Menu for the global hotkey to keep working. Delete it to disable
 the hotkey.
+
+## Driving a pane from a script
+The Claude integration gives every pane a state (`idle`, `working`, `blocked`, `done`, `unknown`)
+that scripts can read and wait on. Verified on the Windows preview build:
+- `herdr agent list` prints each pane with its session id and state. `herdr agent wait <pane>
+  [--until <state>]... [--timeout <ms>]` blocks until one matches (`idle`, `done` or `blocked`
+  when no `--until` is given) and answers `timeout` or `agent_not_found` while the session has
+  not registered yet.
+- `herdr agent prompt <pane> <text> [--wait] [--until <state>]... [--timeout <ms>]` types the
+  text and presses enter. With `--wait`, a pane that is not working must show a state change
+  within 5000 ms or the call returns `agent_prompt_stalled`; a pane that is already blocked is
+  refused with `agent_blocked` before anything is typed. It does not track turns: on a working
+  pane the wait may match the end of the turn already running.
+- After a compaction with no turn behind it Herdr reports `done`, not `idle`. A script that
+  waits for "ready for input" must accept both; the watcher in `scripts/compact-at-boundary.py`
+  does (`--idle-states idle,done`).
+- A session opened in a folder it has not seen stops at the trust dialog, whose default choice
+  is "No, exit". `herdr agent send-keys <pane> down` and then `herdr agent send-keys <pane> enter`
+  accept it; wait for `idle` before the first prompt. `esc` is the Escape key name.
+- A leading-slash argument sent through Git Bash (MSYS) becomes a Windows path:
+  `herdr agent prompt w1:p5 /exit` delivers `C:/Program Files/Git/exit` and the session answers
+  it as a question, one turn wasted and the command not run. Send slash commands from
+  PowerShell, cmd or Python, or prefix the command with `MSYS_NO_PATHCONV=1`.
