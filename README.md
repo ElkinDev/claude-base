@@ -23,7 +23,8 @@ claude/                     -> installs into ~/.claude
   statusline.ps1            model / effort / account / folder / git / context / quota status line
   claude-account.ps1        optional: switch between several Claude Code accounts (see docs/ACCOUNTS.md)
   merge-settings.py         helper the switcher uses to merge settings.json without dropping keys
-  skills/                   18 skills (story + sdd pipelines, TDD, quality gates, evidence, wave orchestration, ...)
+  skills/                   19 skills (story + sdd pipelines, TDD, quality gates, evidence,
+                            wave orchestration, herdr driving, ...)
   hooks/                    worklog, branch helpers, markitdown, read guard, big-result alarm, landings,
                             session audit, compaction checkpoint + summary persistence + recovery
 project-template/           -> copy into each project
@@ -38,10 +39,11 @@ project-template/           -> copy into each project
     implementer-light.md    the same at lower effort, for mechanical slices (tests, strings, docs, renames)
     reviewer.md             adversarial review of a branch diff before merge; a disposition, never a fix
   docs/                     spec structure for spec-driven projects (for /sdd)
-herdr/                      Herdr multiplexer config + the Ctrl+Alt+N global hotkey
+herdr/                      Herdr multiplexer config, the Ctrl+Alt+N global hotkey, the verified
+                            version and the CLI surface the kit drives
 scripts/                    zero-token tooling: usage ledger and board, compaction watcher and report,
                             evidence-path resolver, preflight doctor
-docs/                       status line, accounts, permissions, memory notes, context economics
+docs/                       status line, accounts, permissions, evidence, memory notes, context economics
 install.ps1                 installer (user scope, and -Project to scaffold a project)
 ```
 
