@@ -1,0 +1,44 @@
+#!/bin/sh
+# kit sanitize guard v1
+#
+# Scans the staged contents before a commit records them. Install it with
+# `python scripts/sanitize-check.py --install-hook --pre-commit`.
+#
+# It fails closed, like the pre-push hook: no checker or no usable python means no commit.
+
+set -u
+
+# The report names paths, and a path can carry anything. Ask python for utf-8 output so a
+# non-ascii name cannot crash the report on a console codepage that has no room for it.
+PYTHONIOENCODING=utf-8
+PYTHONUTF8=1
+export PYTHONIOENCODING PYTHONUTF8
+
+root=$(git rev-parse --show-toplevel 2>/dev/null)
+checker="$root/scripts/sanitize-check.py"
+
+if [ ! -f "$checker" ]; then
+	echo "sanitize guard: $checker is missing, so the commit is blocked." >&2
+	echo "Restore the checker, or remove this hook deliberately." >&2
+	exit 1
+fi
+
+# The interpreter is probed, not assumed: on Windows `python3` is often the Store stub, which
+# exists on PATH and runs nothing.
+python_cmd=""
+for candidate in "py -3" "python" "python3"; do
+	# shellcheck disable=SC2086
+	if $candidate -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
+		python_cmd="$candidate"
+		break
+	fi
+done
+
+if [ -z "$python_cmd" ]; then
+	echo "sanitize guard: no python 3.8 or newer found (tried py -3, python, python3)." >&2
+	echo "The commit is blocked. Install python, or run the checker by hand and remove this hook." >&2
+	exit 1
+fi
+
+# shellcheck disable=SC2086
+exec $python_cmd "$checker" --staged

@@ -1,0 +1,6 @@
+sanitize-ok: all seeded leak fixture
+Seeded on purpose: the settings.json shape, where a Windows path is written with doubled
+backslashes because the file is JSON. The escaping is the evasion the rule has to see through,
+and a JSON string that itself carries JSON doubles them again.
+{ "workdir": "C:\\Users\\realuser\\Repo\\example-app" }
+{ "nested": "{ \\"workdir\\": \\"C:\\\\Users\\\\realuser\\\\Repo\\\\example-app\\" }" }

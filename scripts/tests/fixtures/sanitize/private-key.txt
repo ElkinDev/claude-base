@@ -1,0 +1,5 @@
+sanitize-ok: all seeded leak fixture
+Seeded on purpose. The header is what the rule looks for; there is no key material here.
+-----BEGIN RSA PRIVATE KEY-----
+not a key, just enough shape to be caught
+-----END RSA PRIVATE KEY-----

@@ -1,0 +1,33 @@
+# Sanctioned placeholders and known-good names. One entry per line: a literal, or a Python
+# regex behind a `regex:` prefix. Lines starting with `#` are comments.
+#
+# An entry clears a finding only when it full-matches the name that rule captured: the user in a
+# home path, the domain in an address, the org in a forge or tracker URL. Nothing else on the
+# line is consulted, so an entry can neither clear an unrelated leak that shares the line nor
+# clear a longer value that merely starts with it: `you` does not clear `you-know-who`, and
+# `example.com` does not clear `example.com.attacker.io`. Matching is case-insensitive.
+#
+# A rule that captures no name, which is every credential shape, can never be cleared here.
+
+# The user names the kit writes instead of a real one.
+you
+user
+username
+yourname
+your-name
+%USERNAME%
+$USER
+
+# Placeholder orgs and hosts.
+your-org
+example.com
+example.org
+
+# The GitHub noreply domain, used by commit identities that hide an address.
+users.noreply.github.com
+
+# This kit's own remote org, and the third-party project cited in docs/00-product/vision.md.
+# An org-level entry is deliberate: a private repository under one of these orgs would not be
+# reported. Keep them to orgs whose repositories are public by default.
+ElkinDev
+Gentleman-Programming

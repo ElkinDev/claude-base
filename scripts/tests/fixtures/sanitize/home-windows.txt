@@ -1,0 +1,4 @@
+sanitize-ok: all seeded leak fixture
+Seeded on purpose, so the guard has something to catch. The whole-file waiver on the first
+line is what keeps this fixture from failing the repository that carries it.
+set WORKDIR=C:\Users\realuser\Repo\example-app

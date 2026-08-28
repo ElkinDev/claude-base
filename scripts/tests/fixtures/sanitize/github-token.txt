@@ -1,0 +1,4 @@
+sanitize-ok: all seeded leak fixture
+Seeded on purpose. The value has the right shape and no entropy, so it is caught here and
+rejected by the forge it pretends to belong to.
+GITHUB_TOKEN=ghp_examplenotarealtokenexamplenotareal
