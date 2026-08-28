@@ -21,7 +21,8 @@ claude/                     -> installs into ~/.claude
   claude-account.ps1        optional: switch between several Claude Code accounts (see docs/ACCOUNTS.md)
   merge-settings.py         helper the switcher uses to merge settings.json without dropping keys
   skills/                   18 skills (story + sdd pipelines, TDD, quality gates, evidence, wave orchestration, ...)
-  hooks/                    worklog, branch-check, branch-upstream-fix, markitdown, (herdr note)
+  hooks/                    worklog, branch helpers, markitdown, read guard, big-result alarm, landings,
+                            session audit, compaction checkpoint + summary persistence + recovery
 project-template/           -> copy into each project
   CLAUDE.md                 portable working rules (voice, persona, git, TDD, evidence, pipeline)
   CLAUDE.project.md         the active profile to fill per project
@@ -35,7 +36,8 @@ project-template/           -> copy into each project
     reviewer.md             adversarial review of a branch diff before merge; a disposition, never a fix
   docs/                     spec structure for spec-driven projects (for /sdd)
 herdr/                      Herdr multiplexer config + the Ctrl+Alt+N global hotkey
-docs/                       status line, accounts, permissions, and memory notes
+scripts/                    zero-token tooling: usage ledger and board, compaction watcher and report
+docs/                       status line, accounts, permissions, memory notes, context economics
 install.ps1                 installer (user scope, and -Project to scaffold a project)
 ```
 
@@ -74,6 +76,7 @@ profile through a junction, and the PowerShell 5.1 JSON parse that silently sign
 | `docs/PERMISSIONS.md` | what bypass mode trades, and how to change it |
 | `docs/STATUSLINE.md` | status line segments, wiring, and customization |
 | `docs/MEMORY.md` | conventions for the agent's persistent memory |
+| `docs/CONTEXT-ECONOMICS.md` | what a turn costs, what compaction costs and saves, the threshold knobs, and the boundary watcher |
 | `docs/tsql-rules.md` | optional stack addendum with portable SQL Server rules |
 
 ## The pipeline

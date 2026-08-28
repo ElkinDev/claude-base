@@ -8,7 +8,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 If you already had a `settings.json`, the installer writes `settings.json.new` next to it and backs
 up the original. Merge the two by hand: keep your own keys and add the `statusLine` block and the
-`worklog` SessionStart / PreCompact / SessionEnd / Stop hooks.
+`worklog` SessionStart / PreCompact / SessionEnd / Stop hooks, and the compaction hooks (PreCompact checkpoint with summary steering, PostCompact summary persistence, SessionStart recovery; see `docs/CONTEXT-ECONOMICS.md`).
 
 Requirements: Windows PowerShell 5.1+, `git` on PATH, and a terminal font with emoji for the status
 line glyphs.

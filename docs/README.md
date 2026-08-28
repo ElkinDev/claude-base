@@ -8,6 +8,7 @@ This folder holds two kinds of documents.
 - `STATUSLINE.md`: statusline wiring and customization.
 - `ACCOUNTS.md`: running several Claude Code accounts, the shortcuts, and the traps.
 - `PERMISSIONS.md`: what bypass mode actually trades, and how to change it.
+- `CONTEXT-ECONOMICS.md`: what a turn costs, what compaction costs and saves, the compaction knobs of Claude Code, and the checkpoint hooks plus the boundary watcher that compact at a sensible moment.
 - `tsql-rules.md`: optional stack addendum with portable SQL Server rules.
 - `WORKLOG.md`: design spec of the cross-session worklog. Planned for Sprint 03, not published yet.
 
