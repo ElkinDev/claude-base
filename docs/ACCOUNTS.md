@@ -90,6 +90,18 @@ cc work -- -r           pick which session to resume
 
 The separator is not optional. Without it PowerShell tries to bind those flags to the script: `-c` collides with `-Dir`, and `-r` binds to `-Rename` and waits for a value.
 
+## Roles
+
+A session can be opened with a role, `cc work -o orchestrator`, `-o lane` (the default) or `-o research`. The role does three things and nothing else.
+
+It sets the context cap. `orchestrator` and `lane` run with `CLAUDE_CODE_DISABLE_1M_CONTEXT=1`, so the window stays at 200k and compacts on the schedule the kit's hooks expect; `research` is the only uncapped role, for a session that reads far more than it writes. The variable is set with `$env:` in the window the script opens, never globally.
+
+It labels the process. `CLAUDE_ROLE` travels to the session so hooks can tell which pane they are in; the kit's read guard, for example, denies image reads only to the orchestrator. The Herdr tab label carries the role too (`cc-work-orchestrator`), and `lane` is left off the label because it is the default.
+
+It names the session. When `-o` is given explicitly, the script passes `claude --name <role>` so the prompt box, the resume picker and the transcript all say `orchestrator` or `research` whatever pane number the multiplexer hands out. It is applied only when the role was typed on purpose: a plain `cc work -- -c` must not rename the orchestrator it resumes into `lane`. Pass `-- --name x` to choose another name.
+
+Two side notes. Every role except `research` adds `--no-chrome`, so a session that needs the browser either takes `research` or passes a `chrome` flag itself. And `-Workspace <n>` (`-x`), with `-Tab`, picks the Herdr workspace for the new tab by number or id; it is ignored without Herdr.
+
 ## Keeping settings in sync
 
 `CLAUDE.md` and `settings.json` come from the default directory, which acts as the master. Two rules keep that from destroying anything.

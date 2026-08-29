@@ -87,13 +87,23 @@ Claude Code has no native multi-account support, so switching between a personal
 account means logging out and back in. The optional `claude-account.ps1` gives each account its own
 config directory and swaps them with an environment variable, so they can all be signed in at once,
 one per window. Shared skills, plugins and agent memory stay in one place.
+
+It works with any number of accounts. With one account there is nothing to set up: `claude` keeps
+using `~/.claude` and the script sits unused. With two or more, the account already in `~/.claude`
+is `default` and every other one is a profile you create once.
 ```
 cc work -p        create the profile
 cc work           open it here (signs in the first time)
 cc                list the accounts and which one this window is on
 ```
-`docs/ACCOUNTS.md` covers the wiring, the shortcuts, and the traps that cost real damage: deleting a
-profile through a junction, and the PowerShell 5.1 JSON parse that silently signs an account out.
+Hooks live per config directory: one added to `~/.claude/settings.json` reaches a profile only after
+`cc work -p -s`, so run that for each profile whenever the default's hooks change. The script is
+PowerShell and Windows (directory junctions, token in `.credentials.json`); on macOS and Linux the
+`CLAUDE_CONFIG_DIR` mechanism is the same but the script is not ported yet.
+
+`docs/ACCOUNTS.md` covers the wiring, the shortcuts, the session roles, and the traps that cost real
+damage: deleting a profile through a junction, and the PowerShell 5.1 JSON parse that silently signs
+an account out.
 
 ## Documentation
 | Document | What it covers |
