@@ -107,6 +107,34 @@ instructions, so a hook that prints a debug line steers every summary. Second, t
 re-injects recently read files after compaction ("Called the Read tool with the following
 input"), which is why the floor climbs 10k to 15k in the first turns; it is not configurable.
 
+Both window variables are still there in 2.1.258. Verified against 2.1.258 by reading the
+installed binary:
+
+```
+if(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW){let B=kte("CLAUDE_CODE_AUTO_COMPACT_WINDOW",process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW,yCe,KUe);
+CLAUDE_CODE_AUTO_COMPACT_WINDOW is set and takes precedence. Unset it to change this setting.
+To enforce it, set CLAUDE_CODE_AUTO_COMPACT_WINDOW=${V} (or the autoCompactWindow setting)
+function zN(){return a.CLAUDE_CODE_DISABLE_1M_CONTEXT}
+autoCompactWindow:Qd().describe("Auto-compact window size")
+```
+
+So the variable wins over the `autoCompactWindow` setting, and the setting is the same knob
+under another name. The account launcher wires both: by default it sets
+`CLAUDE_CODE_DISABLE_1M_CONTEXT=1` for `orchestrator` and `lane` and leaves `research`
+uncapped, and it never touches the window variable. `cc <account> -CompactWindow 260000` is
+the opt-in exception: it drops the cap for that session (the cap would hold the window at
+200k, so the window could not grow) and sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW=260000`, in the
+pane command and in the in-window path alike. `cc -ShowEnv` prints the variables a launch
+would set and exits without opening a session, which is how `scripts/tests/test-launcher-env.ps1`
+asserts it.
+
+Raising the window buys fewer compactions, not cheaper turns: at 260k a cycle drops roughly a
+third of the compactions of a 200k session, so a day of nine cycles at about 21600 tokens of
+overhead each, 194400 in total, loses three of those cycles and saves around 65000 tokens not
+spent on summaries and re-orientation. It is paid for with a larger floor on every turn of the
+cycle and with more expensive cache breaks (section 2), which is why it is off unless you ask
+for it, and why section 9 keeps "ride the 1M window" refuted: this is a step, not the ceiling.
+
 ## 5. Where the floor comes from
 
 The context right after compaction, on this setup, was about 65k to 77k tokens:
@@ -352,9 +380,11 @@ that pointer from you. Nothing in the old transcript is needed after that.
 
 ## 10. Validation status and limits
 
-- Offline: `claude/hooks/tests/test-compaction-hooks.py` (15 tests, the hooks run as
-  subprocesses against a throwaway repository) and `scripts/tests/test-compaction-tools.py`
-  (14 tests, synthetic transcripts and a fake Herdr).
+- Offline: `claude/hooks/tests/test-compaction-hooks.py` (18 tests, the hooks run as
+  subprocesses against a throwaway repository), `scripts/tests/test-compaction-tools.py`
+  (22 tests, synthetic transcripts and a fake Herdr), `scripts/tests/test-guard-read.py`
+  (27 tests, the guard run as a subprocess over both the Read and the shell route) and
+  `scripts/tests/test-launcher-env.ps1` (the launcher's dry run, default and opt-in window).
 - Live, end to end, on 2026-08-27 with Claude Code 2.1.250 in a throwaway session under
   Herdr: the watcher submitted `/compact` through `herdr agent prompt` at 27 percent of the
   window (53,091 tokens, idle), the pane went `working`, the PreCompact hook wrote a

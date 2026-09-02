@@ -36,6 +36,10 @@ param(
     [Alias("i")][string]$Icon,
     [Alias("h")][switch]$Help,
     [Alias("o")][ValidateSet("orchestrator", "lane", "research")][string]$Role = "lane",
+    # No short alias for either: -c and -e are claude's own flags, and the launcher forwards an
+    # unbound flag to claude, so claiming them here would swallow one.
+    [ValidateRange(0, 2000000)][int]$CompactWindow = 0,
+    [switch]$ShowEnv,
     [Alias("x")][string]$Workspace,
     # Anything after `--` is handed to claude untouched. The separator is required
     # because flags like -c would collide with -Dir and -r with -Rename, and PowerShell
@@ -74,11 +78,33 @@ if ($Extra) {
 # orchestrator and lane run with the context capped at 200k (CLAUDE_CODE_DISABLE_1M_CONTEXT=1);
 # research is the only uncapped role. CLAUDE_ROLE travels to the process so hooks know which
 # pane they are in (the read guard denies images only to the orchestrator).
-$roleEnvPs = "`$env:CLAUDE_ROLE = '$Role'; " + $(if ($Role -eq "research") { "Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT -ErrorAction SilentlyContinue" } else { "`$env:CLAUDE_CODE_DISABLE_1M_CONTEXT = '1'" })
+#
+# -CompactWindow <tokens> is the opt-in exception. It drops the cap and lets auto-compaction
+# fire at the window you name, which buys fewer compactions (each one costs a summary, a
+# re-injection burst and a re-orientation) at the price of a larger floor on every turn and
+# more cache breaks. Both variables are read by claude.exe, verified against 2.1.258:
+#   if(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW){let B=kte("CLAUDE_CODE_AUTO_COMPACT_WINDOW",...
+#   function zN(){return a.CLAUDE_CODE_DISABLE_1M_CONTEXT}
+# and the binary says of the first: "CLAUDE_CODE_AUTO_COMPACT_WINDOW is set and takes
+# precedence. Unset it to change this setting." The equivalent settings key is
+# autoCompactWindow ("Auto-compact window size"), which the variable overrides.
+# Without the switch nothing here changes, and an inherited window variable is left untouched.
+$capContext = ($Role -ne "research") -and ($CompactWindow -le 0)
+$roleEnvPs = "`$env:CLAUDE_ROLE = '$Role'; " + $(if ($capContext) { "`$env:CLAUDE_CODE_DISABLE_1M_CONTEXT = '1'" } else { "Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT -ErrorAction SilentlyContinue" })
+if ($CompactWindow -gt 0) { $roleEnvPs += "; `$env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = '$CompactWindow'" }
 function Apply-Role {
     $env:CLAUDE_ROLE = $Role
-    if ($Role -eq "research") { Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT -ErrorAction SilentlyContinue }
-    else { $env:CLAUDE_CODE_DISABLE_1M_CONTEXT = "1" }
+    if ($capContext) { $env:CLAUDE_CODE_DISABLE_1M_CONTEXT = "1" }
+    else { Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT -ErrorAction SilentlyContinue }
+    if ($CompactWindow -gt 0) { $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "$CompactWindow" }
+}
+# -ShowEnv prints that plan and exits, so the wiring can be asserted without opening a session.
+if ($ShowEnv) {
+    Write-Output "CLAUDE_ROLE=$Role"
+    Write-Output ("CLAUDE_CODE_DISABLE_1M_CONTEXT=" + $(if ($capContext) { "1" } else { "(unset)" }))
+    Write-Output ("CLAUDE_CODE_AUTO_COMPACT_WINDOW=" + $(if ($CompactWindow -gt 0) { "$CompactWindow" } else { "(unchanged)" }))
+    Write-Output "PANE_COMMAND=$roleEnvPs"
+    exit 0
 }
 $roleTag = if ($Role -eq "lane") { "" } else { "-$Role" }
 # Agents never use the browser: orchestrator and lane sessions start without the Chrome
@@ -248,6 +274,10 @@ function Show-Help {
     Write-Host "  -Role <role>     -o      orchestrator | lane (default) | research; the first two cap"
     Write-Host "                           the context at 200k, research runs uncapped; when given, the role"
     Write-Host "                           also names the session (claude --name), even one reopened with -c"
+    Write-Host "  -CompactWindow <n>       opt in to a larger auto-compact window: drops the 200k cap and"
+    Write-Host "                           sets CLAUDE_CODE_AUTO_COMPACT_WINDOW=<n>. Fewer compactions, a"
+    Write-Host "                           larger floor on every turn. Off unless you pass it"
+    Write-Host "  -ShowEnv                 print the variables the session would get, then exit"
     Write-Host "  -Workspace <n>   -x      with -Tab: Herdr workspace (number or id) for the new tab"
     Write-Host "  -Help            -h      this help"
     Write-Host ""
