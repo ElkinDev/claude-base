@@ -10,11 +10,14 @@ two hour wait costs no time.
 Run:
     python test-quota-wake.py
 """
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import types
 import unittest
@@ -87,6 +90,11 @@ class FakeHerdr:
         return types.SimpleNamespace(stdout=out, stderr="", returncode=0)
 
 
+def no_herdr(cmd, **_):
+    """Herdr not installed: what `subprocess.run` raises when the binary is not on PATH."""
+    raise FileNotFoundError(2, "The system cannot find the file specified", cmd[0])
+
+
 def make_args(**over):
     base = dict(panes="", sessions="", titles="", account="acct-a", accounts_dir="", herdr="herdr",
                 dry_run=False, prompt_file="", interval=300, once=True, status=False, stop=False)
@@ -123,7 +131,33 @@ class WakeTest(unittest.TestCase):
             return handle.read()
 
     def run_pass(self, probe, when, args=None, cfg=None, store=None):
-        return wake.one_pass(args or make_args(), cfg or make_cfg(), store or self.store, probe, when, quiet=True)
+        rows, _ = wake.one_pass(args or make_args(), cfg or make_cfg(), store or self.store, probe, when, quiet=True)
+        return rows
+
+    def stub_probe(self, *readings):
+        """The usage endpoint replaced by a queue of readings, so main() reads no network and no
+        real profile directory. Returns the probe, which records every account it was asked for."""
+        probe = FakeProbe(*readings)
+        saved = (wake.meters.read_snapshot, wake.meters.account_name)
+        wake.meters.read_snapshot = lambda config_dir=None, timeout=20: probe("acct-a")
+        wake.meters.account_name = lambda config_dir=None: "acct-a"
+
+        def restore():
+            wake.meters.read_snapshot, wake.meters.account_name = saved
+
+        self.addCleanup(restore)
+        return probe
+
+    def run_main(self, *argv):
+        """main() driven by its own command line: (exit code, everything it printed)."""
+        console, saved = io.StringIO(), sys.argv
+        sys.argv = ["quota-wake.py"] + list(argv)
+        try:
+            with contextlib.redirect_stdout(console):
+                code = wake.main()
+        finally:
+            sys.argv = saved
+        return code, console.getvalue()
 
     def wake_cycle(self, args=None, due=NOW + 60, seven=61):
         """One dry pass and one recovered pass, and the panes woken by the pair."""
@@ -395,14 +429,31 @@ class WakeTest(unittest.TestCase):
         self.assertEqual(self.herdr.prompts, [])
 
     def test_no_herdr_socket_is_survived_and_said_in_words(self):
-        def dead(cmd, **_):
-            raise FileNotFoundError("herdr not on PATH")
-
-        subprocess.run = dead
+        subprocess.run = no_herdr
         probe = FakeProbe(reading(five=100, seven=61, resets_at=iso(NOW - 60)))
         self.run_pass(probe, NOW)
         self.run_pass(probe, NOW + 300)
         self.assertIn("herdr agent list failed", self.log_text())
+
+    def test_once_answers_two_when_no_pane_was_reachable_and_zero_when_one_was(self):
+        """The exit code is the whole report a scheduler reads. A pass that read the meters but
+        found nothing to wake is not a success, and the two cases have to be told apart."""
+        self.stub_probe(reading(five=10, seven=20))
+        subprocess.run = no_herdr
+        self.assertEqual(self.run_main("--once", "--account", "acct-a")[0], 2)
+        subprocess.run = self.herdr.run
+        self.assertEqual(self.run_main("--once", "--account", "acct-a")[0], 0)
+
+    def test_status_says_on_the_console_why_the_panes_column_is_empty(self):
+        """--status is read by a person at a console. The reason no pane can be woken belongs
+        there, not only in a log file that person never opened."""
+        self.stub_probe(reading(five=10, seven=20))
+        subprocess.run = no_herdr
+        code, console = self.run_main("--status", "--account", "acct-a")
+        self.assertEqual(code, 0)
+        self.assertIn("herdr agent list failed", console)
+        self.assertIn("no pane can be woken", console)
+        self.assertIn("acct-a", console, "the meters are still read and still reported")
 
 
 if __name__ == "__main__":

@@ -182,11 +182,13 @@ def wake_panes(args, cfg, account, state, panes, store, now, quiet):
 
 
 def one_pass(args, cfg, store, probe, now=None, quiet=False):
-    """One decision pass over every watched account. Returns one row per account for --status."""
+    """One decision pass over every watched account. Returns (rows, herdr_error): one row per
+    account for --status, and the reason Herdr could not be reached when it could not."""
     now = time.time() if now is None else now
-    agents, error = list_panes(args.herdr)
-    if error:
-        log(f"{error}; the meters are still read, no pane can be woken", quiet)
+    agents, herdr_error = list_panes(args.herdr)
+    if herdr_error:
+        # never quiet: an operator reading --status has to see why the panes column is empty
+        log(f"{herdr_error}; the meters are still read, no pane can be woken")
     rows = []
     for account in watched_accounts(args, agents):
         state = store["accounts"].setdefault(account, {"state": "unknown"})
@@ -209,7 +211,7 @@ def one_pass(args, cfg, store, probe, now=None, quiet=False):
         rows.append({"account": account, "five_hour": state.get("five_hour"), "seven_day": state.get("seven_day"),
                      "state": state.get("state", "unknown"), "resets_at": state.get("resets_at", ""),
                      "panes": [a["pane"] for a in panes], "due_at": state.get("due_at", 0)})
-    return rows
+    return rows, herdr_error
 
 
 def print_table(rows, store):
@@ -238,7 +240,7 @@ def main():
     parser.add_argument("--retry-for", dest="retry_for", type=int, default=1800, help="seconds of retries when the meter is still at the ceiling (default 1800)")
     parser.add_argument("--prompt-file", dest="prompt_file", default="", help="file whose text replaces the built-in resume prompt")
     parser.add_argument("--herdr", default="herdr", help="Herdr CLI executable (default herdr on PATH)")
-    parser.add_argument("--once", action="store_true", help="one pass, then exit")
+    parser.add_argument("--once", action="store_true", help="one pass, then exit; exit code 2 when Herdr never answered")
     parser.add_argument("--status", action="store_true", help="one pass, print the table, never submit")
     parser.add_argument("--dry-run", dest="dry_run", action="store_true", help="never submit, only log what would happen")
     parser.add_argument("--stop", action="store_true", help="ask the running watcher to exit")
@@ -264,7 +266,8 @@ def main():
 
     if args.status:
         args.dry_run = True
-        print_table(one_pass(args, cfg, store, probe, quiet=True), store)
+        rows, _ = one_pass(args, cfg, store, probe, quiet=True)
+        print_table(rows, store)
         return 0
 
     other = take_lock()
@@ -275,9 +278,11 @@ def main():
         f"interval={args.interval}s grace={args.grace}s resume_below={args.resume_below}% retry_for={args.retry_for}s dry_run={args.dry_run}")
     try:
         while True:
-            rows = one_pass(args, cfg, store, probe)
+            rows, herdr_error = one_pass(args, cfg, store, probe)
             save_state(store, args.dry_run)
-            if args.once or stop_requested():
+            if args.once:
+                return 2 if herdr_error else 0  # the meters were read, but nothing was wakeable
+            if stop_requested():
                 break
             for _ in range(next_wait(rows, args.interval)):
                 time.sleep(1)
