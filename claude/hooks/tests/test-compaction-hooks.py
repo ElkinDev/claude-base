@@ -23,7 +23,7 @@ PRE = os.path.join(HOOKS, "precompact-checkpoint.py")
 POST = os.path.join(HOOKS, "postcompact-persist.py")
 RECOVER = os.path.join(HOOKS, "compact-recover.py")
 SESSION = "11111111-2222-3333-4444-555555555555"
-RECOVER_CAP = 2000  # compact-recover.py caps its own output at this many characters
+RECOVER_CAP = 2000  # what compact-recover.py prints, the marker that says it was cut included
 
 
 def git(repo, *args):
@@ -258,7 +258,7 @@ class CompactionHooksTest(unittest.TestCase):
         self.assertIn(checkpoint, out)
         self.assertIn("## Disk truth", out)
         self.assertIn("?? dirty.txt", out)
-        self.assertLessEqual(len(out), RECOVER_CAP + len("\n[recovery output capped]"))
+        self.assertLessEqual(len(out), RECOVER_CAP)
 
     def test_recover_names_the_checkpoint_as_git_truth_without_ordering_a_reread(self):
         """The opening line says where the git truth is and when opening it is worth a read.
@@ -282,7 +282,8 @@ class CompactionHooksTest(unittest.TestCase):
         self.assertNotIn("notes.autosave", lowered)
 
     def test_recover_output_is_capped_at_two_thousand_characters(self):
-        """The cap is the ceiling on what every compaction pays for the recovery block."""
+        """The cap is the ceiling on what every compaction pays for the recovery block, so the
+        marker that says the text was cut is counted inside it and never added on top."""
         self.assertEqual(RECOVER_CAP, 2000)
         self.run_hook(PRE, self.payload())
         landings = os.path.join(self.tmp, "landings.md")
@@ -293,8 +294,9 @@ class CompactionHooksTest(unittest.TestCase):
         data = {"session_id": SESSION, "transcript_path": self.transcript, "cwd": self.repo, "hook_event_name": "SessionStart", "source": "compact"}
         code, out, err = self.run_hook(RECOVER, data, env=self.env(CLAUDE_LANDINGS_FILE=landings))
         self.assertEqual(code, 0, err)
-        self.assertLessEqual(len(out), RECOVER_CAP + len("\n[recovery output capped]"))
+        self.assertEqual(len(out), RECOVER_CAP)
         self.assertIn("[recovery output capped]", out)
+        self.assertTrue(out.endswith("[recovery output capped]"), out[-60:])
 
     def test_recover_without_checkpoint_keeps_the_old_behaviour(self):
         data = {"session_id": SESSION, "transcript_path": self.transcript, "cwd": self.repo, "hook_event_name": "SessionStart", "source": "compact"}

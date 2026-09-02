@@ -16,8 +16,12 @@ import os
 import sys
 from datetime import datetime
 
+# Both caps are ceilings on what is printed, so the marker that says the text was cut is
+# counted inside them and not added after: a cap the marker overruns is not a cap.
 CAP = 2000
+CAP_MARKER = "\n[recovery output capped]"
 DISK_TRUTH_CAP = 1500
+DISK_TRUTH_MARKER = "\n[see the file for the rest]"
 
 
 def head(path, lines):
@@ -71,7 +75,7 @@ def disk_truth_section(path):
     end = text.find("\n## ", start + 1)
     section = text[start:end if end > 0 else len(text)].strip()
     if len(section) > DISK_TRUTH_CAP:
-        section = section[:DISK_TRUTH_CAP] + "\n[see the file for the rest]"
+        section = section[:DISK_TRUTH_CAP - len(DISK_TRUTH_MARKER)] + DISK_TRUTH_MARKER
     return section
 
 
@@ -107,7 +111,7 @@ def main():
         out.append(f"Last landings ({landings}):\n{tail(landings, 5).rstrip()}")
     text = "\n\n".join(out)
     if len(text) > CAP:
-        text = text[:CAP] + "\n[recovery output capped]"
+        text = text[:CAP - len(CAP_MARKER)] + CAP_MARKER
     sys.stdout.buffer.write(text.encode("utf-8"))
     return 0
 

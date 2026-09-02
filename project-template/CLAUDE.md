@@ -104,8 +104,10 @@ show the correct way with a concrete example.
   window at every compaction, so one read is paid for again on every cycle: measured at 6087 to
   9237 tokens per compaction on one project and 4946 on another. A shell read is paid for once.
   A lane keeps using the Read tool, which is the right tool for a file it is about to edit.
-- The same image and large-file guard runs on both routes, so a shell read of a screenshot or of a
-  file over 150 KB is refused with the slice command to use instead.
+- The same guard runs on both routes. A file over 150 KB is refused unless the read already asks
+  for 400 lines or fewer, and that refusal names the slice commands to use instead. A screenshot is
+  refused to this pane with no slice offered, because a slice of an image means nothing: delegate
+  the look to a lane or a fork and ask for a written description.
 - An orchestrator does not invoke artifact skills (commit-message, pr-description, story,
   evidence-report, adversarial-review, devops-work-item). The lane that writes the artifact invokes
   the skill it needs. A skill loaded in a pane is restored at every compaction of that pane, whole,
