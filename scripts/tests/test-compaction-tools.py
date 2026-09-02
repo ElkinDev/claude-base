@@ -52,51 +52,123 @@ def assistant_row(index, ctx, cw=0, out=100, message_id=None, minute=0):
     }
 
 
+def boundary_row(pre, post, minute, trigger="manual"):
+    """The row Claude Code writes at a compaction, as seen on 2.1.258."""
+    return {
+        "type": "system",
+        "subtype": "compact_boundary",
+        "timestamp": f"2026-01-01T10:{minute:02d}:54Z",
+        "content": "Compacted",
+        "compactMetadata": {"trigger": trigger, "preTokens": pre, "postTokens": post, "durationMs": 122944},
+    }
+
+
+def refusal_row(minute):
+    """What the CLI writes when it refuses a /compact: no assistant record, no usage, no API call."""
+    return {
+        "type": "system",
+        "subtype": "local_command",
+        "timestamp": f"2026-01-01T10:{minute:02d}:27Z",
+        "content": "<local-command-stdout>Not enough messages to compact.</local-command-stdout>",
+    }
+
+
+def mark(offset=0, kind="usage"):
+    return watcher.Mark(offset, kind)
+
+
 class DecideTest(unittest.TestCase):
     def test_no_usage_is_skipped(self):
-        self.assertEqual(watcher.decide({}, "idle", 1, None, 1000.0, CFG)[0], "skip")
+        self.assertEqual(watcher.decide({}, "idle", 1, None, None, 1000.0, CFG)[0], "skip")
 
     def test_below_threshold_holds(self):
-        action, reason = watcher.decide({}, "idle", 1, 100000, 1000.0, CFG)
+        action, reason = watcher.decide({}, "idle", 1, 100000, mark(1), 1000.0, CFG)
         self.assertEqual(action, "hold")
         self.assertIn("below", reason)
 
     def test_working_session_holds_and_resets_idle(self):
         state = {"idle_since": 500.0, "idle_seq": 1}
-        action, _ = watcher.decide(state, "working", 2, 150000, 1000.0, CFG)
+        action, _ = watcher.decide(state, "working", 2, 150000, mark(1), 1000.0, CFG)
         self.assertEqual(action, "hold")
         self.assertIsNone(state["idle_since"])
 
     def test_idle_long_enough_fires_once_then_cools_down(self):
         state = {}
-        self.assertEqual(watcher.decide(state, "idle", 7, 150000, 1000.0, CFG)[0], "wait")
-        self.assertEqual(watcher.decide(state, "idle", 7, 150000, 1050.0, CFG)[0], "wait")
-        action, reason = watcher.decide(state, "idle", 7, 150000, 1091.0, CFG)
+        self.assertEqual(watcher.decide(state, "idle", 7, 150000, mark(1), 1000.0, CFG)[0], "wait")
+        self.assertEqual(watcher.decide(state, "idle", 7, 150000, mark(1), 1050.0, CFG)[0], "wait")
+        action, reason = watcher.decide(state, "idle", 7, 150000, mark(1), 1091.0, CFG)
         self.assertEqual(action, "fire")
         self.assertIn("150000 tokens", reason)
         state["last_fire"] = 1091.0
-        action, reason = watcher.decide(state, "idle", 7, 150000, 1200.0, CFG)
+        # the session answered, so the transcript moved on: the cooldown is what holds it now
+        action, reason = watcher.decide(state, "idle", 7, 150000, mark(2), 1200.0, CFG)
         self.assertEqual(action, "hold")
         self.assertIn("cooldown", reason)
 
     def test_state_change_restarts_the_idle_clock(self):
         state = {}
-        watcher.decide(state, "idle", 1, 150000, 1000.0, CFG)
-        action, _ = watcher.decide(state, "idle", 2, 150000, 1100.0, CFG)
+        watcher.decide(state, "idle", 1, 150000, mark(1), 1000.0, CFG)
+        action, _ = watcher.decide(state, "idle", 2, 150000, mark(1), 1100.0, CFG)
         self.assertEqual(action, "wait")
         self.assertEqual(state["idle_since"], 1100.0)
 
     def test_observed_compaction_is_recorded_and_respected(self):
         state = {}
-        watcher.decide(state, "working", 1, 160000, 1000.0, CFG)
-        watcher.decide(state, "working", 2, 70000, 1030.0, CFG)
+        watcher.decide(state, "working", 1, 160000, mark(1), 1000.0, CFG)
+        watcher.decide(state, "working", 2, 70000, mark(2), 1030.0, CFG)
         self.assertEqual(state["last_compaction"], 1030.0)
-        watcher.decide(state, "idle", 3, 140000, 1100.0, CFG)
-        action, reason = watcher.decide(state, "idle", 3, 140000, 1300.0, CFG)
+        watcher.decide(state, "idle", 3, 140000, mark(3), 1100.0, CFG)
+        action, reason = watcher.decide(state, "idle", 3, 140000, mark(3), 1300.0, CFG)
         self.assertEqual(action, "hold")
         self.assertIn("compacted", reason)
-        action, _ = watcher.decide(state, "idle", 3, 140000, 2000.0, CFG)
+        action, _ = watcher.decide(state, "idle", 3, 140000, mark(4), 2000.0, CFG)
         self.assertEqual(action, "fire")
+
+    def test_a_position_that_has_not_moved_since_the_fire_holds(self):
+        """The 2026-09-02 case: five submissions at one number. A session with no new
+        assistant turn since its last /compact is by definition not compactable."""
+        state = {}
+        watcher.decide(state, "idle", 7, 151579, mark(100), 1000.0, CFG)
+        action, _ = watcher.decide(state, "idle", 7, 151579, mark(100), 1100.0, CFG)
+        self.assertEqual(action, "fire")
+        for now in (1200.0, 2100.0, 3000.0, 3900.0):
+            action, reason = watcher.decide(state, "idle", 7, 151579, mark(100), now, CFG)
+            self.assertEqual(action, "hold", now)
+            self.assertEqual(reason, "no turn since the last /compact")
+        # only a new assistant turn clears it
+        action, _ = watcher.decide(state, "idle", 7, 151579, mark(200), 3950.0, CFG)
+        self.assertEqual(action, "fire")
+        self.assertEqual(state["fires_without_effect"], 0)
+
+    def test_a_boundary_newer_than_the_last_turn_holds_at_the_floor(self):
+        state = {}
+        action, _ = watcher.decide(state, "idle", 7, 151579, mark(100), 1000.0, CFG)
+        self.assertEqual(action, "wait")  # the idle clock has just started
+        action, _ = watcher.decide(state, "idle", 7, 151579, mark(100), 1100.0, CFG)
+        self.assertEqual(action, "fire")
+        action, reason = watcher.decide(state, "idle", 7, 19259, mark(300, "boundary"), 1300.0, CFG)
+        self.assertEqual(action, "hold")
+        self.assertIn("19259", reason)
+        self.assertIn("no turn since", reason)
+        self.assertEqual(state["last_compaction"], 1300.0)
+
+    def test_fires_without_effect_back_off_the_cooldown(self):
+        state = {}
+        watcher.decide(state, "idle", 7, 151579, mark(100), 1000.0, CFG)
+        watcher.decide(state, "idle", 7, 151579, mark(100), 1100.0, CFG)
+        self.assertEqual(state.get("fires_without_effect", 0), 0)
+        # one base cooldown later with the same position, the fire is counted as ineffective
+        watcher.decide(state, "idle", 7, 151579, mark(100), 2100.0, CFG)
+        self.assertEqual(state["fires_without_effect"], 1)
+        watcher.decide(state, "idle", 7, 151579, mark(100), 3100.0, CFG)
+        self.assertEqual(state["fires_without_effect"], 1)  # one count per fire, not per pass
+        self.assertEqual(watcher.effective_cooldown(state, CFG), 2 * CFG["cooldown"])
+        state["fires_without_effect"] = 9
+        self.assertEqual(watcher.effective_cooldown(state, CFG), 16 * CFG["cooldown"])
+        action, _ = watcher.decide(state, "idle", 7, 151579, mark(400), 4000.0, CFG)
+        self.assertEqual(action, "fire")
+        self.assertEqual(state["fires_without_effect"], 0)
+        self.assertEqual(watcher.effective_cooldown(state, CFG), CFG["cooldown"])
 
 
 class TranscriptAndHerdrTest(unittest.TestCase):
@@ -119,12 +191,73 @@ class TranscriptAndHerdrTest(unittest.TestCase):
 
     def test_last_context_reads_the_final_assistant_usage(self):
         path = self.write("t.jsonl", [assistant_row(1, 50000), {"type": "user", "message": {"content": "x"}}, assistant_row(2, 123456), {"type": "user", "message": {"content": "y"}}])
-        self.assertEqual(watcher.last_context(path), 123456)
+        ctx, position = watcher.last_context(path)
+        self.assertEqual(ctx, 123456)
+        self.assertEqual(position.kind, "usage")
+        self.assertGreater(position.offset, 0)
+        # the position moves with the next turn, which is how a stale number is recognised
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(assistant_row(3, 130000)) + "\n")
+        again, moved = watcher.last_context(path)
+        self.assertEqual(again, 130000)
+        self.assertGreater(moved.offset, position.offset)
 
     def test_last_context_without_usage_is_none(self):
         path = self.write("t.jsonl", [{"type": "user", "message": {"content": "x"}}])
-        self.assertIsNone(watcher.last_context(path))
-        self.assertIsNone(watcher.last_context(os.path.join(self.tmp, "missing.jsonl")))
+        self.assertEqual(watcher.last_context(path), (None, None))
+        self.assertEqual(watcher.last_context(os.path.join(self.tmp, "missing.jsonl")), (None, None))
+
+    def test_last_context_reports_the_floor_when_a_boundary_is_newer(self):
+        """After a compaction with no turn yet, the last usage row is the pre-compaction
+        number and reading it as the live context over-states by 60000 tokens."""
+        path = self.write("boundary.jsonl", [assistant_row(1, 151579, minute=16), boundary_row(153426, 19259, 19)])
+        ctx, position = watcher.last_context(path)
+        self.assertEqual(ctx, 19259)
+        self.assertEqual(position.kind, "boundary")
+        # the refusals the CLI writes are not turns and must not move the position
+        with open(path, "a", encoding="utf-8") as handle:
+            for minute in (33, 48):
+                handle.write(json.dumps(refusal_row(minute)) + "\n")
+        self.assertEqual(watcher.last_context(path), (ctx, position))
+        # a new assistant turn is newer than the boundary and takes over again
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(assistant_row(2, 88000, minute=50)) + "\n")
+        ctx, position = watcher.last_context(path)
+        self.assertEqual(ctx, 88000)
+        self.assertEqual(position.kind, "usage")
+
+    def test_the_2026_09_02_log_submits_once_and_holds_until_a_new_turn(self):
+        """One submission worked and four were refused with 'Not enough messages to compact.'
+        at the same stale 151579. The watcher must hold on every pass after the first."""
+        path = self.write("stale.jsonl", [assistant_row(1, 151579, minute=16)])
+        state, cfg, now = {}, dict(CFG, idle=90), 1000.0
+        actions = []
+
+        def pass_at(seconds):
+            ctx, position = watcher.last_context(path)
+            return watcher.decide(state, "idle", 7, ctx, position, seconds, cfg)
+
+        self.assertEqual(pass_at(now)[0], "wait")
+        action, reason = pass_at(now + 100)
+        self.assertEqual(action, "fire")
+        self.assertIn("151579 tokens", reason)
+        # 90 seconds later the compaction lands; every later pass sees a boundary or a refusal
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(boundary_row(153426, 19259, 19)) + "\n")
+        for step, minute in enumerate((33, 48, 63, 78)):
+            action, reason = pass_at(now + 100 + 900 * (step + 1))
+            actions.append(action)
+            self.assertEqual(action, "hold", reason)
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(refusal_row(minute % 60)) + "\n")
+        self.assertEqual(actions, ["hold"] * 4)
+        # and it arms again only when a real turn comes back above the threshold
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(assistant_row(2, 90000, minute=50)) + "\n")
+        self.assertEqual(pass_at(now + 5000)[0], "hold")  # 45 percent, below the threshold
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(assistant_row(3, 151000, minute=55)) + "\n")
+        self.assertEqual(pass_at(now + 6000)[0], "fire")
 
     def test_herdr_agents_parses_the_cli_payload(self):
         original = watcher.subprocess.run

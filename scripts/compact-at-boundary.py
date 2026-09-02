@@ -31,6 +31,7 @@ continuous idleness, --cooldown 900 seconds between submissions to the same sess
 threshold comes from and why the exact value is second order.
 """
 import argparse
+import collections
 import glob
 import json
 import os
@@ -47,6 +48,13 @@ STOP_FILE = os.path.join(STATE_DIR, "compact-at-boundary.stop")
 LOG_FILE = os.path.join(STATE_DIR, "compact-at-boundary.log")
 TAIL_BYTES = 512 * 1024
 COMPACTION_DROP = 0.6      # a context that falls below 60 percent of its last value was compacted
+MAX_BACKOFF_DOUBLINGS = 4  # a cooldown that has already grown 16 times is long enough
+
+# Where the context number came from: `offset` is the byte offset of that row in the
+# transcript, `kind` is "usage" for an assistant turn and "boundary" for a compaction row.
+# Two passes that read the same mark read the same row, which is how a number that has not
+# moved is told from a session that answered something in between.
+Mark = collections.namedtuple("Mark", "offset kind")
 
 
 def log(message, quiet=False):
@@ -183,29 +191,72 @@ def transcript_for(session, cache):
     return hits[0]
 
 
+def tail_rows(path):
+    """[(byte offset, raw line)] for the tail of a transcript, oldest first. The first
+    partial line after the seek is dropped, so every offset names a real row."""
+    size = os.path.getsize(path)
+    with open(path, "rb") as handle:
+        base = 0
+        if size > TAIL_BYTES:
+            handle.seek(size - TAIL_BYTES)
+            base = size - TAIL_BYTES + len(handle.readline())
+        data = handle.read()
+    rows, offset = [], base
+    for raw in data.split(b"\n"):
+        rows.append((offset, raw))
+        offset += len(raw) + 1
+    return rows
+
+
 def last_context(path):
-    """Context size of the last assistant turn: input + cache write + cache read tokens."""
+    """(tokens, mark) for one session: the context of its last assistant turn, which is
+    input + cache write + cache read tokens, and the Mark naming the row it came from.
+
+    A compaction writes a `compact_boundary` row and no assistant record, so a session that
+    has not answered since one still has its pre-compaction usage row at the end of the
+    transcript. Reading that row as the live context over-states it by the whole cycle: on
+    2026-09-02 a session that had compacted to 19259 tokens still read as 151579, and the
+    watcher submitted `/compact` four more times against a number that could not move. When
+    the newest boundary is newer than the newest assistant turn, its `postTokens` is reported
+    instead, as a floor estimate, and the mark says "boundary" so the caller knows to hold.
+    """
     try:
-        size = os.path.getsize(path)
-        with open(path, "rb") as handle:
-            if size > TAIL_BYTES:
-                handle.seek(size - TAIL_BYTES)
-                handle.readline()
-            lines = handle.read().splitlines()
+        rows = tail_rows(path)
     except Exception:
-        return None
-    for raw in reversed(lines):
+        return None, None
+    context = usage_mark = post = boundary_mark = None
+    usage_time = boundary_time = ""
+    for offset, raw in reversed(rows):
+        if usage_mark is not None and boundary_mark is not None:
+            break
+        if not raw.strip():
+            continue
         try:
             row = json.loads(raw.decode("utf-8", "replace"))
         except Exception:
             continue
-        if row.get("type") != "assistant":
-            continue
-        usage = ((row.get("message") or {}).get("usage")) or {}
-        if not usage:
-            continue
-        return (usage.get("input_tokens") or 0) + (usage.get("cache_creation_input_tokens") or 0) + (usage.get("cache_read_input_tokens") or 0)
-    return None
+        kind = row.get("type")
+        if kind == "assistant" and usage_mark is None:
+            usage = ((row.get("message") or {}).get("usage")) or {}
+            if not usage:
+                continue
+            context = (usage.get("input_tokens") or 0) + (usage.get("cache_creation_input_tokens") or 0) + (usage.get("cache_read_input_tokens") or 0)
+            usage_mark = Mark(offset, "usage")
+            usage_time = str(row.get("timestamp") or "")
+        elif kind == "system" and boundary_mark is None and row.get("compactMetadata"):
+            post = (row.get("compactMetadata") or {}).get("postTokens")
+            boundary_mark = Mark(offset, "boundary")
+            boundary_time = str(row.get("timestamp") or "")
+    if boundary_mark is None:
+        return context, usage_mark
+    if usage_mark is None:
+        return post, boundary_mark
+    # both timestamps come from the same writer in the same format; the file is append only,
+    # so the byte offsets say the same thing and answer when a timestamp is missing
+    newer = boundary_time > usage_time if (boundary_time and usage_time) else boundary_mark.offset > usage_mark.offset
+    if newer:
+        return (post if post is not None else context), boundary_mark
+    return context, usage_mark
 
 
 def session_name(path, names):
@@ -242,16 +293,33 @@ def session_name(path, names):
 
 # ---------------------------------------------------------------- decision
 
-def decide(state, status, seq, ctx, now, cfg):
-    """Pure decision for one session. Mutates `state` (idle_since, last_ctx, last_compaction)
-    and returns (action, reason) with action in hold | wait | fire | skip."""
+def effective_cooldown(state, cfg):
+    """The cooldown, doubled once per submission that produced no new turn, capped at 16x.
+    A session that refuses `/compact` is asked again in 15 minutes, then 30, then an hour."""
+    return cfg["cooldown"] * 2 ** min(state.get("fires_without_effect", 0), MAX_BACKOFF_DOUBLINGS)
+
+
+def decide(state, status, seq, ctx, mark, now, cfg):
+    """Pure decision for one session. Mutates `state` (idle_since, last_ctx, ctx_at,
+    last_compaction, fires_without_effect) and returns (action, reason) with action in
+    hold | wait | fire | skip. `mark` is the Mark last_context read the number from."""
     if ctx is None:
         return "skip", "no usage row yet"
+    kind = mark.kind if mark else "usage"
+    moved = mark is not None and mark != state.get("ctx_at")
+    if moved and kind == "usage":
+        # a real turn happened, so whatever the last submission did or did not do is settled
+        state["fires_without_effect"] = 0
+        state["fire_counted"] = False
+    if moved and kind == "boundary":
+        state["last_compaction"] = now
+        state["idle_since"] = None
     last_ctx = state.get("last_ctx")
     if last_ctx and last_ctx > 0.3 * cfg["window"] and ctx < last_ctx * COMPACTION_DROP:
         state["last_compaction"] = now
         state["idle_since"] = None
     state["last_ctx"] = ctx
+    state["ctx_at"] = mark
     pct = ctx / cfg["window"]
     if status == "idle":
         if state.get("idle_since") is None or state.get("idle_seq") != seq:
@@ -259,6 +327,15 @@ def decide(state, status, seq, ctx, now, cfg):
             state["idle_seq"] = seq
     else:
         state["idle_since"] = None
+    if kind == "boundary":
+        # the number is the floor the compaction left, not a context the session grew to
+        return "hold", f"{pct:.0%} ({ctx} postTokens), no turn since the compaction"
+    fired = state.get("last_fire")
+    if fired and mark is not None and mark == state.get("fire_mark"):
+        if now - fired >= cfg["cooldown"] and not state.get("fire_counted"):
+            state["fires_without_effect"] = state.get("fires_without_effect", 0) + 1
+            state["fire_counted"] = True
+        return "hold", "no turn since the last /compact"
     if pct < cfg["threshold"]:
         return "hold", f"{pct:.0%} below {cfg['threshold']:.0%}"
     if status != "idle":
@@ -266,12 +343,16 @@ def decide(state, status, seq, ctx, now, cfg):
     idle_for = now - state["idle_since"]
     if idle_for < cfg["idle"]:
         return "wait", f"{pct:.0%}, idle {idle_for:.0f}s of {cfg['idle']}s"
+    cooldown = effective_cooldown(state, cfg)
     since_fire = now - state.get("last_fire", 0)
-    if since_fire < cfg["cooldown"]:
-        return "hold", f"{pct:.0%}, cooldown {cfg['cooldown'] - since_fire:.0f}s left"
+    if since_fire < cooldown:
+        return "hold", f"{pct:.0%}, cooldown {cooldown - since_fire:.0f}s left"
     since_compaction = now - state.get("last_compaction", 0)
     if since_compaction < cfg["cooldown"]:
         return "hold", f"{pct:.0%}, compacted {since_compaction:.0f}s ago"
+    state["last_fire"] = now
+    state["fire_mark"] = mark
+    state["fire_counted"] = False
     return "fire", f"{pct:.0%} ({ctx} tokens), idle {idle_for:.0f}s"
 
 
@@ -359,19 +440,18 @@ def one_pass(args, cfg, states, cache, quiet=False):
             continue
         state = states.setdefault(session, {})
         path = transcript_for(session, cache)
-        ctx = last_context(path) if path else None
+        ctx, mark = last_context(path) if path else (None, None)
         # Herdr reports `idle` after an ordinary turn and `done` after a compaction; both mean
         # the session is waiting for input, which is the boundary this watcher looks for
         status = "idle" if agent["status"] in cfg["idle_states"] else agent["status"]
-        action, reason = decide(state, status, agent["seq"], ctx, now, cfg)
+        action, reason = decide(state, status, agent["seq"], ctx, mark, now, cfg)
         rows.append((agent["pane"], session[:8], agent["status"], ctx, action, reason, label_of(agent)))
         if action == "fire":
+            # decide() already stamped last_fire and fire_mark, so both paths share one clock
             if args.dry_run:
                 log(f"{agent['pane']} {session[:8]} would submit {args.prompt!r}: {reason} (dry run)", quiet)
-                state["last_fire"] = now
                 continue
             ok, detail = submit(args.herdr, agent["pane"], args.prompt)
-            state["last_fire"] = now
             log(f"{agent['pane']} {session[:8]} submitted {args.prompt!r}: {reason}; herdr {'ok' if ok else 'FAILED'} {detail}", quiet)
         elif action == "wait" and not quiet:
             log(f"{agent['pane']} {session[:8]} {reason}", quiet)
