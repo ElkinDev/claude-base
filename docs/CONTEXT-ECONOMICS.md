@@ -172,7 +172,9 @@ output, which the summary replaces instead of carrying. So an orchestrator, whic
 and edits almost nothing, reads with the shell; a lane, which opens a file to change it, keeps
 the Read tool. `claude/hooks/guard-read.py` is wired to both routes for that reason: with the
 `Read` matcher alone, moving the reads to the shell would also move them past the image and
-large-file guard.
+large-file guard. Which files a command line prints, and whether a pipe, a redirect or a
+substitution keeps those bytes out of the window, is parsed in `claude/hooks/shell_read.py`
+beside it.
 
 ## 6. The right moment: an optimum band, and why the level is second order
 
@@ -387,7 +389,7 @@ that pointer from you. Nothing in the old transcript is needed after that.
 - Offline: `claude/hooks/tests/test-compaction-hooks.py` (18 tests, the hooks run as
   subprocesses against a throwaway repository), `scripts/tests/test-compaction-tools.py`
   (22 tests, synthetic transcripts and a fake Herdr), `scripts/tests/test-guard-read.py`
-  (27 tests, the guard run as a subprocess over both the Read and the shell route) and
+  (38 tests, the guard run as a subprocess over both the Read and the shell route) and
   `scripts/tests/test-launcher-env.ps1` (the launcher's dry run, default and opt-in window).
 - Live, end to end, on 2026-08-27 with Claude Code 2.1.250 in a throwaway session under
   Herdr: the watcher submitted `/compact` through `herdr agent prompt` at 27 percent of the

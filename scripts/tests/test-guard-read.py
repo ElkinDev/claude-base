@@ -174,6 +174,66 @@ class GuardTest(unittest.TestCase):
         posix = "/%s%s" % (drive[0].lower(), rest.replace("\\", "/"))
         self.denial(self.bash("cat %s" % posix))
 
+    # ------------------------------------------------------------- an input redirect is a read
+    def test_a_file_fed_through_an_input_redirect_is_still_read(self):
+        self.denial(self.bash('cat < "%s"' % self.big))
+        self.denial(self.bash('cat <"%s"' % self.big))
+        self.assertIn("orchestrator", self.denial(self.bash('cat < "%s"' % self.image)))
+        self.allowed(self.bash('cat < "%s"' % self.small))
+
+    def test_a_slice_taken_through_a_redirect_is_allowed(self):
+        self.allowed(self.bash('head -n 5 < "%s"' % self.big))
+        self.allowed(self.bash('wc -l < "%s"' % self.big))
+
+    def test_a_here_string_and_a_heredoc_name_no_file(self):
+        self.allowed(self.bash("cat <<<'report.txt'"))
+        self.allowed(self.bash("cat << report.txt\nline\nreport.txt"))
+
+    # ------------------------------------------------------------- pipelines
+    def test_the_last_stage_of_a_pipeline_prints_to_the_window(self):
+        self.denial(self.bash('cat "%s" | cat' % self.big))
+        self.denial(self.bash('cat "%s" | base64' % self.big))
+        self.denial(self.bash('Get-Content "%s" | Out-String' % self.big, tool="PowerShell"))
+
+    def test_a_stage_that_narrows_the_stream_keeps_the_pipeline_allowed(self):
+        self.allowed(self.bash('cat "%s" | grep "line 000042"' % self.big))
+        self.allowed(self.bash('cat "%s" | wc -l' % self.big))
+        self.allowed(self.bash('cat "%s" | head -5 | cat' % self.big))
+        self.allowed(self.bash('cat "%s" | cat > "%s"'
+                               % (self.big, os.path.join(self.tmp, "copy.txt"))))
+
+    # ------------------------------------------------------------- substitutions
+    def test_a_command_substitution_is_parsed_like_any_other_command(self):
+        self.denial(self.bash('echo $(cat "%s")' % self.big))
+        self.denial(self.bash('echo `cat "%s"`' % self.big))
+        self.denial(self.bash('echo $(echo $(cat "%s"))' % self.big))
+        self.assertIn("orchestrator", self.denial(self.bash('echo $(cat "%s")' % self.image)))
+        self.allowed(self.bash('echo $(head -n 5 "%s")' % self.big))
+
+    def test_a_substitution_inside_single_quotes_is_literal(self):
+        self.allowed(self.bash("""echo '$(cat "%s")'""" % self.big))
+
+    def test_a_backtick_substitutes_in_bash_and_escapes_in_powershell(self):
+        command = 'Write-Output "x`cat \"%s\"`y"' % self.big
+        self.denial(self.bash(command))
+        self.allowed(self.bash(command, tool="PowerShell"))
+
+    # ------------------------------------------------------------- slice arithmetic
+    def test_a_tail_offset_is_not_a_line_count(self):
+        self.denial(self.bash('tail -n +100 "%s"' % self.big))
+        self.denial(self.bash('tail -c +100 "%s"' % self.big))
+        self.allowed(self.bash('tail -n 100 "%s"' % self.big))
+
+    def test_a_sed_slice_written_with_e_is_allowed(self):
+        self.allowed(self.bash("sed -n -e '1,200p' \"%s\"" % self.big))
+        self.allowed(self.bash("sed -n -e '1,10p' -e '20,30p' \"%s\"" % self.big))
+        self.allowed(self.bash("sed -ne '1,200p' \"%s\"" % self.big))
+
+    def test_a_sed_that_prints_too_much_with_e_is_still_denied(self):
+        self.denial(self.bash("sed -n -e '1,20000p' \"%s\"" % self.big))
+        self.denial(self.bash("sed -n -e '1,200p' -e '300,20000p' \"%s\"" % self.big))
+        self.denial(self.bash("sed -n -f slice.sed \"%s\"" % self.big))
+
     # ------------------------------------------------------------- PowerShell shape
     def test_get_content_of_a_big_file_is_denied(self):
         self.denial(self.bash('Get-Content "%s"' % self.big, tool="PowerShell"))
