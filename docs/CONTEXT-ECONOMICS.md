@@ -357,3 +357,35 @@ that pointer from you. Nothing in the old transcript is needed after that.
   and the payload shapes on versions after 2.1.250.
 - The cost weights are relative list prices; on a subscription the currency is quota, and the
   same weights are what the quota meters are believed to track. Measure your own day.
+
+## 11. The other meter: quota, and the pane that stops for two hours
+
+Everything above is about the context window, which is what a turn costs. A subscription
+account has a second meter that stops work just as hard and for a different reason: a five hour
+usage window and a seven day one, each with a utilization and the time it resets. When the five
+hour window fills, the session stops mid queue and stays stopped until a person notices, even
+though the endpoint that reports the meter also announces, to the minute, when it comes back.
+An overnight queue that hits the ceiling at 23:10 and reopens at 01:00 loses the whole night to
+nobody being awake to press enter.
+
+`scripts/quota-wake.py` is the answer, and it is the same shape as the compaction watcher: a
+resident process, zero model cost, that reads the meters through `scripts/usage-probe.py`, waits
+for the announced reset plus a grace, confirms the meter actually recovered, and submits one
+resume prompt to the stopped pane through `herdr agent prompt`. It wakes each pane at most once
+per reset, keyed by the reset time itself, so a restart of the watcher inside the same window
+never wakes a pane twice.
+
+The rule that matters is the one that refuses. When the seven day meter is at or above the cap
+the operator set (`--cap`, default 80 percent), the account is left alone however dry the five
+hour window is. A wake at that point does not buy work; it converts the rest of the week into
+unfinished work, and crossing that line is the operator's decision, never the script's. The same
+discipline applies to the pane: one that Herdr reports as `working` is skipped, because a pane
+still producing output is not a pane out of tokens, whatever the meter said a moment ago.
+
+Costs and limits: one HTTPS request per account per pass (default every 300 seconds, and the
+wait to a known reset is exact rather than aligned to that grid), no model tokens, no request
+while an account is waiting for a reset that has not arrived. The meters are read, never
+extrapolated: this toolkit does not guess how many tokens are left before the window fills.
+`scripts/usage-probe.py --csv` is the same row the nightly ledger has always appended, byte for
+byte. The design, the states and the decisions behind the knobs are in
+`docs/03-features/F14-quota-wake.md`.

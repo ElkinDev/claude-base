@@ -56,3 +56,7 @@ Each FR is a testable capability. Feature specs in `03-features/` reference thes
 - FR-046: Before any write that replaces existing content, the installer copies the file into `<kit home>/backups/<stamp>/` under its original absolute path, and records in that folder's `manifest.txt` what it overwrote, what it created, which files of the operator's it kept and which `.new` proposals it left. Each line is written before the change it describes, so a run that stops halfway still leaves a record that can be rolled back. Every run that recorded anything ends by naming the backup folder and the exact rollback command.
 - FR-047: `--dry-run` prints the full plan, one line per file with its action, and writes nothing at all, not even the manifest, verified by hashing the target tree before and after.
 - FR-048: A documented rollback command restores one backup: the overwritten files go back to their original paths, the files that run created are removed, their entries leave the manifest, and a file changed after the backup was taken is skipped with its reason unless the operator passes `--force`.
+
+## Session and quota recovery
+
+- FR-049: A resident script with zero model cost watches the rate limit meters of one or more accounts, waits for the reset time the meter announces when the five hour window is exhausted, confirms the meter recovered, and submits one resume prompt per stopped pane, at most once per reset per pane, and never while the seven day meter is at or above the configured cap.

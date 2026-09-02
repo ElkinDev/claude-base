@@ -42,7 +42,16 @@ project-template/           -> copy into each project
 herdr/                      Herdr multiplexer config, the Ctrl+Alt+N global hotkey, the verified
                             version and the CLI surface the kit drives
 scripts/                    zero-token tooling: usage ledger and board, compaction watcher and report,
-                            evidence-path resolver, preflight doctor
+                            quota wake, evidence-path resolver, preflight doctor
+  usage-probe.py            one shot read of the five hour and seven day usage meters: human lines,
+                            --csv for the nightly ledger, --json for the quota wake
+  quota-wake.py             resident watcher: waits for the announced reset of a dry five hour
+                            window, confirms the meter came back, and prompts the stopped pane
+                            once, never while the seven day meter is at or above the cap
+  quota_states.py           the quota decision with no process around it: two meters in, one verdict
+  usage_meters.py           credentials, endpoint and meter parsing, shared by the two above
+  herdr_panes.py            pane plumbing shared by the compaction watcher and the quota wake:
+                            what Herdr knows, which panes a selector means, one instance at a time
   kit-restore.py            roll one install back: restores what it replaced, removes what it created
   sanitize-check.py         guard that blocks a push carrying a personal path, a real address, a
                             credential shape or a private name, and a commit once the optional
