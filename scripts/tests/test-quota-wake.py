@@ -382,6 +382,13 @@ class WakeTest(unittest.TestCase):
         self.run_pass(probe, due + 120, args=args)
         self.assertEqual(self.herdr.prompts[0][1], "read the brief for acct-a, the window is at 5 percent")
 
+    def test_a_prompt_file_that_cannot_be_read_falls_back_and_says_so(self):
+        """An unreadable brief is a note in the log, never a skipped wake: the account earned it."""
+        args = make_args(prompt_file=os.path.join(self.tmp, "gone", "brief.txt"))
+        self.assertEqual(self.wake_cycle(args=args), ["w1:p1"])
+        self.assertIn(SENTENCE, self.herdr.prompts[0][1])
+        self.assertIn("--prompt-file not read", self.log_text())
+
     def test_dry_run_writes_only_the_log(self):
         due = NOW + 60
         probe = FakeProbe(reading(five=100, seven=61, resets_at=iso(due)), reading(five=5, seven=62))

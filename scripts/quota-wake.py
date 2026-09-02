@@ -30,7 +30,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import herdr_panes  # noqa: E402  (the path above is what makes it importable)
 import usage_meters as meters  # noqa: E402
-from quota_states import RESUME_TEXT, advance, classify, clock, prompt_text  # noqa: E402
+from quota_states import advance, classify, clock, prompt_text, read_template  # noqa: E402
 from herdr_panes import (  # noqa: E402
     describe_selectors, label_of, list_panes, pane_account, role_candidates, rotate_and_append, select_agents, submit,
 )
@@ -146,24 +146,15 @@ def config_dir_of(account, args):
 
 # ---------------------------------------------------------------- one pass
 
-def read_template(args):
-    """The built-in resume text, or the operator's file when --prompt-file names a readable one."""
-    if not args.prompt_file:
-        return RESUME_TEXT
-    try:
-        with open(args.prompt_file, encoding="utf-8") as handle:
-            return handle.read().strip()
-    except Exception as error:
-        log(f"--prompt-file not read ({error}), using the built-in text", quiet=True)
-        return RESUME_TEXT
-
-
 def wake_panes(args, cfg, account, state, panes, store, now, quiet):
     """One wake per candidate pane, at most once per pane per reset."""
     if not panes:
         log(f"{account} recovered but no pane matches {describe_selectors(args) or 'the orchestrator role'}", quiet)
         return
-    text = prompt_text(read_template(args), cfg, account, state, now)
+    template, note = read_template(args.prompt_file)
+    if note:
+        log(note, quiet=True)
+    text = prompt_text(template, cfg, account, state, now)
     for agent in panes:
         session, pane = agent["session"], agent["pane"]
         if agent["status"] not in WAKE_STATES:

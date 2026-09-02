@@ -106,6 +106,19 @@ def give_up(state, resets, cfg):
     return "give-up", f"still dry, the retry budget of {cfg['retry_for']} seconds after the announced reset is spent, back to watching"
 
 
+def read_template(prompt_file):
+    """(template, note): the operator's own brief when --prompt-file names a readable file, the
+    built-in resume text otherwise. A file that cannot be read is a note for the caller to log,
+    never a reason to skip the wake the account has already earned."""
+    if not prompt_file:
+        return RESUME_TEXT, ""
+    try:
+        with open(prompt_file, encoding="utf-8") as handle:
+            return handle.read().strip(), ""
+    except Exception as error:
+        return RESUME_TEXT, f"--prompt-file not read ({error}), using the built-in text"
+
+
 def prompt_text(template, cfg, account, state, now):
     """The resume text: what the pane cannot know by itself. A template from --prompt-file gets the
     same fields, so an operator's own brief can carry the numbers too."""
