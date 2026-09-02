@@ -120,8 +120,10 @@ autoCompactWindow:Qd().describe("Auto-compact window size")
 
 So the variable wins over the `autoCompactWindow` setting, and the setting is the same knob
 under another name. The account launcher wires both: by default it sets
-`CLAUDE_CODE_DISABLE_1M_CONTEXT=1` for `orchestrator` and `lane` and leaves `research`
-uncapped, and it never touches the window variable. `cc <account> -Window 260000` is the
+`CLAUDE_CODE_DISABLE_1M_CONTEXT=1` for `orchestrator` and `lane` and removes any inherited
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW` along with it, so a pane opened from a pane that used the
+switch does not keep a window the cap contradicts; `research` is left uncapped and its
+inherited window untouched. `cc <account> -Window 260000` is the
 opt-in exception: it drops the cap for that session (the cap would hold the window at 200k, so
 the window could not grow) and sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW=260000`, in the pane
 command and in the in-window path alike. `cc -ShowEnv` prints the variables a launch would set

@@ -95,13 +95,20 @@ if ($Extra) {
 # and the binary says of the first: "CLAUDE_CODE_AUTO_COMPACT_WINDOW is set and takes
 # precedence. Unset it to change this setting." The equivalent settings key is
 # autoCompactWindow ("Auto-compact window size"), which the variable overrides.
-# Without the switch nothing here changes, and an inherited window variable is left untouched.
+# Without the switch the cap applies and the window variable is removed, in the pane command and
+# in the in-window path alike, so a session opened from a pane that used the switch does not
+# inherit a window the cap contradicts and nobody asked for. The uncapped research role is left
+# alone, inherited window included, since nothing there contradicts it.
 $capContext = ($Role -ne "research") -and ($Window -le 0)
-$roleEnvPs = "`$env:CLAUDE_ROLE = '$Role'; " + $(if ($capContext) { "`$env:CLAUDE_CODE_DISABLE_1M_CONTEXT = '1'" } else { "Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT -ErrorAction SilentlyContinue" })
+$capEnvPs = "`$env:CLAUDE_CODE_DISABLE_1M_CONTEXT = '1'; Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue"
+$roleEnvPs = "`$env:CLAUDE_ROLE = '$Role'; " + $(if ($capContext) { $capEnvPs } else { "Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT -ErrorAction SilentlyContinue" })
 if ($Window -gt 0) { $roleEnvPs += "; `$env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = '$Window'" }
 function Apply-Role {
     $env:CLAUDE_ROLE = $Role
-    if ($capContext) { $env:CLAUDE_CODE_DISABLE_1M_CONTEXT = "1" }
+    if ($capContext) {
+        $env:CLAUDE_CODE_DISABLE_1M_CONTEXT = "1"
+        Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
+    }
     else { Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT -ErrorAction SilentlyContinue }
     if ($Window -gt 0) { $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "$Window" }
 }
@@ -109,7 +116,13 @@ function Apply-Role {
 if ($ShowEnv) {
     Write-Output "CLAUDE_ROLE=$Role"
     Write-Output ("CLAUDE_CODE_DISABLE_1M_CONTEXT=" + $(if ($capContext) { "1" } else { "(unset)" }))
-    Write-Output ("CLAUDE_CODE_AUTO_COMPACT_WINDOW=" + $(if ($Window -gt 0) { "$Window" } else { "(unchanged)" }))
+    # The inherited value is named, because it is what a launch would clear or carry forward.
+    $inherited = $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW
+    $windowPlan = if ($Window -gt 0) { "$Window" }
+                  elseif ($capContext) { if ($inherited) { "(removed, inherited $inherited)" } else { "(removed)" } }
+                  elseif ($inherited) { "(unchanged, inherited $inherited)" }
+                  else { "(unchanged)" }
+    Write-Output "CLAUDE_CODE_AUTO_COMPACT_WINDOW=$windowPlan"
     Write-Output "PANE_COMMAND=$roleEnvPs"
     # What the launcher hands to claude untouched, so a test can see that an unbound flag was
     # forwarded and not swallowed by a parameter of this script.
