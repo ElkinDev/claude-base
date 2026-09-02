@@ -121,12 +121,14 @@ autoCompactWindow:Qd().describe("Auto-compact window size")
 So the variable wins over the `autoCompactWindow` setting, and the setting is the same knob
 under another name. The account launcher wires both: by default it sets
 `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` for `orchestrator` and `lane` and leaves `research`
-uncapped, and it never touches the window variable. `cc <account> -CompactWindow 260000` is
-the opt-in exception: it drops the cap for that session (the cap would hold the window at
-200k, so the window could not grow) and sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW=260000`, in the
-pane command and in the in-window path alike. `cc -ShowEnv` prints the variables a launch
-would set and exits without opening a session, which is how `scripts/tests/test-launcher-env.ps1`
-asserts it.
+uncapped, and it never touches the window variable. `cc <account> -Window 260000` is the
+opt-in exception: it drops the cap for that session (the cap would hold the window at 200k, so
+the window could not grow) and sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW=260000`, in the pane
+command and in the in-window path alike. `cc -ShowEnv` prints the variables a launch would set
+and the arguments it would forward, then exits without opening a session, which is how
+`scripts/tests/test-launcher-env.ps1` asserts both. The switch is `-Window` rather than
+`-CompactWindow` because PowerShell binds a parameter by unambiguous prefix and the launcher
+forwards an unbound flag to claude, so a name starting with `c` swallows claude's own `-c`.
 
 Raising the window buys fewer compactions, not cheaper turns: at 260k a cycle drops roughly a
 third of the compactions of a 200k session, so a day of nine cycles at about 21600 tokens of
