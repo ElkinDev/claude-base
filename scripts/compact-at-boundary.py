@@ -11,6 +11,12 @@ last third of every cycle. This watcher picks a better moment with zero model to
   - when the context is above a threshold AND the session has been idle for a while,
     it submits `/compact` to that pane, once, then waits for a cooldown.
 
+One submission per position. After a fire the session is held until its transcript grows a new
+usage row, so a session that answered `Not enough messages to compact.` is not asked again at the
+same number. A submission that was lost on the way, a prompt that never reached the pane or a pane
+that was busy, looks the same from here and is not retried either: that session is picked up again
+after its next turn, and the built-in auto-compaction is still armed underneath it.
+
 The compaction itself runs through the ordinary path, so the PreCompact hooks (checkpoint
 plus summary instructions) and the PostCompact hook apply. The built-in auto-compaction
 stays armed as the ceiling for sessions that never go idle. Nothing here calls a model.
@@ -47,8 +53,7 @@ LOCK_FILE = os.path.join(STATE_DIR, "compact-at-boundary.lock")
 STOP_FILE = os.path.join(STATE_DIR, "compact-at-boundary.stop")
 LOG_FILE = os.path.join(STATE_DIR, "compact-at-boundary.log")
 TAIL_BYTES = 512 * 1024
-COMPACTION_DROP = 0.6      # a context that falls below 60 percent of its last value was compacted
-MAX_BACKOFF_DOUBLINGS = 4  # a cooldown that has already grown 16 times is long enough
+COMPACTION_DROP = 0.6  # a context that falls below 60 percent of its last value was compacted
 
 # Where the context number came from: `offset` is the byte offset of that row in the
 # transcript, `kind` is "usage" for an assistant turn and "boundary" for a compaction row.
@@ -293,24 +298,20 @@ def session_name(path, names):
 
 # ---------------------------------------------------------------- decision
 
-def effective_cooldown(state, cfg):
-    """The cooldown, doubled once per submission that produced no new turn, capped at 16x.
-    A session that refuses `/compact` is asked again in 15 minutes, then 30, then an hour."""
-    return cfg["cooldown"] * 2 ** min(state.get("fires_without_effect", 0), MAX_BACKOFF_DOUBLINGS)
-
-
 def decide(state, status, seq, ctx, mark, now, cfg):
-    """Pure decision for one session. Mutates `state` (idle_since, last_ctx, ctx_at,
-    last_compaction, fires_without_effect) and returns (action, reason) with action in
-    hold | wait | fire | skip. `mark` is the Mark last_context read the number from."""
+    """Pure decision for one session. Mutates `state` (idle_since, idle_seq, last_ctx, ctx_at,
+    last_fire, fire_mark, last_compaction) and returns (action, reason) with action in
+    hold | wait | fire | skip. `mark` is the Mark last_context read the number from.
+
+    One submission per position: after a fire the session is held until its transcript grows a
+    new usage row, so a submission that produced nothing is never repeated at the same number.
+    The cooldown is the floor between two submissions to a session that did move on, and it is
+    the configured wait every time. It cannot grow: a position that has not moved is held by
+    the rule above and never reaches the cooldown at all."""
     if ctx is None:
         return "skip", "no usage row yet"
     kind = mark.kind if mark else "usage"
     moved = mark is not None and mark != state.get("ctx_at")
-    if moved and kind == "usage":
-        # a real turn happened, so whatever the last submission did or did not do is settled
-        state["fires_without_effect"] = 0
-        state["fire_counted"] = False
     if moved and kind == "boundary":
         state["last_compaction"] = now
         state["idle_since"] = None
@@ -330,11 +331,9 @@ def decide(state, status, seq, ctx, mark, now, cfg):
     if kind == "boundary":
         # the number is the floor the compaction left, not a context the session grew to
         return "hold", f"{pct:.0%} ({ctx} postTokens), no turn since the compaction"
-    fired = state.get("last_fire")
-    if fired and mark is not None and mark == state.get("fire_mark"):
-        if now - fired >= cfg["cooldown"] and not state.get("fire_counted"):
-            state["fires_without_effect"] = state.get("fires_without_effect", 0) + 1
-            state["fire_counted"] = True
+    if state.get("last_fire") and mark is not None and mark == state.get("fire_mark"):
+        # only a new turn settles the submission, whatever it did: a refusal, a prompt that
+        # never arrived and a pane that was busy are one position, and none of them is retried
         return "hold", "no turn since the last /compact"
     if pct < cfg["threshold"]:
         return "hold", f"{pct:.0%} below {cfg['threshold']:.0%}"
@@ -343,16 +342,14 @@ def decide(state, status, seq, ctx, mark, now, cfg):
     idle_for = now - state["idle_since"]
     if idle_for < cfg["idle"]:
         return "wait", f"{pct:.0%}, idle {idle_for:.0f}s of {cfg['idle']}s"
-    cooldown = effective_cooldown(state, cfg)
     since_fire = now - state.get("last_fire", 0)
-    if since_fire < cooldown:
-        return "hold", f"{pct:.0%}, cooldown {cooldown - since_fire:.0f}s left"
+    if since_fire < cfg["cooldown"]:
+        return "hold", f"{pct:.0%}, cooldown {cfg['cooldown'] - since_fire:.0f}s left"
     since_compaction = now - state.get("last_compaction", 0)
     if since_compaction < cfg["cooldown"]:
         return "hold", f"{pct:.0%}, compacted {since_compaction:.0f}s ago"
     state["last_fire"] = now
     state["fire_mark"] = mark
-    state["fire_counted"] = False
     return "fire", f"{pct:.0%} ({ctx} tokens), idle {idle_for:.0f}s"
 
 

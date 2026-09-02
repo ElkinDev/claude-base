@@ -138,7 +138,6 @@ class DecideTest(unittest.TestCase):
         # only a new assistant turn clears it
         action, _ = watcher.decide(state, "idle", 7, 151579, mark(200), 3950.0, CFG)
         self.assertEqual(action, "fire")
-        self.assertEqual(state["fires_without_effect"], 0)
 
     def test_a_boundary_newer_than_the_last_turn_holds_at_the_floor(self):
         state = {}
@@ -152,23 +151,23 @@ class DecideTest(unittest.TestCase):
         self.assertIn("no turn since", reason)
         self.assertEqual(state["last_compaction"], 1300.0)
 
-    def test_fires_without_effect_back_off_the_cooldown(self):
+    def test_the_wait_between_two_submissions_is_always_the_plain_cooldown(self):
+        """Positions that go nowhere are held, never resubmitted, so the cooldown is only ever
+        the wait between two submissions to a session that did move on: 900 seconds, every
+        time, however many held passes came before."""
         state = {}
         watcher.decide(state, "idle", 7, 151579, mark(100), 1000.0, CFG)
-        watcher.decide(state, "idle", 7, 151579, mark(100), 1100.0, CFG)
-        self.assertEqual(state.get("fires_without_effect", 0), 0)
-        # one base cooldown later with the same position, the fire is counted as ineffective
-        watcher.decide(state, "idle", 7, 151579, mark(100), 2100.0, CFG)
-        self.assertEqual(state["fires_without_effect"], 1)
-        watcher.decide(state, "idle", 7, 151579, mark(100), 3100.0, CFG)
-        self.assertEqual(state["fires_without_effect"], 1)  # one count per fire, not per pass
-        self.assertEqual(watcher.effective_cooldown(state, CFG), 2 * CFG["cooldown"])
-        state["fires_without_effect"] = 9
-        self.assertEqual(watcher.effective_cooldown(state, CFG), 16 * CFG["cooldown"])
-        action, _ = watcher.decide(state, "idle", 7, 151579, mark(400), 4000.0, CFG)
+        action, _ = watcher.decide(state, "idle", 7, 151579, mark(100), 1100.0, CFG)
         self.assertEqual(action, "fire")
-        self.assertEqual(state["fires_without_effect"], 0)
-        self.assertEqual(watcher.effective_cooldown(state, CFG), CFG["cooldown"])
+        for now in (1200.0, 2100.0, 3100.0, 4100.0):  # four passes, nothing new in the transcript
+            self.assertEqual(watcher.decide(state, "idle", 7, 151579, mark(100), now, CFG)[0], "hold")
+        action, _ = watcher.decide(state, "idle", 7, 151579, mark(200), 4200.0, CFG)
+        self.assertEqual(action, "fire")  # a turn at last, and the cooldown is long spent
+        action, reason = watcher.decide(state, "idle", 7, 151579, mark(300), 4400.0, CFG)
+        self.assertEqual(action, "hold")
+        self.assertEqual(reason, "76%, cooldown 700s left")  # 900 - 200, not a multiple of it
+        action, _ = watcher.decide(state, "idle", 7, 151579, mark(300), 5100.0, CFG)
+        self.assertEqual(action, "fire")  # exactly one cooldown after the previous submission
 
 
 class TranscriptAndHerdrTest(unittest.TestCase):

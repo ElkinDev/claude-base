@@ -222,7 +222,7 @@ Five pieces, all zero-token, all in this repo:
 | `claude/hooks/precompact-checkpoint.py` | PreCompact | writes a checkpoint file with git truth (branch, tip, uncommitted files, worktrees) for the current repository or every repository directly under `cwd`, the subagents of the session with their last words, and the last text of the dialogue; then prints the summarization instructions (keep hashes, ids, paths and the next step verbatim; point at the checkpoint for git state). Never blocks. Compactions of a subagent (payload with `agent_id`) are skipped unless `CLAUDE_CHECKPOINT_SUBAGENTS=1`. |
 | `claude/hooks/postcompact-persist.py` | PostCompact | saves the summary the harness produced next to the checkpoint. Prints nothing. |
 | `claude/hooks/compact-recover.py` | SessionStart (compact) | after compaction, injects the checkpoint path and its disk-truth section (capped), plus the pointers to notes, brief and landings. Facts only, no instruction to re-read anything, since that instruction is paid for on every compaction and is obeyed even when the summary already has the answer. Under 2k characters. |
-| `scripts/compact-at-boundary.py` | a process, not a hook | watches the Claude sessions Herdr knows; when one is above a threshold of its window *and* has been waiting for input for a while (Herdr `idle`, or `done`, which is what Herdr reports right after a compaction), submits `/compact` to that pane, once, then cools down. Auto-compaction stays armed as the ceiling. |
+| `scripts/compact-at-boundary.py` | a process, not a hook | watches the Claude sessions Herdr knows; when one is above a threshold of its window *and* has been waiting for input for a while (Herdr `idle`, or `done`, which is what Herdr reports right after a compaction), submits `/compact` to that pane, once, then holds that session until its transcript grows a new turn, so a submission that produced nothing is not repeated at the same number. Auto-compaction stays armed as the ceiling. |
 | `scripts/compaction-report.py` | on demand | the measurement behind this document, for your transcripts. |
 
 Data flow of one compaction with the toolkit on:
@@ -354,6 +354,14 @@ before Herdr is up is fine for the reason above. `Unregister-ScheduledTask -Task
 Defaults: window 200000, threshold 0.65, idle 90 seconds, cooldown 900 seconds, interval 30
 seconds. Set `--window 1000000` only if the session really runs with the 1M window; the
 threshold is a fraction of that number.
+
+**One submission per position.** After a submission the watcher holds that session until its
+transcript grows a new usage row, so a session that answers `Not enough messages to compact.` is
+not asked again at the same number. A prompt that was lost on the way and a pane that was busy
+look the same from outside and are held the same way: a submission that failed is not retried,
+that session is picked up again after its next turn, and auto-compaction stays armed underneath.
+The cooldown is the wait between two submissions to a session that did move on, and it does not
+grow. This is what ends the 2026-09-02 pattern of five submissions at one number, four refused.
 
 **Replacing a session.** `claude -c` or `-r` reopens a session with the context it had, the
 summary and everything after it, so it costs what the session cost at that point and continues
