@@ -1,11 +1,14 @@
 """SessionStart hook (matcher: compact). Prints, as context, what a compaction summary
 tends to drop: the newest checkpoint written by precompact-checkpoint.py (path plus its
 disk-truth section), the head of the worktree's NOTES.md, the newest brief in
-CLAUDE_BRIEFS_DIR, the tail of CLAUDE_LANDINGS_FILE and a pointer to NOTES.autosave.md.
-No model runs.
+CLAUDE_BRIEFS_DIR and the tail of CLAUDE_LANDINGS_FILE. No model runs.
+
+The block states facts and gives no orders. An instruction to re-read a file is paid for
+on every compaction and is acted on whether or not the summary already carries the answer,
+so the opening line names the checkpoint and the one condition that makes it worth opening.
 
 stdin: the hook JSON (session_id, transcript_path, cwd, source). stdout becomes context,
-capped here at 4,000 characters so the recovery itself never bloats the window.
+capped here at 2,000 characters so the recovery itself never bloats the window.
 """
 import glob
 import json
@@ -13,7 +16,7 @@ import os
 import sys
 from datetime import datetime
 
-CAP = 4000
+CAP = 2000
 DISK_TRUTH_CAP = 1500
 
 
@@ -80,11 +83,15 @@ def main():
     cwd = data.get("cwd") or os.getcwd()
     session_id = str(data.get("session_id") or "")
     transcript_path = str(data.get("transcript_path") or "")
-    out = [f"[compaction recovery {datetime.now().strftime('%Y-%m-%d %H:%M')}] Re-read before acting: the acceptance list, the last decision and the next step live in the files below, not in the summary."]
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     checkpoint = newest_checkpoint(checkpoint_dir(transcript_path, cwd), session_id) if session_id else ""
     if checkpoint:
+        out = [f"[compaction recovery {stamp}] The checkpoint at {checkpoint} is the git truth for this session, written just before the compaction; open it only if the summary lacks a path, a tip or a decision."]
         section = disk_truth_section(checkpoint)
-        out.append(f"Checkpoint written just before this compaction: {checkpoint} (git truth, subagents, last words). Trust it over the summary for paths, tips and uncommitted files." + (f"\n{section}" if section else ""))
+        if section:
+            out.append(section)
+    else:
+        out = [f"[compaction recovery {stamp}] No checkpoint for this session, so the summary plus the facts below are what there is."]
     notes = os.path.join(cwd, "NOTES.md")
     if os.path.isfile(notes):
         out.append(f"NOTES.md ({notes}), first 40 lines:\n{head(notes, 40).rstrip()}")
@@ -94,13 +101,10 @@ def main():
     if briefs and os.path.isdir(briefs):
         files = sorted(glob.glob(os.path.join(briefs, "*.md")), key=os.path.getmtime)
         if files:
-            out.append(f"Train brief: {files[-1]} (read its status sections before continuing).")
+            out.append(f"Train brief: {files[-1]}")
     landings = os.environ.get("CLAUDE_LANDINGS_FILE")
     if landings and os.path.isfile(landings):
         out.append(f"Last landings ({landings}):\n{tail(landings, 5).rstrip()}")
-    autosave = os.path.join(cwd, "NOTES.autosave.md")
-    if os.path.isfile(autosave):
-        out.append(f"The dialogue before this compaction was saved to {autosave}; read its last section if the summary lost a decision.")
     text = "\n\n".join(out)
     if len(text) > CAP:
         text = text[:CAP] + "\n[recovery output capped]"

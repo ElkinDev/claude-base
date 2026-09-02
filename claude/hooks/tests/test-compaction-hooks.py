@@ -23,6 +23,7 @@ PRE = os.path.join(HOOKS, "precompact-checkpoint.py")
 POST = os.path.join(HOOKS, "postcompact-persist.py")
 RECOVER = os.path.join(HOOKS, "compact-recover.py")
 SESSION = "11111111-2222-3333-4444-555555555555"
+RECOVER_CAP = 2000  # compact-recover.py caps its own output at this many characters
 
 
 def git(repo, *args):
@@ -244,16 +245,52 @@ class CompactionHooksTest(unittest.TestCase):
         data = {"session_id": SESSION, "transcript_path": self.transcript, "cwd": self.repo, "hook_event_name": "SessionStart", "source": "compact"}
         code, out, err = self.run_hook(RECOVER, data)
         self.assertEqual(code, 0, err)
-        self.assertIn(f"Checkpoint written just before this compaction: {checkpoint}", out)
+        self.assertIn(checkpoint, out)
         self.assertIn("## Disk truth", out)
         self.assertIn("?? dirty.txt", out)
-        self.assertLessEqual(len(out), 4000 + len("\n[recovery output capped]"))
+        self.assertLessEqual(len(out), RECOVER_CAP + len("\n[recovery output capped]"))
+
+    def test_recover_names_the_checkpoint_as_git_truth_without_ordering_a_reread(self):
+        """The opening line says where the git truth is and when opening it is worth a read.
+        Every imperative to re-read a file is gone, and so is the autosave pointer: measured
+        at about 550 tok per compaction spent restating what the summary already carries."""
+        self.run_hook(PRE, self.payload())
+        checkpoint = self.checkpoints()[0]
+        with open(os.path.join(self.repo, "NOTES.autosave.md"), "w", encoding="utf-8") as handle:
+            handle.write("# autosave\n- a decision that was taken\n")
+        data = {"session_id": SESSION, "transcript_path": self.transcript, "cwd": self.repo, "hook_event_name": "SessionStart", "source": "compact"}
+        code, out, err = self.run_hook(RECOVER, data)
+        self.assertEqual(code, 0, err)
+        first = out.splitlines()[0]
+        self.assertIn(checkpoint, first)
+        self.assertIn("is the git truth", first)
+        self.assertIn("only if the summary lacks a path, a tip or a decision", first)
+        lowered = out.lower()
+        self.assertNotIn("re-read", lowered)
+        self.assertNotIn("reread", lowered)
+        self.assertNotIn("read its", lowered)
+        self.assertNotIn("notes.autosave", lowered)
+
+    def test_recover_output_is_capped_at_two_thousand_characters(self):
+        """The cap is the ceiling on what every compaction pays for the recovery block."""
+        self.assertEqual(RECOVER_CAP, 2000)
+        self.run_hook(PRE, self.payload())
+        landings = os.path.join(self.tmp, "landings.md")
+        with open(landings, "w", encoding="utf-8") as handle:
+            handle.write("".join("- landing %d %s\n" % (i, "x" * 300) for i in range(40)))
+        with open(os.path.join(self.repo, "NOTES.md"), "w", encoding="utf-8") as handle:
+            handle.write("".join("line %d %s\n" % (i, "y" * 300) for i in range(60)))
+        data = {"session_id": SESSION, "transcript_path": self.transcript, "cwd": self.repo, "hook_event_name": "SessionStart", "source": "compact"}
+        code, out, err = self.run_hook(RECOVER, data, env=self.env(CLAUDE_LANDINGS_FILE=landings))
+        self.assertEqual(code, 0, err)
+        self.assertLessEqual(len(out), RECOVER_CAP + len("\n[recovery output capped]"))
+        self.assertIn("[recovery output capped]", out)
 
     def test_recover_without_checkpoint_keeps_the_old_behaviour(self):
         data = {"session_id": SESSION, "transcript_path": self.transcript, "cwd": self.repo, "hook_event_name": "SessionStart", "source": "compact"}
         code, out, _ = self.run_hook(RECOVER, data)
         self.assertEqual(code, 0)
-        self.assertNotIn("Checkpoint written", out)
+        self.assertNotIn("is the git truth", out)
         self.assertIn("compaction recovery", out)
 
     def test_recover_ignores_summary_files_and_other_sessions(self):
@@ -264,7 +301,7 @@ class CompactionHooksTest(unittest.TestCase):
         data = {"session_id": SESSION, "transcript_path": self.transcript, "cwd": self.repo, "hook_event_name": "SessionStart", "source": "compact"}
         code, out, _ = self.run_hook(RECOVER, data)
         self.assertEqual(code, 0)
-        self.assertNotIn("Checkpoint written", out)
+        self.assertNotIn("is the git truth", out)
 
 
 if __name__ == "__main__":
