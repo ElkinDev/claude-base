@@ -54,7 +54,7 @@ INSTRUCTIONS = (
     "3. Every rule or constraint the user stated, verbatim when short. "
     "4. Every running or awaited item: background commands, agents, timers, watchers, locks, and "
     "which of them do not survive a process restart. "
-    "5. Files read this session and why each one matters; never reproduce their content. "
+    "5. At most five paths the next step must open, path only, no reason. "
     "6. Numbers, hashes, identifiers, paths, names and error strings verbatim; never round or "
     "paraphrase them. "
     "7. Questions still waiting for the user, in their exact wording. "

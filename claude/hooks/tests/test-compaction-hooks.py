@@ -119,6 +119,16 @@ class CompactionHooksTest(unittest.TestCase):
         self.assertNotIn("Called the Read tool", text)
         self.assertIn("trigger: auto", text)
 
+    def test_precompact_asks_for_paths_not_for_a_reading_list(self):
+        """Section 5 used to ask why each file read this session mattered, and the summarizer
+        answered with a paragraph per file. It now asks for at most five paths and nothing else,
+        which is what the next step actually needs: about 550 tok back per compaction."""
+        code, out, err = self.run_hook(PRE, self.payload())
+        self.assertEqual(code, 0, err)
+        self.assertIn("5. At most five paths the next step must open, path only, no reason.", out)
+        self.assertNotIn("why each one matters", out)
+        self.assertNotIn("Files read this session", out)
+
     def test_precompact_echoes_user_instructions_first(self):
         code, out, _ = self.run_hook(PRE, self.payload(custom_instructions="keep the migration plan"))
         self.assertEqual(code, 0)
