@@ -42,10 +42,18 @@ import glob
 import json
 import os
 import re
-import subprocess
+import subprocess  # noqa: F401  (the tests reach subprocess.run through this module)
 import sys
 import time
-from datetime import datetime
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import herdr_panes  # noqa: E402  (the path above is what makes it importable)
+from herdr_panes import (  # noqa: E402
+    NAME_KEYS, describe_selectors, herdr_agents, label_of, rotate_and_append, select_agents,
+    stamp, submit, tab_labels,
+)
 
 HOME = os.path.expanduser("~")
 STATE_DIR = os.path.join(HOME, ".claude")
@@ -63,124 +71,10 @@ Mark = collections.namedtuple("Mark", "offset kind")
 
 
 def log(message, quiet=False):
-    line = f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {message}"
+    line = f"{stamp()} {message}"
     if not quiet:
         print(line, flush=True)
-    try:
-        if os.path.isfile(LOG_FILE) and os.path.getsize(LOG_FILE) > 1024 * 1024:
-            os.replace(LOG_FILE, LOG_FILE + ".1")
-        with open(LOG_FILE, "a", encoding="utf-8") as handle:
-            handle.write(line + "\n")
-    except Exception:
-        pass
-
-
-# ---------------------------------------------------------------- Herdr
-
-def herdr_agents(herdr):
-    """Claude agents Herdr knows: [{pane, session, status, seq, cwd, title}]. Empty list on any failure."""
-    try:
-        proc = subprocess.run([herdr, "agent", "list"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
-        payload = json.loads(proc.stdout or "{}")
-    except Exception as error:
-        return None, f"herdr agent list failed: {error}"
-    agents = (payload.get("result") or {}).get("agents")
-    if agents is None:
-        agents = payload.get("agents") or []
-    out = []
-    for item in agents:
-        if item.get("agent") != "claude":
-            continue
-        session = ((item.get("agent_session") or {}).get("value")) or ""
-        out.append({
-            "pane": item.get("pane_id") or "?",
-            "session": session,
-            "status": item.get("agent_status") or "unknown",
-            "seq": item.get("state_change_seq"),
-            "cwd": item.get("cwd") or "",
-            # two independent names: Herdr's own (`herdr agent rename`, survives everything the
-            # pane survives) and the terminal title Claude Code sets (`/rename` inside the session,
-            # otherwise an automatic summary of the current task)
-            "name": item.get("name") or "",
-            "title": item.get("terminal_title_stripped") or item.get("terminal_title") or "",
-            "tab": item.get("tab_id") or "",
-            "tab_label": "",
-        })
-    return out, ""
-
-
-def tab_labels(herdr):
-    """{tab_id: label} for the tabs that carry a real label. Herdr's default labels are bare
-    numbers and are ignored. The launcher creates tabs as `cc-<account>-<role>`, so the role
-    is on the tab whenever a session was opened with -Tab. Empty dict on any failure."""
-    try:
-        proc = subprocess.run([herdr, "tab", "list"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
-        payload = json.loads(proc.stdout or "{}")
-    except Exception:
-        return {}
-    result = payload.get("result")
-    tabs = result.get("tabs") if isinstance(result, dict) else result
-    out = {}
-    for item in tabs or []:
-        if not isinstance(item, dict):
-            continue
-        label = (item.get("label") or "").strip()
-        if item.get("tab_id") and label and not label.isdigit():
-            out[item["tab_id"]] = label
-    return out
-
-
-def select_agents(agents, panes="", sessions="", titles=""):
-    """The agents that match any selector; every agent when no selector is given.
-
-    panes:    comma-separated Herdr pane ids. Herdr renumbers workspaces when it restarts
-              (w3:p1 became w4:p1 overnight), so this is for one-off runs.
-    sessions: comma-separated Claude session id prefixes. Stable while the session lives.
-    titles:   case-insensitive regular expression on the pane's Herdr name and terminal title.
-              Survives both a Herdr restart and a session replacement as long as the new pane
-              keeps the naming convention (for example every orchestrator pane carrying the word).
-    """
-    want_panes = {p.strip() for p in panes.split(",") if p.strip()}
-    want_sessions = {s.strip().lower() for s in sessions.split(",") if s.strip()}
-    pattern = re.compile(titles, re.IGNORECASE) if titles else None
-    if not (want_panes or want_sessions or pattern):
-        return list(agents)
-    out = []
-    for agent in agents:
-        if agent["pane"] in want_panes:
-            out.append(agent)
-        elif any(agent["session"].lower().startswith(prefix) for prefix in want_sessions):
-            out.append(agent)
-        elif pattern and any(pattern.search(agent.get(key) or "") for key in NAME_KEYS):
-            out.append(agent)
-    return out
-
-
-# where a session's name can come from, most deliberate first: the name given with
-# `claude --name` or `/rename` (lives in the transcript, so it travels with the session),
-# Herdr's own agent name, the launcher's tab label, the terminal title
-NAME_KEYS = ("session_name", "name", "tab_label", "title")
-
-
-def label_of(agent):
-    return next((agent.get(key) for key in NAME_KEYS if agent.get(key)), "")
-
-
-def describe_selectors(args):
-    parts = []
-    if getattr(args, "panes", ""):
-        parts.append(f"--panes {args.panes}")
-    if getattr(args, "sessions", ""):
-        parts.append(f"--sessions {args.sessions}")
-    if getattr(args, "titles", ""):
-        parts.append(f"--titles {args.titles!r}")
-    return " ".join(parts)
-
-
-def submit(herdr, pane, prompt):
-    proc = subprocess.run([herdr, "agent", "prompt", pane, prompt], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
-    detail = (proc.stdout or proc.stderr or "").strip().replace("\n", " ")
-    return proc.returncode == 0, detail[:300]
+    rotate_and_append(LOG_FILE, line)
 
 
 # ---------------------------------------------------------------- transcripts
@@ -354,57 +248,19 @@ def decide(state, status, seq, ctx, mark, now, cfg):
 
 
 # ---------------------------------------------------------------- lock and stop
-
-def pid_alive(pid):
-    if pid <= 0:
-        return False
-    if os.name == "nt":
-        try:
-            import ctypes
-            handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
-            if handle:
-                ctypes.windll.kernel32.CloseHandle(handle)
-                return True
-            return False
-        except Exception:
-            return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
-
+# One instance per machine, and a stop file instead of a signal, so `--stop` works from any
+# shell on Windows too. The behavior is in herdr_panes; the paths are this script's own.
 
 def take_lock():
-    os.makedirs(STATE_DIR, exist_ok=True)
-    if os.path.isfile(LOCK_FILE):
-        try:
-            with open(LOCK_FILE, encoding="utf-8") as handle:
-                other = int(handle.read().strip() or 0)
-        except Exception:
-            other = 0
-        if other and other != os.getpid() and pid_alive(other):
-            return other
-    with open(LOCK_FILE, "w", encoding="utf-8") as handle:
-        handle.write(str(os.getpid()))
-    return 0
+    return herdr_panes.take_lock(LOCK_FILE)
 
 
 def release_lock():
-    try:
-        os.remove(LOCK_FILE)
-    except Exception:
-        pass
+    herdr_panes.release_lock(LOCK_FILE)
 
 
 def stop_requested():
-    if os.path.isfile(STOP_FILE):
-        try:
-            os.remove(STOP_FILE)
-        except Exception:
-            pass
-        return True
-    return False
+    return herdr_panes.stop_requested(STOP_FILE)
 
 
 # ---------------------------------------------------------------- main loop

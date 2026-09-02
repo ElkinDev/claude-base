@@ -5,9 +5,8 @@ with a large context window: *why compact at all, and why at a fixed level?* It 
 model, the numbers measured on real transcripts, the compaction mechanics of Claude Code as
 verified in version 2.1.248, and the design of the small toolkit in this repo that compacts at
 a sensible moment and loses nothing when it does. Everything here costs zero model tokens to
-run: the hooks and the watcher are plain Python reading local files and the Herdr CLI.
-
-Measured on one working day (2026-08-27) with Claude Code 2.1.248. Versions change; re-run
+run: the hooks and the watcher are plain Python reading local files and the Herdr CLI. The numbers below
+were measured on one working day (2026-08-27) with Claude Code 2.1.248. Versions change; re-run
 `scripts/compaction-report.py` on your own transcripts before trusting a number.
 
 ## 1. What you pay for: the context is re-sent on every turn
@@ -23,13 +22,8 @@ and their relative prices are what matter here (Opus-class list prices, rounded)
 | cache write | new context written into the cache | 1.25 |
 | output | what the model writes | 5 |
 
-So the weighted cost of one turn is about
-
-```
-cost(turn) = 0.1 x context_re_read + 1.25 x new_context + 1 x uncached + 5 x output
-```
-
-Two consequences drive everything else:
+So the weighted cost of one turn is about `0.1 x context_re_read + 1.25 x new_context +
+1 x uncached + 5 x output`. Two consequences drive everything else:
 
 - **Context size is a per-turn tax.** A session sitting at 500k tokens pays 50k weighted just
   to be re-read on every turn, before it does anything. At 100k it pays 10k.
@@ -57,18 +51,19 @@ to 700k or 800k tokens. It looks like more memory. It is mostly more tax:
 The 1M stretch was 42 percent of that session's turns and 69 percent of its cost. The model did
 not answer better with 700k of history than with 120k plus a good summary; it answered slower
 and every cache break was catastrophic. Rounds of long, uncompacted context are the single
-largest waste a heavy user can have, ahead of everything a memory tool could save.
-
-The cumulative content of a session is not what you pay for; the content re-sent per turn is.
-Six compactions in a day do not add up to 1M of paid context. They keep each turn near 100k.
+largest waste a heavy user can have, ahead of everything a memory tool could save. The
+cumulative content of a session is not what you pay for; the content re-sent per turn is. Six
+compactions in a day do not add up to 1M of paid context, they keep each turn near 100k.
 
 ## 3. What compaction costs and what it saves
 
 Measured on the orchestration session (seven compactions in one day):
 
 - Trigger at 156k to 167k tokens (78 to 83 percent of the 200k window).
-- Floor right after: 56k to 77k (28 to 38 percent). Twelve turns later: 83k to 130k, because the
-  harness re-injects the files that were recently read and the recovery hook asks for re-reads.
+- Floor right after: 56k to 77k (28 to 38 percent), climbing 10k to 15k in the first turns and
+  83k to 130k by turn twelve, because the harness re-injects the files that were recently read
+  ("Called the Read tool with the following input", not configurable) and the recovery hook asks
+  for re-reads.
 - Dropped per compaction: 80k to 110k tokens. Summary: 14k to 23k characters.
 - Overhead of one compaction, weighted: about 130k (the old context read once at 0.1, the
   summary written at 5, the floor re-cached at 1.25). That is six ordinary turns.
@@ -97,17 +92,11 @@ Verified by reading the bundled code of 2.1.248; behaviour may change in later v
 | `DISABLE_COMPACT=1` | also disables manual `/compact`. |
 | blocking limit | 20000 tokens below the threshold; above it, turns are refused until compaction. |
 | precomputed compaction | recent versions compute the summary ahead of the threshold so the switch is fast; it does not change the level. |
-| PreCompact hook | receives `session_id`, `transcript_path`, `cwd`, `trigger` (`manual` or `auto`) and `custom_instructions`. Its **stdout is joined into the custom instructions of the summarizer**, for manual and automatic compactions alike. Exit code 2 cancels the compaction. A subagent's compaction runs the hook too, with `agent_id` and `agent_type` added and the parent's `session_id` and `transcript_path`, but its summarizer ignores the instructions. |
+| PreCompact hook | receives `session_id`, `transcript_path`, `cwd`, `trigger` (`manual` or `auto`) and `custom_instructions`. Its **stdout is joined into the custom instructions of the summarizer**, for manual and automatic compactions alike, so a debug line printed there steers every summary. Exit code 2 cancels the compaction. A subagent's compaction runs the hook too, with `agent_id` and `agent_type` added and the parent's `session_id` and `transcript_path`, but its summarizer ignores the instructions. |
 | PostCompact hook | receives the same fields plus `compact_summary`. Its stdout is only a display message, never context. |
 | SessionStart hook, matcher `compact` | runs right after compaction; its stdout becomes context. This is where recovery pointers belong. |
 
-Two gotchas worth repeating. First, anything a PreCompact hook prints becomes summarization
-instructions, so a hook that prints a debug line steers every summary. Second, the harness
-re-injects recently read files after compaction ("Called the Read tool with the following
-input"), which is why the floor climbs 10k to 15k in the first turns; it is not configurable.
-
-Both window variables are still there in 2.1.258. Verified against 2.1.258 by reading the
-installed binary:
+Both window variables are still there in 2.1.258, verified by reading the installed binary:
 
 ```
 if(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW){let B=kte("CLAUDE_CODE_AUTO_COMPACT_WINDOW",process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW,yCe,KUe);
@@ -119,13 +108,13 @@ So the variable wins over the `autoCompactWindow` setting, and the setting is th
 under another name. The account launcher wires both (`docs/ACCOUNTS.md`): `orchestrator` and
 `lane` get `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` and lose any inherited
 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` with it, on the pane command and on the in-window path alike,
-so a pane opened from a pane that used the switch does not keep a window the cap contradicts;
-`research` is left uncapped, inherited window included. `cc <account> -Window 260000` is the
-opt-in exception: it drops the cap, which would hold the window at 200k, and sets the variable
-to 260000. The name is `-Window` and not `-CompactWindow` because PowerShell binds by
-unambiguous prefix and an unbound flag is forwarded to claude, so a name starting with `c`
-swallows claude's own `-c`. `cc -ShowEnv` prints what a launch would set and forward without
-opening a session, which is how `scripts/tests/test-launcher-env.ps1` asserts all of it.
+so a pane opened from a capped pane does not keep a window the cap contradicts; `research` is
+left uncapped, inherited window included. `cc <account> -Window 260000` is the opt-in exception:
+it drops the cap, which would hold the window at 200k, and sets the variable to 260000. The name
+is `-Window` and not `-CompactWindow` because PowerShell binds by unambiguous prefix and an
+unbound flag is forwarded to claude, so a name starting with `c` swallows claude's own `-c`.
+`cc -ShowEnv` prints what a launch would set and forward without opening a session, which is how
+`scripts/tests/test-launcher-env.ps1` asserts all of it.
 
 Raising the window buys fewer compactions, not cheaper turns: at 260k a cycle drops roughly a
 third of the compactions of a 200k session, so a day of nine cycles at about 21600 tokens of
@@ -150,25 +139,24 @@ The floor is paid on every turn of every cycle, so it is a first-order lever, bu
 own is a few thousand tokens: trimming a memory index from 3k to 2k is worth doing once, and it
 is not where the day goes.
 
-Skills are the other habit that shows up in that table. Every skill a pane has loaded is
-restored in full at each compaction of that pane and stays restored for the life of the
-session: six artifact skills measured at 8704 tokens per compaction (commit-message 1980,
-pr-description 1965, adversarial-review 1438, evidence-report 1169, story 956,
-devops-work-item 900), on a pane that had already delegated the writing to lanes. So an
-orchestrator does not invoke artifact skills at all; the lane that writes the artifact invokes
-the one it needs, pays for it inside its own window, and ends.
+Skills are the other habit in that table. Every skill a pane has loaded is restored in full at
+each compaction and stays restored for the life of the session: six artifact skills measured at
+8704 tokens per compaction (commit-message 1980, pr-description 1965, adversarial-review 1438,
+evidence-report 1169, story 956, devops-work-item 900), on a pane that had delegated the writing
+to lanes. So an orchestrator does not invoke artifact skills at all; the lane that writes the
+artifact invokes the one it needs, pays for it inside its own window, and ends.
 
-The exception is the re-injected files, which is the one line of that table a habit can move.
-A file opened with the Read tool is re-injected after the compaction, so it is paid for again
-on every cycle for as long as the work lasts: measured over five consecutive compactions, 6087
-to 9237 tokens per compaction on one project and 4946 on another, all of it briefs and reports
-that had already been summarised. The same bytes read with `sed -n` or `cat` arrive as tool
-output, which the summary replaces instead of carrying. So an orchestrator, which reads a lot
-and edits almost nothing, reads with the shell; a lane, which opens a file to change it, keeps
-the Read tool. `claude/hooks/guard-read.py` is wired to both routes for that reason: with the
-`Read` matcher alone, moving the reads to the shell would move them past the image and
-large-file guard too. Which files a command prints, and whether a pipe, a redirect or a
-substitution keeps those bytes out of the window, is parsed in `claude/hooks/shell_read.py`.
+The re-injected files are the one line of that table a habit can move. A file opened with the
+Read tool comes back after every compaction, so it is paid for again on every cycle for as long
+as the work lasts: measured over five consecutive compactions, 6087 to 9237 tokens per compaction
+on one project and 4946 on another, all of it briefs and reports already summarised. The same
+bytes read with `sed -n` or `cat` arrive as tool output, which the summary replaces instead of
+carrying. So an orchestrator, which reads a lot and edits almost nothing, reads with the shell;
+a lane, which opens a file to change it, keeps the Read tool. `claude/hooks/guard-read.py` is
+wired to both routes for that reason: with the `Read` matcher alone, moving the reads to the
+shell would move them past the image and large-file guard too. Which files a command prints, and
+whether a pipe, a redirect or a substitution keeps those bytes out of the window, is parsed in
+`claude/hooks/shell_read.py`.
 
 ## 6. The right moment: an optimum band, and why the level is second order
 
@@ -176,10 +164,7 @@ Let `F` be the floor, `g` the average context growth per turn, `O` the weighted 
 compaction and `cr` the cache-read price (0.1). A cycle that runs from `F` to `F + B` lasts
 `B / g` turns. Averaged over the cycle, each turn pays the carry of the band, about
 `cr x B / 2`, plus its share of the next compaction, `O x g / B`. Minimizing the sum gives
-
-```
-B* = sqrt(2 x O x g / cr) = sqrt(20 x O x g)      with cr = 0.1
-```
+`B* = sqrt(2 x O x g / cr)`, which is `sqrt(20 x O x g)` with `cr = 0.1`.
 
 With the measured day (402 turns, eight compactions): `O = 126k`, `g = 1.6k` per turn and
 `F = 68k`, so `B* = 63k` and the optimum trigger is about 131k tokens, 65 percent of a 200k
@@ -187,8 +172,8 @@ window. The report prints this figure from your own numbers.
 
 The curve is flat around the optimum: the variable part is 6.4k weighted per turn at `B*`,
 and 8k at half or twice `B*`, a 7 percent difference on a 22.3k turn, under 3 percent between
-`0.85 B*` and `1.6 B*`. The exact trigger level is therefore second order. The first-order
-levers, in the measured order of size, are:
+`0.85 B*` and `1.6 B*`. The trigger level is second order; the first-order levers, in the
+measured order of size, are:
 
 1. **The number of turns.** Every turn re-sends the context. Wake-ups that only narrate,
    notification turns that could be batched, and polling loops are pure tax.
@@ -230,38 +215,36 @@ with those instructions  ->  PostCompact: summary saved next to the checkpoint  
 Where the files land: checkpoints and summaries go to `~/.claude/checkpoints/<project>/`
 (`CLAUDE_CHECKPOINT_DIR` overrides), outside every repository, so they need no ignore rule. The
 autosave is the exception. It goes to `NOTES.autosave.md` in the session's `cwd`, usually a
-repository, where the next session finds it, and it is a dump of the last messages, not
-something to commit, so the hook makes git ignore it before writing it: when `git check-ignore`
-does not already cover the name, it is appended to `.git/info/exclude`, the repository's local
-list shared by every worktree, never to the team's `.gitignore`. Nothing to remember before the
-first compaction, and `git add -A` in a team repository does not pick the file up. The old habit
-of a hand-kept `NOTES.md` is gone from the toolkit: no hook reads or writes one.
+repository, and it is a dump of the last messages, not something to commit, so the hook makes
+git ignore it before writing it: when `git check-ignore` does not already cover the name, it is
+appended to `.git/info/exclude`, the repository's local list shared by every worktree, never to
+the team's `.gitignore`. Nothing to remember before the first compaction, and `git add -A` does
+not pick the file up. The old habit of a hand-kept `NOTES.md` is gone: no hook reads or writes
+one.
 
-Nothing in the flow asks the model to write anything before compaction. The checkpoint is
-computed from disk, which is both cheaper (no output tokens) and more reliable (a model asked
-to "write a brief now" mid-task produces a partial brief at 5x the price).
+Nothing in the flow asks the model to write anything before compaction: the checkpoint is
+computed from disk, which is cheaper and more reliable, for the reasons in section 9.
 
 ## 8. Install and use
 
 The hooks install with the rest of the toolkit (`install.ps1`); `claude/settings.json` wires
-them. They are wired per config directory: with account profiles (`docs/ACCOUNTS.md`), the
-default directory is the only one that has them until each profile is synced with
-`cc <profile> -p -s`, and a session on an unsynced profile compacts with no checkpoint and no
-warning. To wire them by hand, copy the blocks from `claude/settings.json` rather than retyping
-them: PreCompact runs `precompact-autosave.py` and then `precompact-checkpoint.py` in that
-order, PostCompact runs `postcompact-persist.py`, and SessionStart with the matcher `compact`
-runs `compact-recover.py`, each as `python "%USERPROFILE%/.claude/hooks/<name>.py"` with a
-timeout of 15 to 20 seconds.
+them, per config directory: with account profiles (`docs/ACCOUNTS.md`) the default directory is
+the only one that has them until each profile is synced with `cc <profile> -p -s`, and a session
+on an unsynced profile compacts with no checkpoint and no warning. To wire them by hand, copy
+the blocks from `claude/settings.json` rather than retyping them: PreCompact runs
+`precompact-autosave.py` and then `precompact-checkpoint.py` in that order, PostCompact runs
+`postcompact-persist.py`, and SessionStart with the matcher `compact` runs `compact-recover.py`,
+each as `python "%USERPROFILE%/.claude/hooks/<name>.py"` with a timeout of 15 to 20 seconds.
 
 A change reaches sessions that are already running: on 2.1.248, two processes started at 18:45
 and 18:56 ran hooks wired into `settings.json` at 20:29, at their compactions of 20:34 and
 20:40, without a restart. If a session does not pick them up, restart it.
 
 A subagent's compaction fires the same hooks with `agent_id` and `agent_type` in the payload
-while `transcript_path` still names the parent's transcript, and the summarizer ignores the
-hook's instructions there, so both hooks skip subagents by default; with
+while `transcript_path` still names the parent's transcript, and its summarizer ignores the
+hook's instructions, so both hooks skip subagents by default; with
 `CLAUDE_CHECKPOINT_SUBAGENTS=1` they write files tagged `-agent-<id>` that the session's own
-recovery never mistakes for its checkpoint.
+recovery never mistakes for its own.
 
 Environment knobs (all optional):
 
@@ -275,48 +258,39 @@ Environment knobs (all optional):
 | `CLAUDE_CHECKPOINT_INSTRUCTIONS` | built-in text | a file with your own instructions; `{path}` is replaced |
 
 The watcher needs Herdr (it asks `herdr agent list` for the session id and the idle state of
-each pane) and reads the session transcripts under `~/.claude/projects`:
-
-```
-python scripts/compact-at-boundary.py --status                  one pass, print the decision table
-python scripts/compact-at-boundary.py --once                    one pass with real submissions, then exit
-python scripts/compact-at-boundary.py --dry-run                 loop, log decisions, never submit
-python scripts/compact-at-boundary.py --titles "orques|orchestr"  watch the panes named like that, real submissions
-python scripts/compact-at-boundary.py --sessions f2109a6d       watch one session by id prefix
-python scripts/compact-at-boundary.py --panes w3:p1             watch one pane id (one-off runs only, see below)
-python scripts/compact-at-boundary.py --threshold 0.7 --idle 120 --cooldown 1200
-python scripts/compact-at-boundary.py --idle-states idle        count only Herdr's idle, not done
-python scripts/compact-at-boundary.py --stop                    ask the running watcher to exit
-```
+each pane) and reads the session transcripts under `~/.claude/projects`. Its switches are in
+`--help` and in the module docstring; the ones in daily use: `--status` for one pass and the
+decision table, `--dry-run` to loop and log without submitting, `--titles` to choose the panes,
+`--threshold`, `--idle`, `--cooldown` and `--interval` for the numbers (defaults: window 200000,
+threshold 0.65, idle 90 seconds, cooldown 900, interval 30), `--idle-states idle` to count only
+Herdr's idle and not `done`, and `--stop` to ask a running watcher to exit. Set `--window 1000000`
+only if the session really runs with the 1M window; the threshold is a fraction of that number.
 
 **Select by name, not by pane.** Herdr renumbers workspaces when it restarts (`w3:p1` became
 `w4:p1` overnight and the watcher sat waiting on a pane that no longer existed), and a pane id
 means nothing on another machine. A session's stable identity is its name: `claude --name
 orchestrator` at launch, or `/rename orchestrator` inside the session, writes a `custom-title`
 row to the transcript and shows the name in the prompt box, the resume picker and the terminal
-title; the launcher passes `--name <role>` by itself (`cc work -o orchestrator`, and `-- --name
-x` overrides). `--titles` is a regex matched, in this order, against that transcript name,
-Herdr's agent name (`herdr agent rename`), the tab label of a `-Tab` launch
+title; the launcher passes `--name <role>` by itself (`cc work -o orchestrator`, and
+`-- --name x` overrides). `--titles` is a regex matched, in this order, against that transcript
+name, Herdr's agent name (`herdr agent rename`), the tab label of a `-Tab` launch
 (`cc-<account>-<role>`) and the terminal title; `herdr pane rename` sets a label `agent list`
-does not return, so it is not matched. Convention: the launcher's roles, with `-- --name
-lane-<feature>` when several lanes run at once. A name that matches nothing is reported once
-(`no Claude pane matches --titles ...; Herdr knows ...`) and then polled for until it appears.
+does not return, so it is not matched. Convention: the launcher's roles, plus `-- --name
+lane-<feature>` when several lanes run at once. A name that matches nothing is reported once and
+then polled for until it appears.
 
 One trap when submitting by hand: Git Bash rewrites a leading slash, so `herdr agent prompt
 w1:p5 /compact` arrives as `C:/Program Files/Git/compact` and the session answers it as a
 question. The watcher submits through Python; from a shell, PowerShell or `MSYS_NO_PATHCONV=1`.
 
-Run it in a spare pane where its log is visible, or hidden:
-
-```powershell
-Start-Process -WindowStyle Hidden python -ArgumentList '"C:\path\to\claude-base\scripts\compact-at-boundary.py"','--titles','"orques|orchestr"'
-```
+Run it in a spare pane where its log is visible, or hidden with `Start-Process -WindowStyle
+Hidden python -ArgumentList '"C:\path\to\claude-base\scripts\compact-at-boundary.py"','--titles','"orques|orchestr"'`.
 
 It keeps one instance through a lock file (a pid checked against a live process, so a stale
 lock from a reboot does not block the next start), logs to `~/.claude/compact-at-boundary.log`,
 and survives the death of any Claude session because it is not one, and Herdr going away: each
-pass logs `herdr agent list failed` and keeps polling until Herdr is back. What it does not
-survive is a logoff or a reboot; register it as a logon task once:
+pass logs `herdr agent list failed` and polls until Herdr is back. It does not survive a logoff
+or a reboot; register it as a logon task once:
 
 ```powershell
 $action  = New-ScheduledTaskAction -Execute 'pythonw.exe' -Argument '"C:\path\to\claude-base\scripts\compact-at-boundary.py" --titles "orques|orchestr"'
@@ -328,38 +302,34 @@ Register-ScheduledTask -TaskName 'compact-at-boundary' -Action $action -Trigger 
 starting before Herdr is up is fine for the reason above. `Unregister-ScheduledTask -TaskName
 'compact-at-boundary' -Confirm:$false` removes it.
 
-Defaults: window 200000, threshold 0.65, idle 90 seconds, cooldown 900 seconds, interval 30
-seconds. Set `--window 1000000` only if the session really runs with the 1M window; the
-threshold is a fraction of that number.
-
 **One submission per position.** After a submission the watcher holds that session until its
 transcript grows a new usage row, so a session that answers `Not enough messages to compact.` is
-not asked again at the same number. A prompt lost on the way and a pane that was busy look the
-same from outside and are held the same way: a failed submission is not retried, that session is
-picked up again after its next turn, and auto-compaction stays armed underneath. The cooldown is
-the wait between two submissions to a session that did move on, and it does not grow. This is
+not asked again at the same number, and a prompt lost on the way or a pane that was busy looks
+the same from outside and is held the same way: a failed submission is not retried, that session
+is picked up after its next turn, and auto-compaction stays armed underneath. The cooldown is
+the wait between two submissions to a session that did move on, and it does not grow. That is
 what ends the 2026-09-02 pattern of five submissions at one number, four of them refused.
 
 **Replacing a session.** `claude -c` or `-r` reopens a session with the context it had, so it
 costs what that session cost and continues the same trajectory, while a new session handed the
 newest checkpoint and summary starts a few thousand tokens in. When a session has to go (a
 version upgrade, a window that died, a context that drifted), cut over at a committed
-checkpoint: commit or list the uncommitted work, close, open new, and give it the paths of the
-newest files under `~/.claude/checkpoints/<project>/` as its first prompt. `compact-recover.py`
-only runs after a compaction, so a fresh session gets that pointer from you.
+checkpoint: commit or list the uncommitted work, close, open new, and give it the newest files
+under `~/.claude/checkpoints/<project>/` as its first prompt. `compact-recover.py` only runs
+after a compaction, so a fresh session gets that pointer from you.
 
 ## 9. What was refuted, and why
 
-- **"Let the model write a brief before compaction."** The model would write it mid-task, at
-  5x per token, and it cannot know what the summary will lose. A checkpoint computed from disk
-  costs nothing and cannot be wrong about git state. The model's own last words are captured
+- **"Let the model write a brief before compaction."** It would be written mid-task, at 5x per
+  token, and the model cannot know what the summary will lose. A checkpoint computed from disk
+  costs nothing and cannot be wrong about git state, and the model's own last words are taken
   from the transcript for free.
-- **"Let the orchestrating session watch its own context."** A session polling itself pays a
-  turn per poll and dies with the process it is trying to protect. The watcher is a process; a
-  session may *launch* it into a pane once, and then it lives on its own.
-- **"A shell script would be simpler."** The inputs are JSON (Herdr, transcripts, hook
-  payloads) and the environment is Windows, where PowerShell 5.1 JSON handling and shell
-  quoting have already cost real damage. The hooks were Python already.
+- **"Let the orchestrating session watch its own context."** A session polling itself pays a turn
+  per poll and dies with the process it is trying to protect. The watcher is a process; a session
+  may *launch* it into a pane once, and then it lives on its own.
+- **"A shell script would be simpler."** The inputs are JSON (Herdr, transcripts, hook payloads)
+  and the environment is Windows, where PowerShell 5.1 JSON handling and shell quoting have
+  already cost real damage. The hooks were Python already.
 - **"Disable auto-compaction and compact by hand."** A session that never goes idle would hit
   the hard limit mid-task. The watcher picks a better moment; auto-compaction stays the ceiling.
 - **"Ride the 1M window and compact less."** Section 2. The tax is per turn, and cache breaks
@@ -370,23 +340,21 @@ only runs after a compaction, so a fresh session gets that pointer from you.
 
 ## 10. Validation status and limits
 
-- Offline: `claude/hooks/tests/test-compaction-hooks.py` (18 tests, the hooks run as
-  subprocesses against a throwaway repository), `scripts/tests/test-compaction-decide.py` (9,
-  the watcher's decision) with `test-compaction-tools.py` beside it (13, synthetic transcripts
-  and a fake Herdr), `scripts/tests/test-guard-read.py` (38 tests, the guard run as a subprocess
-  over both the Read and the shell route) and `scripts/tests/test-launcher-env.ps1` (the
-  launcher's dry run, default and opt-in window).
-- Live, end to end, on 2026-08-27 with Claude Code 2.1.250 in a throwaway session under
-  Herdr: the watcher submitted `/compact` through `herdr agent prompt` at 27 percent of the
-  window (53,091 tokens, idle), the pane went `working`, the PreCompact hook wrote a
-  1,483-byte checkpoint, the summarizer followed the seven-item structure of the instructions
-  (2,310 characters, checkpoint path cited), the PostCompact hook saved the summary 11 seconds
-  after the submission, and Herdr reported the session as `done` afterwards, which is why
-  `done` counts as a boundary state.
-- Live, the hooks alone: two 2.1.248 sessions that were already running when the hooks were
-  wired ran them at their next compactions (a subagent's at 20:34, a session's own at 20:40),
-  and the session's recovery text after compaction carried the checkpoint path and its
-  disk-truth section.
+- Offline: `claude/hooks/tests/test-compaction-hooks.py` (18 tests, the hooks as subprocesses
+  over a throwaway repository), `scripts/tests/test-compaction-decide.py` (9, the watcher's
+  decision) with `test-compaction-tools.py` beside it (13, synthetic transcripts and a fake
+  Herdr), `scripts/tests/test-guard-read.py` (38, the guard as a subprocess over both the Read
+  and the shell route) and `scripts/tests/test-launcher-env.ps1` (the launcher's dry run,
+  default and opt-in window).
+- Live, end to end, on 2026-08-27 with Claude Code 2.1.250 in a throwaway session under Herdr:
+  the watcher submitted `/compact` through `herdr agent prompt` at 27 percent of the window
+  (53,091 tokens, idle), the pane went `working`, the PreCompact hook wrote a 1,483-byte
+  checkpoint, the summarizer followed the seven-item structure of the instructions (2,310
+  characters, checkpoint path cited), the PostCompact hook saved the summary 11 seconds later,
+  and Herdr reported the session as `done`, which is why `done` counts as a boundary state.
+- Live, the hooks alone: two 2.1.248 sessions already running when the hooks were wired ran them
+  at their next compactions (a subagent's at 20:34, a session's own at 20:40), and the recovery
+  text after compaction carried the checkpoint path and its disk-truth section.
 - The report's exact figures come from the `compactMetadata` rows that 2.1.248 writes at each
   boundary. For the orchestrating session of that day: eight compactions of 108 to 163 seconds
   each, 1,025 seconds in total (median 127), each keeping 11,520 to 16,871 tokens (the summary
@@ -397,3 +365,33 @@ only runs after a compaction, so a fresh session gets that pointer from you.
   and the payload shapes on versions after 2.1.250.
 - The cost weights are relative list prices; on a subscription the currency is quota, and the
   same weights are what the quota meters are believed to track. Measure your own day.
+
+## 11. The other meter: quota, and the pane that stops for two hours
+
+Everything above is about the context window. A subscription account has a second meter that
+stops work just as hard: a five hour usage window and a seven day one, each with a utilization
+and the time it resets. When the five hour window fills, the session stops mid queue and stays
+stopped until a person notices, even though the endpoint that reports the meter also announces,
+to the minute, when it comes back. An overnight queue that hits the ceiling at 23:10 and reopens
+at 01:00 loses the night to nobody being awake to press enter.
+
+`scripts/quota-wake.py` is the answer, and it has the shape of the compaction watcher: a
+resident process, zero model cost, that reads the meters through `scripts/usage-probe.py`, waits
+for the announced reset plus a grace, confirms the meter recovered, and submits one resume prompt
+to the stopped pane through `herdr agent prompt`. It wakes each pane at most once per reset,
+keyed by the reset time itself, so a restart inside the same window never wakes a pane twice.
+
+The rule that matters is the one that refuses. With the seven day meter at or above the cap the
+operator set (`--cap`, default 80 percent), the account is left alone however dry the five hour
+window is: a wake there does not buy work, it converts the rest of the week into unfinished work,
+and crossing that line is the operator's decision, never the script's. A pane Herdr reports as
+`working` is skipped for the same reason: it is still producing output, whatever the meter said a
+moment ago.
+
+Costs and limits: one HTTPS request per account per pass (default every 300 seconds, and the
+wait to a known reset is exact rather than aligned to that grid), no model tokens, no request
+while an account waits for a reset that has not arrived. The meters are read, never
+extrapolated: the toolkit does not guess how many tokens are left before the window fills.
+`scripts/usage-probe.py --csv` is the same row the nightly ledger has always appended, byte for
+byte. The design, the states and the decisions behind the knobs are in
+`docs/03-features/F14-quota-wake.md`.

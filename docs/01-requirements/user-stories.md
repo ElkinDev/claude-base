@@ -89,3 +89,12 @@ As a developer on a team whose repository already carries company rules, hooks a
 - The repository's own `CLAUDE.md`, `.claude/` files, git hooks, `core.hooksPath`, pre-commit and lint wiring survive the install untouched; the kit version of a file I already have arrives as `<name>.new` for me to merge by hand.
 - The run tells me where the backup went and the one command that puts everything back.
 - One switch keeps every file the kit added out of the team's history until I decide otherwise, and the run reminds me to check the team's policy on AI tooling before committing any of it.
+
+## US-013 Resume an orchestrator after a quota reset without being at the keyboard
+
+As an operator who runs a long queue overnight under a subscription account, I want the orchestrator prompted to continue when its five hour window reopens, only while the week still has room, so the queue finishes and the weekly cap I set is respected.
+
+- A session that stops because the five hour window is full is resumed within a couple of minutes of the reset the meter itself announces, without me being awake.
+- Nothing is submitted while the seven day meter is at or above the cap I configured: the log says the account came back and was left alone, and raising the cap is my decision.
+- A pane that is still working is never prompted, and a pane already resumed for that reset is never prompted twice, whatever the watcher restarts.
+- One pass with `--status` shows me each account, both meters, its state, the reset time and the last wake, and `--dry-run` shows what would be submitted without submitting it.
