@@ -140,9 +140,11 @@ def submit(herdr, pane, prompt):
 # the launcher writes `cc-<account>-<role>` on the tab it creates, which is the only place a
 # pane's account and role are visible from outside the process
 ROLE_SUFFIXES = ("orchestrator", "lane", "research")
-# a pane named by a person or by Claude Code answers for itself; the tab label speaks only
-# for a pane with no name of its own, because one tab can hold panes of several roles
-PANE_NAME_KEYS = tuple(key for key in NAME_KEYS if key != "tab_label")
+# a pane named on purpose answers for itself; the tab label speaks only for a pane with no name
+# of its own, because one tab can hold panes of several roles. The terminal title is not a name:
+# Claude Code rewrites it with a summary of the current task, so a pane judged on its title is
+# judged on whatever it happens to be doing, and every working pane carries one.
+PANE_NAME_KEYS = ("session_name", "name")
 
 
 def pane_account(agent, fallback=""):
@@ -173,14 +175,47 @@ def list_panes(herdr):
     return agents, ""
 
 
+def pane_names(agent):
+    """The names a pane carries of its own, in the order a reader would trust them."""
+    return [agent[key] for key in PANE_NAME_KEYS if agent.get(key)]
+
+
 def has_role(agent, pattern):
     """Whether a pane carries the role, by its own name first and by its tab label only when it
     has no name: an orchestrator tab can hold a lane pane, and that pane is not the orchestrator."""
-    own = [agent.get(key) or "" for key in PANE_NAME_KEYS]
-    own = [value for value in own if value]
+    own = pane_names(agent)
     if own:
         return any(pattern.search(value) for value in own)
     return bool(pattern.search(agent.get("tab_label") or ""))
+
+
+def pane_order(pane):
+    """Sort key for a Herdr pane id, so `w1:p2` comes before `w1:p10` and a pane id that does not
+    end in a number sorts after the ones that do instead of raising."""
+    workspace, _, tail = str(pane or "").rpartition(":")
+    number = tail[1:] if tail[:1].lower() == "p" else tail
+    return (workspace, 0, int(number), "") if number.isdigit() else (workspace, 1, 0, str(pane or ""))
+
+
+def role_candidates(agents, pattern):
+    """(candidates, ambiguous) for a role match with no selector.
+
+    A pane with a name of its own answers for itself. A pane with no name is judged by its tab
+    label, and when a tab carrying the role holds several such panes there is nothing in the
+    payload to tell them apart, so only the lowest numbered one is a candidate and the rest come
+    back as ambiguous for the caller to log. The cure on the operator's side is a name or a
+    selector, never a guess on this side.
+    """
+    matched = [agent for agent in agents if has_role(agent, pattern)]
+    by_tab = {}
+    for agent in matched:
+        if not pane_names(agent):
+            by_tab.setdefault(agent.get("tab", ""), []).append(agent)
+    ambiguous = []
+    for panes in by_tab.values():
+        ambiguous.extend(sorted(panes, key=lambda agent: pane_order(agent.get("pane")))[1:])
+    skipped = {agent.get("pane") for agent in ambiguous}
+    return [agent for agent in matched if agent.get("pane") not in skipped], ambiguous
 
 
 # ---------------------------------------------------------------- lock and stop

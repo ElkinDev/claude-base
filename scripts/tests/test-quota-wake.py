@@ -57,9 +57,12 @@ class FakeProbe:
         return self.queue.pop(0) if len(self.queue) > 1 else self.queue[0]
 
 
-def agent(pane, session, status="idle", tab="t1", name="orchestrator"):
+def agent(pane, session, status="idle", tab="t1", name="orchestrator", title=""):
+    """One `herdr agent list` entry. `name` is Herdr's own name for the pane, `title` the terminal
+    title Claude Code writes, which is a summary of the current task and not a name at all."""
     return {"agent": "claude", "agent_session": {"kind": "id", "value": session}, "agent_status": status,
-            "cwd": "/work", "pane_id": pane, "state_change_seq": 4, "name": name, "tab_id": tab}
+            "cwd": "/work", "pane_id": pane, "state_change_seq": 4, "name": name, "tab_id": tab,
+            "terminal_title_stripped": title}
 
 
 class FakeHerdr:
@@ -121,6 +124,13 @@ class WakeTest(unittest.TestCase):
 
     def run_pass(self, probe, when, args=None, cfg=None, store=None):
         return wake.one_pass(args or make_args(), cfg or make_cfg(), store or self.store, probe, when, quiet=True)
+
+    def wake_cycle(self, args=None, due=NOW + 60, seven=61):
+        """One dry pass and one recovered pass, and the panes woken by the pair."""
+        probe = FakeProbe(reading(five=100, seven=seven, resets_at=iso(due)), reading(five=5, seven=62))
+        self.run_pass(probe, NOW, args=args)
+        self.run_pass(probe, due + 120, args=args)
+        return [pane for pane, _ in self.herdr.prompts]
 
     # ------------------------------------------------------------ states
 
@@ -233,6 +243,33 @@ class WakeTest(unittest.TestCase):
         self.run_pass(probe, NOW)
         self.run_pass(probe, due + 120)
         self.assertEqual([pane for pane, _ in self.herdr.prompts], ["w1:p1"])
+
+    def test_a_pane_with_only_a_terminal_title_is_found_through_its_tab(self):
+        """Review case (d): the lane carries a Herdr name, the orchestrator carries only the title
+        Claude Code wrote for it, and the tab label is what is left to decide."""
+        self.herdr.agents = [agent("w1:p1", "1" * 36, name="", title="Reviewing the merge queue"),
+                             agent("w1:p2", "2" * 36, name="lane", title="Google sign-in first tap fix")]
+        self.assertEqual(self.wake_cycle(), ["w1:p1"])
+        self.assertNotIn("ambiguous", self.log_text())
+
+    def test_a_terminal_title_alone_never_makes_a_pane_the_orchestrator(self):
+        """The title changes with whatever the pane is doing, so it answers for nothing: a pane on
+        a lane tab stays a lane pane however its current task reads."""
+        self.herdr.tabs = [{"tab_id": "t1", "label": "cc-acct-a-lane"}]
+        self.herdr.agents = [agent("w1:p1", "1" * 36, name="", title="orchestrator handoff notes")]
+        self.assertEqual(self.wake_cycle(), [])
+        self.assertIn("no pane matches", self.log_text())
+
+    def test_unnamed_panes_under_a_role_tab_wake_the_lowest_and_name_the_rest(self):
+        """Review cases (b) and (c): with no pane name at all, or with terminal titles only, the tab
+        label speaks for every pane under it, and nothing in the payload tells them apart."""
+        for case, title in (("b", ""), ("c", "Reviewing the merge queue")):
+            with self.subTest(case=case):
+                self.setUp()
+                self.herdr.agents = [agent("w1:p2", "2" * 36, name="", title=title),
+                                     agent("w1:p1", "1" * 36, name="", title=title)]
+                self.assertEqual(self.wake_cycle(), ["w1:p1"])
+                self.assertIn("w1:p2 skipped, ambiguous", self.log_text())
 
     def test_a_selector_replaces_the_default_and_takes_every_pane_it_names(self):
         self.herdr.agents = [agent("w1:p1", "1" * 36, name="orchestrator"), agent("w1:p2", "2" * 36, name="lane")]

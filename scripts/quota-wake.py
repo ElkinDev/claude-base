@@ -33,7 +33,7 @@ import herdr_panes  # noqa: E402  (the path above is what makes it importable)
 import usage_meters as meters  # noqa: E402
 from quota_states import RESUME_TEXT, advance, classify, clock, prompt_text  # noqa: E402
 from herdr_panes import (  # noqa: E402
-    describe_selectors, has_role, label_of, list_panes, pane_account, rotate_and_append, select_agents, submit,
+    describe_selectors, label_of, list_panes, pane_account, role_candidates, rotate_and_append, select_agents, submit,
 )
 
 HOME = os.path.expanduser("~")
@@ -110,12 +110,15 @@ def save_state(store, dry_run=False):
 # ---------------------------------------------------------------- panes and accounts
 
 def candidates(args, agents, account):
-    """The panes of one account a wake may target: the selectors, or the orchestrator by default."""
+    """(panes, ambiguous) for one account: the panes a wake may target, which are the panes the
+    selectors name or the orchestrator by default, and the panes a role-labelled tab could not
+    tell apart, which the caller logs so the operator knows a name or a selector is missing."""
     if args.panes or args.sessions or args.titles:
-        selected = select_agents(agents, args.panes, args.sessions, args.titles)
+        selected, ambiguous = select_agents(agents, args.panes, args.sessions, args.titles), []
     else:
-        selected = [a for a in agents if has_role(a, ROLE_PATTERN)]
-    return [a for a in selected if a["session"] and pane_account(a, account) == account]
+        selected, ambiguous = role_candidates(agents, ROLE_PATTERN)
+    mine = [a for a in selected if a["session"] and pane_account(a, account) == account]
+    return mine, [a for a in ambiguous if pane_account(a, account) == account]
 
 
 def watched_accounts(args, agents):
@@ -188,15 +191,17 @@ def one_pass(args, cfg, store, probe, now=None, quiet=False):
     rows = []
     for account in watched_accounts(args, agents):
         state = store["accounts"].setdefault(account, {"state": "unknown"})
-        panes = candidates(args, agents, account)
+        panes, ambiguous = candidates(args, agents, account)
         if state.get("due_at") and now < state["due_at"]:
             log(f"{account} dry, next probe at {clock(state['due_at'])}", quiet)
         else:
             verdict, message = advance(state, probe(account), now, cfg)
-            if verdict in ("capped", "unknown-warn", "wait", "give-up", "retry") or not quiet:
+            if verdict in ("capped", "unknown-warn", "wait", "give-up", "retry", "wake") or not quiet:
                 log(f"{account} {message}", quiet)
             if verdict == "wake":
-                log(f"{account} {message}", quiet)
+                if ambiguous:
+                    log(f"{','.join(a['pane'] for a in ambiguous)} skipped, ambiguous: no name of their own under a "
+                        f"tab that carries the role; name the pane or pass a selector", quiet)
                 wake_panes(args, cfg, account, state, panes, store, now, quiet)
         rows.append({"account": account, "five_hour": state.get("five_hour"), "seven_day": state.get("seven_day"),
                      "state": state.get("state", "unknown"), "resets_at": state.get("resets_at", ""),
