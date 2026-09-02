@@ -266,6 +266,28 @@ class SnapshotTest(unittest.TestCase):
         self.assertIn("request failed", reading["error"])
         self.assertNotIn(TOKEN, reading["error"])
 
+    def test_a_payload_of_the_wrong_shape_is_an_error_and_never_a_raise(self):
+        """Valid JSON that is not the object this module expects is a shape change at the endpoint,
+        and the docstring promises the loop survives it: both meters None, one sentence in error."""
+        for name, payload in (("a JSON array", [{"five_hour": {"utilization": 1}}]), ("a JSON string", "nope"),
+                              ("a JSON number", 7), ("limits that are not objects", {"limits": ["session"]}),
+                              ("limits that are not a list", {"limits": {"session": 100}})):
+            with self.subTest(payload=name):
+                with profile(self.tmp, self.account_dir), endpoint(payload):
+                    reading = meters.read_snapshot(self.account_dir)
+                self.assertEqual((reading["five_hour"], reading["seven_day"]), (None, None))
+                self.assertIn("payload not understood", reading["error"])
+                self.assertNotIn(TOKEN, reading["error"])
+
+    def test_a_utilization_that_arrives_as_a_string_is_read_not_rejected(self):
+        """The reader hands the field on as it came; reading it as a number is the decision core's
+        job, and refusing it here would throw away a meter the endpoint did send."""
+        payload = {"five_hour": {"utilization": "100", "resets_at": "2026-03-04T18:00:00Z"}}
+        with profile(self.tmp, self.account_dir), endpoint(payload):
+            reading = meters.read_snapshot(self.account_dir)
+        self.assertEqual(reading["five_hour"], "100")
+        self.assertEqual(reading["error"], "")
+
     def test_epoch_of_reads_both_offsets_and_a_bare_time(self):
         self.assertEqual(meters.epoch_of("2026-03-04T18:00:00Z"), meters.epoch_of("2026-03-04T18:00:00+00:00"))
         self.assertEqual(meters.epoch_of("2026-03-04T18:00:00"), meters.epoch_of("2026-03-04T18:00:00Z"))

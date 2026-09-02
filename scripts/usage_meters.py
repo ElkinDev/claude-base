@@ -193,15 +193,25 @@ def summarize(account, data):
     }
 
 
+def empty_reading(account, error=""):
+    """A reading with no meters in it: the shape every failure path hands back."""
+    return {"account": account, "five_hour": None, "seven_day": None, "resets_at": "",
+            "seven_day_resets_at": "", "meters": {}, "limits": {}, "error": error}
+
+
 def read_snapshot(config_dir=None, timeout=20):
     """One reading of one profile. Never raises: a failure comes back in `error`, with both
-    meters at None, which the loop reads as the `unknown` state."""
+    meters at None, which the loop reads as the `unknown` state. That promise covers the shape
+    of the payload as well, because valid JSON that is not the object this module expects is a
+    shape change at the endpoint, which is exactly what an unattended watcher has to survive."""
     account = account_name(config_dir)
-    empty = {"account": account, "five_hour": None, "seven_day": None, "resets_at": "", "seven_day_resets_at": "", "meters": {}, "limits": {}}
     token, error = read_token(config_dir)
     if error:
-        return dict(empty, error=error)
+        return empty_reading(account, error)
     data, error = fetch(token, timeout)
     if error:
-        return dict(empty, error=error)
-    return summarize(account, data)
+        return empty_reading(account, error)
+    try:
+        return summarize(account, data)
+    except Exception as error:
+        return empty_reading(account, scrub(f"payload not understood: {error}", token))

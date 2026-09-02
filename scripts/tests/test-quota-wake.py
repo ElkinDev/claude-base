@@ -141,6 +141,36 @@ class WakeTest(unittest.TestCase):
         self.assertEqual(wake.classify(reading(five=100, seven=85), 100), "dry")
         self.assertEqual(wake.classify(reading(five=None, error="down"), 80), "unknown")
 
+    def test_classify_reads_a_number_however_the_payload_spells_it(self):
+        """The endpoint owns the shape of the utilization field. A number that arrives as the string
+        spelling it still reads; anything that is not a number reads as unknown and never raises."""
+        for value, expected in ((100, "dry"), ("100", "dry"), (100.0, "dry"), ("40", "ok"), (99.5, "ok"),
+                                (None, "unknown"), ("n/a", "unknown"), ({}, "unknown"), (True, "unknown")):
+            with self.subTest(five_hour=value):
+                self.assertEqual(wake.classify(reading(five=value, seven=30), 80), expected)
+        self.assertEqual(wake.classify(reading(five=100, seven="85"), 80), "capped")
+
+    def test_a_probe_that_raises_is_read_as_unknown_and_the_pass_survives(self):
+        """The loop's whole value is surviving unattended, so an exception from the reader is a
+        reading of unknown, not the end of the night."""
+        def angry(account):
+            raise RuntimeError("the reader changed under the loop")
+
+        self.run_pass(angry, NOW)
+        self.assertEqual(self.store["accounts"]["acct-a"]["state"], "unknown")
+        self.assertEqual(self.store["accounts"]["acct-a"]["unknown_streak"], 1)
+        self.assertIn("probe raised", self.log_text())
+        self.assertEqual(self.herdr.prompts, [])
+
+    def test_a_string_utilization_runs_the_whole_cycle(self):
+        """The coercion has to reach the state machine and the resume text, not only classify."""
+        due = NOW + 60
+        probe = FakeProbe(reading(five="100", seven="61", resets_at=iso(due)), reading(five="5", seven="62"))
+        self.run_pass(probe, NOW)
+        self.run_pass(probe, due + 120)
+        self.assertEqual([pane for pane, _ in self.herdr.prompts], ["w1:p1"])
+        self.assertIn("5 percent", self.herdr.prompts[0][1])
+
     def test_ok_never_wakes(self):
         probe = FakeProbe(reading(five=40, seven=30))
         self.run_pass(probe, NOW)

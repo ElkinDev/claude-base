@@ -6,6 +6,7 @@ numbers mean: when an account counts as dry, when the week is spent, how long to
 announced reset, when to give up, and the words the woken pane reads. Nothing here touches the
 network, Herdr or the clock, so every branch is a plain call in a test.
 """
+import math
 import os
 import sys
 from datetime import datetime
@@ -28,14 +29,32 @@ def clock(when):
     return datetime.fromtimestamp(when).strftime("%Y-%m-%d %H:%M")
 
 
+def percent(value):
+    """A meter reading as a number, or None when the payload sent something that is not one.
+
+    The endpoint decides the shape of this field, and a watcher that runs for weeks has to read a
+    number that arrives as the string spelling it and refuse everything else without raising: a
+    utilization that cannot be compared is no reading at all, which the caller reads as unknown.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return int(number) if number.is_integer() else number
+
+
 def classify(reading, cap):
     """ok, dry, capped or unknown, from the two meters and the operator's weekly cap."""
-    if reading.get("error") or reading.get("five_hour") is None:
+    five, seven = percent(reading.get("five_hour")), percent(reading.get("seven_day"))
+    if reading.get("error") or five is None:
         return "unknown"
-    seven = reading.get("seven_day")
     if cap < 100 and seven is not None and seven >= cap:
         return "capped"
-    if reading["five_hour"] >= 100:
+    if five >= 100:
         return "dry"
     return "ok"
 
@@ -51,7 +70,7 @@ def advance(state, reading, now, cfg):
             return "unknown-warn", f"unknown for {streak} passes in a row, keeping the previous state: {detail}"
         return "unknown", f"unknown, keeping the previous state: {detail}"
     state["unknown_streak"] = 0
-    five, seven = reading["five_hour"], reading["seven_day"]
+    five, seven = percent(reading.get("five_hour")), percent(reading.get("seven_day"))
     state["five_hour"], state["seven_day"] = five, seven
     if kind == "capped":
         state["state"], state["due_at"] = "capped", 0

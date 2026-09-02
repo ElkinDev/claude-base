@@ -22,7 +22,6 @@ import argparse
 import json
 import os
 import re
-import subprocess  # noqa: F401  (the tests reach subprocess.run through this module)
 import sys
 import time
 
@@ -195,8 +194,12 @@ def one_pass(args, cfg, store, probe, now=None, quiet=False):
         if state.get("due_at") and now < state["due_at"]:
             log(f"{account} dry, next probe at {clock(state['due_at'])}", quiet)
         else:
-            verdict, message = advance(state, probe(account), now, cfg)
-            if verdict in ("capped", "unknown-warn", "wait", "give-up", "retry", "wake") or not quiet:
+            try:
+                snapshot = probe(account)
+            except Exception as error:  # belt and braces: a probe that raises must not end the night
+                snapshot = meters.empty_reading(account, f"probe raised: {error}")
+            verdict, message = advance(state, snapshot, now, cfg)
+            if verdict in ("capped", "unknown", "unknown-warn", "wait", "give-up", "retry", "wake") or not quiet:
                 log(f"{account} {message}", quiet)
             if verdict == "wake":
                 if ambiguous:
