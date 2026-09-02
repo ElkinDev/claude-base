@@ -37,6 +37,7 @@ def load(name, filename):
 
 
 wake = load("quota_wake", "quota-wake.py")
+states = sys.modules["quota_states"]  # the copy quota-wake.py imported, never a second one
 
 
 def iso(when):
@@ -184,6 +185,26 @@ class WakeTest(unittest.TestCase):
                 self.assertEqual(wake.classify(reading(five=value, seven=30), 80), expected)
         self.assertEqual(wake.classify(reading(five=100, seven="85"), 80), "capped")
 
+    def test_the_dry_ceiling_is_a_full_hundred_and_nothing_under_it(self):
+        """The ceiling is what "out of tokens" means. Set lower, the loop stops probing an account
+        that still has room and waits out a window the account never entered."""
+        for five in (95, 99, 99.9, "99"):
+            with self.subTest(five_hour=five):
+                self.assertEqual(wake.classify(reading(five=five, seven=30), 80), "ok")
+        self.assertEqual(wake.classify(reading(five=100, seven=30), 80), "dry")
+
+    def test_the_unknown_warning_lands_on_the_third_pass_and_says_which(self):
+        """Counting one warning over four passes holds for any threshold from one to four, so what
+        has to be pinned is the pass it lands on and the number it prints."""
+        probe = FakeProbe(reading(five=None, seven=None, error="request failed: down"))
+        seen = []
+        for step in (1, 2, 3, 4):
+            self.run_pass(probe, NOW + 300 * step)
+            seen.append(self.log_text().count("in a row"))
+        self.assertEqual(seen, [0, 0, 1, 1])
+        self.assertIn(f"unknown for {states.UNKNOWN_WARN} passes in a row", self.log_text())
+        self.assertEqual(states.UNKNOWN_WARN, 3, "the spec says three consecutive unknowns")
+
     def test_a_probe_that_raises_is_read_as_unknown_and_the_pass_survives(self):
         """The loop's whole value is surviving unattended, so an exception from the reader is a
         reading of unknown, not the end of the night."""
@@ -247,6 +268,33 @@ class WakeTest(unittest.TestCase):
         self.run_pass(again, due + 1200, store=restarted)
         self.assertEqual(len(self.herdr.prompts), 1)
         self.assertIn("already woken", self.log_text())
+
+    def test_a_new_announced_reset_is_a_new_window_and_wakes_again(self):
+        """The wake key is the session and the reset it belongs to. Without the reset half, a pane
+        woken on Wednesday is never woken again for as long as the session lives."""
+        first, second = NOW + 600, NOW + 90000
+        probe = FakeProbe(reading(five=100, seven=61, resets_at=iso(first)), reading(five=5, seven=62))
+        self.run_pass(probe, NOW)
+        self.run_pass(probe, first + 120)
+        later = FakeProbe(reading(five=100, seven=61, resets_at=iso(second)), reading(five=5, seven=62))
+        self.run_pass(later, first + 600)
+        self.run_pass(later, second + 120)
+        self.assertEqual([pane for pane, _ in self.herdr.prompts], ["w1:p1", "w1:p1"])
+        self.assertEqual(sorted(key.split("|")[1] for key in self.store["wakes"]), sorted([iso(first), iso(second)]))
+
+    def test_a_pane_that_came_back_as_a_new_session_is_a_fresh_candidate(self):
+        """A pane whose session was replaced, by a compaction or by a restart, has never been woken
+        for this window: the key carries the session id, so it is a candidate again."""
+        due = NOW + 600
+        self.run_pass(FakeProbe(reading(five=100, seven=61, resets_at=iso(due)), reading(five=5, seven=62)), NOW)
+        self.run_pass(FakeProbe(reading(five=5, seven=62)), due + 120)
+        self.assertEqual(len(self.herdr.prompts), 1)
+        self.herdr.agents = [agent("w1:p1", "cccccccc-9999-8888-7777-666666666666")]
+        again = FakeProbe(reading(five=100, seven=61, resets_at=iso(due)), reading(five=5, seven=62))
+        self.run_pass(again, due + 600)
+        self.run_pass(again, due + 1200)
+        self.assertEqual([pane for pane, _ in self.herdr.prompts], ["w1:p1", "w1:p1"])
+        self.assertEqual(len({key.split("|")[0] for key in self.store["wakes"]}), 2)
 
     def test_the_meter_still_at_the_ceiling_retries_then_gives_up(self):
         probe = FakeProbe(reading(five=100, seven=61, resets_at=iso(NOW - 3600)))
@@ -353,6 +401,28 @@ class WakeTest(unittest.TestCase):
         self.run_pass(probe, due + 120)
         self.assertEqual([pane for pane, _ in self.herdr.prompts], ["w1:p1"])
 
+    def test_two_accounts_keep_two_state_machines(self):
+        """Watched together, one dry and one capped, each with its own meters, its own pane and its
+        own verdict. A shared machine would either wake the capped account or silence the dry one."""
+        self.herdr.agents = [agent("w1:p1", "1" * 36, tab="t1"), agent("w2:p1", "2" * 36, tab="t2")]
+        self.herdr.tabs = [{"tab_id": "t1", "label": "cc-acct-a-orchestrator"}, {"tab_id": "t2", "label": "cc-acct-b-orchestrator"}]
+        due = NOW + 60
+        queues = {"acct-a": [reading(five=100, seven=61, resets_at=iso(due)), reading(five=5, seven=62)],
+                  "acct-b": [reading(five=100, seven=90, account="acct-b")]}
+
+        def probe(account):
+            queue = queues[account]
+            return queue.pop(0) if len(queue) > 1 else queue[0]
+
+        args = make_args(account="")
+        self.run_pass(probe, NOW, args=args)
+        self.run_pass(probe, due + 120, args=args)
+        self.assertEqual([pane for pane, _ in self.herdr.prompts], ["w1:p1"])
+        accounts = self.store["accounts"]
+        self.assertEqual((accounts["acct-a"]["state"], accounts["acct-b"]["state"]), ("ok", "capped"))
+        self.assertEqual((accounts["acct-a"]["seven_day"], accounts["acct-b"]["seven_day"]), (62, 90))
+        self.assertEqual(accounts["acct-b"]["due_at"], 0, "a capped account waits for nothing")
+
     def test_the_account_of_a_pane_comes_from_the_tab_label(self):
         self.assertEqual(wake.pane_account({"tab_label": "cc-acct-a-orchestrator", "name": ""}, "fallback"), "acct-a")
         self.assertEqual(wake.pane_account({"tab_label": "cc-acct-b", "name": ""}, "fallback"), "acct-b")
@@ -417,6 +487,27 @@ class WakeTest(unittest.TestCase):
         self.assertEqual(wake.take_lock(), os.getppid())
         wake.release_lock()
         self.assertFalse(os.path.exists(wake.LOCK_FILE))
+
+    def test_the_log_rotates_once_and_the_default_ceiling_is_a_megabyte(self):
+        """A watcher that runs every night writes forever. Without the rotation the log grows until
+        the disk refuses it, and the .1 file is all the history a person gets."""
+        for line in ("x" * 40, "second", "third"):
+            wake.rotate_and_append(wake.LOG_FILE, line, limit=45)
+        self.assertEqual(self.log_text().splitlines(), ["third"])
+        with open(wake.LOG_FILE + ".1", encoding="utf-8") as handle:
+            self.assertIn("second", handle.read())
+        with open(wake.LOG_FILE, "w", encoding="utf-8") as handle:
+            handle.write("y" * (1024 * 1024 + 1))
+        wake.rotate_and_append(wake.LOG_FILE, "over the megabyte")
+        self.assertEqual(self.log_text().splitlines(), ["over the megabyte"])
+
+    def test_a_lock_with_no_directory_part_is_still_a_lock(self):
+        """`os.path.dirname` of a bare filename is the empty string, and `os.makedirs("")` raises.
+        Both callers here pass an absolute path, so this is the guard for the next caller."""
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.tmp)
+        self.assertEqual(wake.herdr_panes.take_lock("quota-wake.lock"), 0)
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, "quota-wake.lock")))
 
     def test_stop_is_a_file_and_is_consumed_once(self):
         with open(wake.STOP_FILE, "w", encoding="utf-8") as handle:

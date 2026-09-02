@@ -10,6 +10,10 @@ Sprints are scope units, not calendar units: a sprint is done when its definitio
 | 04 | Multi-agent interchange | F03, F04, F05 | One AGENTS.md drives Claude Code, Codex, and OpenCode |
 | 05 | Cursor, docs, release | F06, F11 completion, F12 | v0.1.0 public, matrix honest, docs complete |
 
+## Out of sprint
+
+- F14 (quota wake, `03-features/F14-quota-wake.md`): built after the table above was written, so it belongs to no sprint yet. It adds two commands and three modules beside the compaction watcher, runs only when a person starts it, and nothing in the v0.1.0 surface depends on it. It stays a proposal until it is reviewed and merged, and it enters a sprint the day the maintainer schedules it, never silently.
+
 ## Releases
 
 - v0.1.0: after Sprint 05, the first public release, scope per `00-product/vision.md`.

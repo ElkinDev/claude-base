@@ -242,7 +242,7 @@ def pid_alive(pid):
 
 def take_lock(lock_file):
     """0 when this process owns the lock, the pid of the live owner when another has it."""
-    os.makedirs(os.path.dirname(lock_file), exist_ok=True)
+    os.makedirs(os.path.dirname(lock_file) or ".", exist_ok=True)  # a bare filename has no dirname
     if os.path.isfile(lock_file):
         try:
             with open(lock_file, encoding="utf-8") as handle:

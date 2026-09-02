@@ -6,6 +6,8 @@ Not scheduled. An item moves into a sprint file when it is chosen; it never gets
 
 - The sanitization guard is in `scripts/` as of 2026-08-28 (`python scripts/sanitize-check.py`, with a pre-push hook and an optional pre-commit one); the CI job that would run it on every push is F11 and is not built yet. Separately, the commits that existed before that morning's history rewrite stay reachable by hash on the host until it garbage-collects them or support is asked to purge them.
 
+- F14 (quota wake): which sprint takes it, and whether it ships inside v0.1.0 or waits for v0.2.x. The code and its tests are in the tree on a branch, unmerged, and the roadmap lists it out of sprint until this is answered.
+- NFR-003 line budget: keep the flat 300 line rule or amend it with the exemption the repo already lives by. Main carries twelve files over the budget, `scripts/ledger-day.py` at 1397 lines the largest and the two largest test suites at 585 and 521, and F14 adds four more, listed under "Known deviations" in its feature doc. The rule stays as written until this is decided.
 - Repo name before going public: keep `claude-base` (honest, searchable) or rename to something agent-neutral. Decide before Sprint 05 executes F12.
 - herdr folder depth: keep the minimal integration note (F12 baseline) or absorb the fuller private kit's extras (settings reference, launchers) after sanitization.
 - Statusline default glyphs: keep current cosmetic defaults or switch to plain ASCII defaults with glyphs as documented opt-in.
