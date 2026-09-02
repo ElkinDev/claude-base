@@ -98,6 +98,15 @@ show the correct way with a concrete example.
 - Definition of done is explicit (definition-of-done): every acceptance criterion met, the change
   actually run and verified, gates green, and the evidence pack present.
 
+## Context economy (orchestrator)
+- An orchestrator opens briefs, lane reports and decision scripts with the shell (`sed -n`, `cat`,
+  `grep -n`), never with the Read tool. A file read with the Read tool is re-injected into the
+  window at every compaction, so one read is paid for again on every cycle: measured at 6087 to
+  9237 tokens per compaction on one project and 4946 on another. A shell read is paid for once.
+  A lane keeps using the Read tool, which is the right tool for a file it is about to edit.
+- The same image and large-file guard runs on both routes, so a shell read of a screenshot or of a
+  file over 150 KB is refused with the slice command to use instead.
+
 ## Evidence
 Keep a structured evidence pack per task (evidence-report): evidence.md, session.md, pr-comment.md.
 It lives outside the repository, beside it, under the root the `Evidence root:` line of

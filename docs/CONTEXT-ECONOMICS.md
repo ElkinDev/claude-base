@@ -117,11 +117,22 @@ The context right after compaction, on this setup, was about 65k to 77k tokens:
 | the summary | 4k to 6k | length, through the PreCompact instructions |
 | the preserved tail: recent messages the harness keeps verbatim, plus re-injected recently read files | 8k to 13k (`postTokens` in the boundary row, minus the summary) | only by reading fewer large files before compaction |
 | user CLAUDE.md, memory index, skill descriptions, MCP tool names | 5k to 8k | yes, and it is the smallest part |
-| recovery hook output | under 4k | yes |
+| recovery hook output | under 2k | yes |
 
 The floor is paid on every turn of every cycle, so it is a first-order lever, but the part
 you own is a few thousand tokens. Trimming a memory index from 3k to 2k is worth doing once;
 it is not where the day goes.
+
+The exception is the re-injected files, which is the one line of that table a habit can move.
+A file opened with the Read tool is re-injected after the compaction, so it is paid for again
+on every cycle for as long as the work lasts: measured over five consecutive compactions, 6087
+to 9237 tokens per compaction on one project and 4946 on another, all of it briefs and reports
+that had already been summarised. The same bytes read with `sed -n` or `cat` arrive as tool
+output, which the summary replaces instead of carrying. So an orchestrator, which reads a lot
+and edits almost nothing, reads with the shell; a lane, which opens a file to change it, keeps
+the Read tool. `claude/hooks/guard-read.py` is wired to both routes for that reason: with the
+`Read` matcher alone, moving the reads to the shell would also move them past the image and
+large-file guard.
 
 ## 6. The right moment: an optimum band, and why the level is second order
 

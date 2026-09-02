@@ -120,6 +120,26 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/guard-read.py\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/guard-read.py\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [
