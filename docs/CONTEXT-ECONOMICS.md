@@ -149,7 +149,7 @@ The context right after compaction, on this setup, was about 65k to 77k tokens:
 | the summary | 4k to 6k | length, through the PreCompact instructions |
 | the preserved tail: recent messages the harness keeps verbatim, plus re-injected recently read files | 8k to 13k (`postTokens` in the boundary row, minus the summary) | only by reading fewer large files before compaction |
 | user CLAUDE.md, memory index, skill descriptions, MCP tool names | 5k to 8k | yes, and it is the smallest part |
-| recovery hook output | under 2k | yes |
+| recovery hook output | 2000 characters at most, which is roughly 500 tokens | yes |
 
 The floor is paid on every turn of every cycle, so it is a first-order lever, but the part
 you own is a few thousand tokens. Trimming a memory index from 3k to 2k is worth doing once;
