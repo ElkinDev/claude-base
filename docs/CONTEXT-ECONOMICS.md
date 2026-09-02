@@ -79,10 +79,9 @@ The seven compactions together were roughly 7 percent of the day's spend and avo
 70 percent of it. Compaction is not the waste; the level it happens at is a second-order detail
 (section 6), and the *moment* it happens at is what the toolkit fixes.
 
-Why the working band looks small: with a trigger at 83 percent and a floor at 38 percent, a
-cycle has about 45 percent of the window to work with. "More than half the window is lost to
-compaction" is true as a share of the window and irrelevant as a cost: the floor is what you
-pay for on every turn, and the part of the floor you control is small (section 5).
+Why the working band looks small: a trigger at 83 percent and a floor at 38 percent leave about
+45 percent of the window to work in. "More than half the window is lost to compaction" is true
+as a share and irrelevant as a cost: what every turn pays for is the floor (section 5).
 
 ## 4. The knobs in Claude Code 2.1.248
 
@@ -113,24 +112,20 @@ installed binary:
 ```
 if(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW){let B=kte("CLAUDE_CODE_AUTO_COMPACT_WINDOW",process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW,yCe,KUe);
 CLAUDE_CODE_AUTO_COMPACT_WINDOW is set and takes precedence. Unset it to change this setting.
-To enforce it, set CLAUDE_CODE_AUTO_COMPACT_WINDOW=${V} (or the autoCompactWindow setting)
 function zN(){return a.CLAUDE_CODE_DISABLE_1M_CONTEXT}
-autoCompactWindow:Qd().describe("Auto-compact window size")
 ```
 
 So the variable wins over the `autoCompactWindow` setting, and the setting is the same knob
-under another name. The account launcher wires both: by default it sets
-`CLAUDE_CODE_DISABLE_1M_CONTEXT=1` for `orchestrator` and `lane` and removes any inherited
-`CLAUDE_CODE_AUTO_COMPACT_WINDOW` along with it, so a pane opened from a pane that used the
-switch does not keep a window the cap contradicts; `research` is left uncapped and its
-inherited window untouched. `cc <account> -Window 260000` is the
-opt-in exception: it drops the cap for that session (the cap would hold the window at 200k, so
-the window could not grow) and sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW=260000`, in the pane
-command and in the in-window path alike. `cc -ShowEnv` prints the variables a launch would set
-and the arguments it would forward, then exits without opening a session, which is how
-`scripts/tests/test-launcher-env.ps1` asserts both. The switch is `-Window` rather than
-`-CompactWindow` because PowerShell binds a parameter by unambiguous prefix and the launcher
-forwards an unbound flag to claude, so a name starting with `c` swallows claude's own `-c`.
+under another name. The account launcher wires both (`docs/ACCOUNTS.md`): `orchestrator` and
+`lane` get `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` and lose any inherited
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW` with it, on the pane command and on the in-window path alike,
+so a pane opened from a pane that used the switch does not keep a window the cap contradicts;
+`research` is left uncapped, inherited window included. `cc <account> -Window 260000` is the
+opt-in exception: it drops the cap, which would hold the window at 200k, and sets the variable
+to 260000. The name is `-Window` and not `-CompactWindow` because PowerShell binds by
+unambiguous prefix and an unbound flag is forwarded to claude, so a name starting with `c`
+swallows claude's own `-c`. `cc -ShowEnv` prints what a launch would set and forward without
+opening a session, which is how `scripts/tests/test-launcher-env.ps1` asserts all of it.
 
 Raising the window buys fewer compactions, not cheaper turns: at 260k a cycle drops roughly a
 third of the compactions of a 200k session, so a day of nine cycles at about 21600 tokens of
@@ -151,9 +146,9 @@ The context right after compaction, on this setup, was about 65k to 77k tokens:
 | user CLAUDE.md, memory index, skill descriptions, MCP tool names | 5k to 8k | yes, and it is the smallest part |
 | recovery hook output | 2000 characters at most, which is roughly 500 tokens | yes |
 
-The floor is paid on every turn of every cycle, so it is a first-order lever, but the part
-you own is a few thousand tokens. Trimming a memory index from 3k to 2k is worth doing once;
-it is not where the day goes.
+The floor is paid on every turn of every cycle, so it is a first-order lever, but the part you
+own is a few thousand tokens: trimming a memory index from 3k to 2k is worth doing once, and it
+is not where the day goes.
 
 Skills are the other habit that shows up in that table. Every skill a pane has loaded is
 restored in full at each compaction of that pane and stays restored for the life of the
@@ -171,10 +166,9 @@ that had already been summarised. The same bytes read with `sed -n` or `cat` arr
 output, which the summary replaces instead of carrying. So an orchestrator, which reads a lot
 and edits almost nothing, reads with the shell; a lane, which opens a file to change it, keeps
 the Read tool. `claude/hooks/guard-read.py` is wired to both routes for that reason: with the
-`Read` matcher alone, moving the reads to the shell would also move them past the image and
-large-file guard. Which files a command line prints, and whether a pipe, a redirect or a
-substitution keeps those bytes out of the window, is parsed in `claude/hooks/shell_read.py`
-beside it.
+`Read` matcher alone, moving the reads to the shell would move them past the image and
+large-file guard too. Which files a command prints, and whether a pipe, a redirect or a
+substitution keeps those bytes out of the window, is parsed in `claude/hooks/shell_read.py`.
 
 ## 6. The right moment: an optimum band, and why the level is second order
 
@@ -208,10 +202,9 @@ levers, in the measured order of size, are:
    the cache time to live; compact before a long pause, or accept a small context during it.
 
 Compacting at 65 percent instead of 83 percent saves a few percent per turn. Compacting *at a
-boundary* instead of mid-task saves the rework of a summary that cut a task in half, and that
-is not measurable in tokens because it shows up as wrong work. The compaction itself is dead
-time as well: the measured day spent 1,025 seconds inside its eight compactions, about two
-minutes each, during which the session does nothing.
+boundary* instead of mid-task saves the rework of a summary that cut a task in half, which is
+not measurable in tokens because it shows up as wrong work. The compaction is dead time too:
+the measured day spent 1,025 seconds inside its eight compactions, about two minutes each.
 
 ## 7. The toolkit
 
@@ -235,16 +228,14 @@ with those instructions  ->  PostCompact: summary saved next to the checkpoint  
 ```
 
 Where the files land: checkpoints and summaries go to `~/.claude/checkpoints/<project>/`
-(`CLAUDE_CHECKPOINT_DIR` overrides), outside every repository, so they need no ignore rule.
-The autosave is the exception: it is written to `NOTES.autosave.md` in the session's `cwd`,
-where the next session finds it, and that is usually a repository. It is a dump of the last
-messages and is not for commit, so the hook makes git ignore it before writing it: when
-`git check-ignore` does not already cover the name, it appends it to the repository's local
-exclude list (`.git/info/exclude`, shared by every worktree of that repository), never to the
-team's `.gitignore`. That holds on any machine and in any project where the hook is
-installed, with nothing to remember before the first compaction; `git add -A` in a team
-repository does not pick the file up. The old habit of a hand-kept `NOTES.md` is gone from
-the toolkit: no hook reads or writes one.
+(`CLAUDE_CHECKPOINT_DIR` overrides), outside every repository, so they need no ignore rule. The
+autosave is the exception. It goes to `NOTES.autosave.md` in the session's `cwd`, usually a
+repository, where the next session finds it, and it is a dump of the last messages, not
+something to commit, so the hook makes git ignore it before writing it: when `git check-ignore`
+does not already cover the name, it is appended to `.git/info/exclude`, the repository's local
+list shared by every worktree, never to the team's `.gitignore`. Nothing to remember before the
+first compaction, and `git add -A` in a team repository does not pick the file up. The old habit
+of a hand-kept `NOTES.md` is gone from the toolkit: no hook reads or writes one.
 
 Nothing in the flow asks the model to write anything before compaction. The checkpoint is
 computed from disk, which is both cheaper (no output tokens) and more reliable (a model asked
@@ -256,29 +247,19 @@ The hooks install with the rest of the toolkit (`install.ps1`); `claude/settings
 them. They are wired per config directory: with account profiles (`docs/ACCOUNTS.md`), the
 default directory is the only one that has them until each profile is synced with
 `cc <profile> -p -s`, and a session on an unsynced profile compacts with no checkpoint and no
-warning. Running sessions pick the hooks up as soon as the file changes, no restart needed.
-If you wire them by hand, the events are:
+warning. To wire them by hand, copy the blocks from `claude/settings.json` rather than retyping
+them: PreCompact runs `precompact-autosave.py` and then `precompact-checkpoint.py` in that
+order, PostCompact runs `postcompact-persist.py`, and SessionStart with the matcher `compact`
+runs `compact-recover.py`, each as `python "%USERPROFILE%/.claude/hooks/<name>.py"` with a
+timeout of 15 to 20 seconds.
 
-```json
-"PreCompact": [
-  { "hooks": [ { "type": "command", "command": "python \"%USERPROFILE%/.claude/hooks/precompact-autosave.py\"", "timeout": 20 } ] },
-  { "hooks": [ { "type": "command", "command": "python \"%USERPROFILE%/.claude/hooks/precompact-checkpoint.py\"", "timeout": 20 } ] }
-],
-"PostCompact": [
-  { "hooks": [ { "type": "command", "command": "python \"%USERPROFILE%/.claude/hooks/postcompact-persist.py\"", "timeout": 15 } ] }
-],
-"SessionStart": [
-  { "matcher": "compact", "hooks": [ { "type": "command", "command": "python \"%USERPROFILE%/.claude/hooks/compact-recover.py\"", "timeout": 15 } ] }
-]
-```
-
-Hook changes reach sessions that are already running: on 2.1.248, two processes started at
-18:45 and 18:56 ran hooks wired into `settings.json` at 20:29, at their compactions of 20:34
-and 20:40, without a restart. If a session does not pick them up, restart it.
+A change reaches sessions that are already running: on 2.1.248, two processes started at 18:45
+and 18:56 ran hooks wired into `settings.json` at 20:29, at their compactions of 20:34 and
+20:40, without a restart. If a session does not pick them up, restart it.
 
 A subagent's compaction fires the same hooks with `agent_id` and `agent_type` in the payload
 while `transcript_path` still names the parent's transcript, and the summarizer ignores the
-hook's instructions there. Both hooks therefore skip subagents by default; with
+hook's instructions there, so both hooks skip subagents by default; with
 `CLAUDE_CHECKPOINT_SUBAGENTS=1` they write files tagged `-agent-<id>` that the session's own
 recovery never mistakes for its checkpoint.
 
@@ -312,21 +293,18 @@ python scripts/compact-at-boundary.py --stop                    ask the running 
 `w4:p1` overnight and the watcher sat waiting on a pane that no longer existed), and a pane id
 means nothing on another machine. A session's stable identity is its name: `claude --name
 orchestrator` at launch, or `/rename orchestrator` inside the session, writes a `custom-title`
-row to the transcript, shows the name in the prompt box, the resume picker and the terminal
-title, and the account launcher passes `--name <role>` by itself (`cc work -o orchestrator`
-names the session `orchestrator`; `-- --name x` overrides). `--titles` is a regex matched, in
-this order, against that transcript name, Herdr's agent name (`herdr agent rename`), the tab
-label the launcher sets on `-Tab` launches (`cc-<account>-<role>`) and the terminal title.
-`herdr pane rename` sets a label that `agent list` does not return, so it is not matched.
-Convention: the launcher's roles, `orchestrator`, `lane` and `research`, with `-- --name
-lane-<feature>` when several lanes run at once; an unrelated name matches nothing
-and the watcher says so once (`no Claude pane matches --titles ...; Herdr knows ...`) and
-keeps polling until a pane with that name appears.
+row to the transcript and shows the name in the prompt box, the resume picker and the terminal
+title; the launcher passes `--name <role>` by itself (`cc work -o orchestrator`, and `-- --name
+x` overrides). `--titles` is a regex matched, in this order, against that transcript name,
+Herdr's agent name (`herdr agent rename`), the tab label of a `-Tab` launch
+(`cc-<account>-<role>`) and the terminal title; `herdr pane rename` sets a label `agent list`
+does not return, so it is not matched. Convention: the launcher's roles, with `-- --name
+lane-<feature>` when several lanes run at once. A name that matches nothing is reported once
+(`no Claude pane matches --titles ...; Herdr knows ...`) and then polled for until it appears.
 
 One trap when submitting by hand: Git Bash rewrites a leading slash, so `herdr agent prompt
 w1:p5 /compact` arrives as `C:/Program Files/Git/compact` and the session answers it as a
-question. The watcher submits through Python and is not affected; from a shell use PowerShell
-or set `MSYS_NO_PATHCONV=1`.
+question. The watcher submits through Python; from a shell, PowerShell or `MSYS_NO_PATHCONV=1`.
 
 Run it in a spare pane where its log is visible, or hidden:
 
@@ -334,12 +312,11 @@ Run it in a spare pane where its log is visible, or hidden:
 Start-Process -WindowStyle Hidden python -ArgumentList '"C:\path\to\claude-base\scripts\compact-at-boundary.py"','--titles','"orques|orchestr"'
 ```
 
-It keeps one instance through a lock file (the lock records a pid and is checked against a
-live process, so a stale lock from a reboot does not block the next start), logs to
-`~/.claude/compact-at-boundary.log`, and survives the death of any Claude session because it
-is not one. It also survives Herdr going away: each pass logs `herdr agent list failed` and
-the loop keeps polling until Herdr is back. What it does not survive is a logoff or a reboot;
-register it as a logon task once:
+It keeps one instance through a lock file (a pid checked against a live process, so a stale
+lock from a reboot does not block the next start), logs to `~/.claude/compact-at-boundary.log`,
+and survives the death of any Claude session because it is not one, and Herdr going away: each
+pass logs `herdr agent list failed` and keeps polling until Herdr is back. What it does not
+survive is a logoff or a reboot; register it as a logon task once:
 
 ```powershell
 $action  = New-ScheduledTaskAction -Execute 'pythonw.exe' -Argument '"C:\path\to\claude-base\scripts\compact-at-boundary.py" --titles "orques|orchestr"'
@@ -347,8 +324,8 @@ $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 Register-ScheduledTask -TaskName 'compact-at-boundary' -Action $action -Trigger $trigger -Force
 ```
 
-`pythonw.exe` runs without a console window; give its full path if it is not on PATH. Starting
-before Herdr is up is fine for the reason above. `Unregister-ScheduledTask -TaskName
+`pythonw.exe` runs without a console window; give its full path if it is not on PATH, and
+starting before Herdr is up is fine for the reason above. `Unregister-ScheduledTask -TaskName
 'compact-at-boundary' -Confirm:$false` removes it.
 
 Defaults: window 200000, threshold 0.65, idle 90 seconds, cooldown 900 seconds, interval 30
@@ -357,20 +334,19 @@ threshold is a fraction of that number.
 
 **One submission per position.** After a submission the watcher holds that session until its
 transcript grows a new usage row, so a session that answers `Not enough messages to compact.` is
-not asked again at the same number. A prompt that was lost on the way and a pane that was busy
-look the same from outside and are held the same way: a submission that failed is not retried,
-that session is picked up again after its next turn, and auto-compaction stays armed underneath.
-The cooldown is the wait between two submissions to a session that did move on, and it does not
-grow. This is what ends the 2026-09-02 pattern of five submissions at one number, four refused.
+not asked again at the same number. A prompt lost on the way and a pane that was busy look the
+same from outside and are held the same way: a failed submission is not retried, that session is
+picked up again after its next turn, and auto-compaction stays armed underneath. The cooldown is
+the wait between two submissions to a session that did move on, and it does not grow. This is
+what ends the 2026-09-02 pattern of five submissions at one number, four of them refused.
 
-**Replacing a session.** `claude -c` or `-r` reopens a session with the context it had, the
-summary and everything after it, so it costs what the session cost at that point and continues
-the same trajectory. A new session that is handed the newest checkpoint and summary starts a
-few thousand tokens in. When a session has to go (a version upgrade, a window that died, a
-context that drifted), cut over at a committed checkpoint: commit or list the uncommitted work,
-close, open new, and give it the paths of the newest files under `~/.claude/checkpoints/<project>/`
-as its first prompt. `compact-recover.py` only runs after a compaction, so a fresh session gets
-that pointer from you. Nothing in the old transcript is needed after that.
+**Replacing a session.** `claude -c` or `-r` reopens a session with the context it had, so it
+costs what that session cost and continues the same trajectory, while a new session handed the
+newest checkpoint and summary starts a few thousand tokens in. When a session has to go (a
+version upgrade, a window that died, a context that drifted), cut over at a committed
+checkpoint: commit or list the uncommitted work, close, open new, and give it the paths of the
+newest files under `~/.claude/checkpoints/<project>/` as its first prompt. `compact-recover.py`
+only runs after a compaction, so a fresh session gets that pointer from you.
 
 ## 9. What was refuted, and why
 
@@ -395,10 +371,11 @@ that pointer from you. Nothing in the old transcript is needed after that.
 ## 10. Validation status and limits
 
 - Offline: `claude/hooks/tests/test-compaction-hooks.py` (18 tests, the hooks run as
-  subprocesses against a throwaway repository), `scripts/tests/test-compaction-tools.py`
-  (22 tests, synthetic transcripts and a fake Herdr), `scripts/tests/test-guard-read.py`
-  (38 tests, the guard run as a subprocess over both the Read and the shell route) and
-  `scripts/tests/test-launcher-env.ps1` (the launcher's dry run, default and opt-in window).
+  subprocesses against a throwaway repository), `scripts/tests/test-compaction-decide.py` (9,
+  the watcher's decision) with `test-compaction-tools.py` beside it (13, synthetic transcripts
+  and a fake Herdr), `scripts/tests/test-guard-read.py` (38 tests, the guard run as a subprocess
+  over both the Read and the shell route) and `scripts/tests/test-launcher-env.ps1` (the
+  launcher's dry run, default and opt-in window).
 - Live, end to end, on 2026-08-27 with Claude Code 2.1.250 in a throwaway session under
   Herdr: the watcher submitted `/compact` through `herdr agent prompt` at 27 percent of the
   window (53,091 tokens, idle), the pane went `working`, the PreCompact hook wrote a
