@@ -49,6 +49,11 @@ correct way with a concrete example.
   A lane keeps using the Read tool, which is the right tool for a file it is about to edit.
 - The same image and large-file guard runs on both routes, so a shell read of a screenshot or of a
   file over 150 KB is refused with the slice command to use instead.
+- An orchestrator does not invoke artifact skills (commit-message, pr-description, story,
+  evidence-report, adversarial-review, devops-work-item). The lane that writes the artifact invokes
+  the skill it needs. A skill loaded in a pane is restored at every compaction of that pane, whole,
+  for as long as the session lives: six of them measured at 8704 tokens restored per compaction, on
+  a pane that had already delegated the writing.
 
 ## Deploy and status honesty
 Never say a change is "in", "live", or "in place" unless it is merged, passed the project's QA and

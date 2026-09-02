@@ -123,6 +123,14 @@ The floor is paid on every turn of every cycle, so it is a first-order lever, bu
 you own is a few thousand tokens. Trimming a memory index from 3k to 2k is worth doing once;
 it is not where the day goes.
 
+Skills are the other habit that shows up in that table. Every skill a pane has loaded is
+restored in full at each compaction of that pane and stays restored for the life of the
+session: six artifact skills measured at 8704 tokens per compaction (commit-message 1980,
+pr-description 1965, adversarial-review 1438, evidence-report 1169, story 956,
+devops-work-item 900), on a pane that had already delegated the writing to lanes. So an
+orchestrator does not invoke artifact skills at all; the lane that writes the artifact invokes
+the one it needs, pays for it inside its own window, and ends.
+
 The exception is the re-injected files, which is the one line of that table a habit can move.
 A file opened with the Read tool is re-injected after the compaction, so it is paid for again
 on every cycle for as long as the work lasts: measured over five consecutive compactions, 6087
