@@ -193,6 +193,16 @@ $pairs += Get-KitPairs (Join-Path $root 'claude\skills') (Join-Path $kitHome 'sk
 $pairs += Get-KitPairs (Join-Path $root 'claude\hooks')  (Join-Path $kitHome 'hooks')
 $pairs += Get-KitPairs (Join-Path $root 'claude\tools')  (Join-Path $kitHome 'tools')
 $pairs += Get-KitPairs (Join-Path $root 'claude\agents') (Join-Path $kitHome 'agents')
+# The skills that ship as a plugin land here too, under their bare names, so an installer machine
+# sees no difference. A machine takes them through the installer or through the marketplace, never
+# both at once (README, "Plugin marketplace" in INSTALL.md). Read from the folder, so adding a
+# plugin needs no edit here.
+$pluginRoot = Join-Path $root 'plugins'
+if (Test-Path -LiteralPath $pluginRoot) {
+    foreach ($plugin in (Get-ChildItem -LiteralPath $pluginRoot -Directory)) {
+        $pairs += Get-KitPairs (Join-Path $plugin.FullName 'skills') (Join-Path $kitHome 'skills')
+    }
+}
 # The account switcher and its settings merger are optional: nothing else depends on them, they
 # sit unused until the cc function is wired up (see docs/ACCOUNTS.md).
 foreach ($file in @('statusline.ps1', 'claude-account.ps1', 'merge-settings.py', 'CLAUDE.md')) {

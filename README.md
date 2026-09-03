@@ -23,8 +23,9 @@ claude/                     -> installs into ~/.claude
   statusline.ps1            model / effort / account / folder / git / context / quota status line
   claude-account.ps1        optional: switch between several Claude Code accounts (see docs/ACCOUNTS.md)
   merge-settings.py         helper the switcher uses to merge settings.json without dropping keys
-  skills/                   20 skills (story + sdd pipelines, TDD, quality gates, evidence,
-                            adversarial review, wave orchestration, herdr driving, ...)
+  skills/                   15 skills (TDD, quality gates, evidence, adversarial review, commit
+                            and PR text, investigation, delegation, handover, ...); the other
+                            five ship as plugins, see plugins/ below
   hooks/                    worklog, branch helpers, markitdown, read guard, big-result alarm, landings,
                             session audit, compaction checkpoint + summary persistence + recovery
   agents/                   five agent definitions on Opus with their skills preloaded (analyst,
@@ -40,6 +41,13 @@ project-template/           -> copy into each project
   profiles/                 examples: azure-devops-dotnet, jira-git, plain-git, personal-notes
   .claude/settings.local.json   project hook wiring (branch hooks)
   docs/                     spec structure for spec-driven projects (for /sdd)
+.claude-plugin/             marketplace manifest: the plugins this repository publishes
+plugins/                    the five skills that only make sense as a set, packaged for
+                            `claude plugin`. Same files, second channel: a machine takes them
+                            through the installer or through the marketplace, never both
+  delivery/                 story, sdd, work-item: one task from the tracker to the evidence pack
+  orchestration/            wave-orchestration, herdr-driving: several agents at once, and the
+                            panes that host them
 herdr/                      Herdr multiplexer config, the Ctrl+Alt+N global hotkey, the verified
                             version and the CLI surface the kit drives
 scripts/                    zero-token tooling: usage ledger and board, compaction watcher and report,
@@ -87,6 +95,18 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Permissions ask
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Project C:\Repo\my-app
 # then copy the closest project-template\profiles\*.md over my-app\CLAUDE.project.md and fill it
 ```
+On a machine that does not run the installer, the two skill sets come from the marketplace instead:
+```
+claude plugin marketplace add <owner>/<repo>
+claude plugin install delivery@claude-base
+claude plugin install orchestration@claude-base
+```
+One channel per machine, never both. From the marketplace the five skills arrive namespaced
+(`/delivery:story`, `/delivery:sdd`, `/orchestration:wave-orchestration`); from the installer they
+land under their bare names (`/story`, `/sdd`, ...) exactly as before. A machine that took both
+would carry two copies of each, free to drift apart. Everything else, the agents, the hooks and the
+status line, has one channel only: the installer.
+
 See `INSTALL.md` for a full setup, including another machine, Herdr, and the hotkey. Installing into
 a repository that already has company rules, git hooks or lint wiring is covered on its own in
 `docs/ADOPTION.md`: the kit never overwrites or deletes what it did not write, it backs up before

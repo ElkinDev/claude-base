@@ -14,7 +14,9 @@ reproduced on another machine.
   `python scripts/doctor.py`.
 
 How to drive a pane from a session (naming, prompting, waiting, trust dialogs, slash commands): see
-the `herdr-driving` skill in `claude/skills/herdr-driving/`.
+the `herdr-driving` skill in `plugins/orchestration/skills/herdr-driving/`. It reaches a machine
+either through the installer, under its bare name, or from the marketplace as
+`/orchestration:herdr-driving`.
 
 ## Install on a new machine
 1. Install Herdr (Windows preview build). After install, `herdr.exe` lives under

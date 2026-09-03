@@ -90,6 +90,25 @@ See `herdr/README.md`. In short:
 4. Run `herdr/hotkey/setup-hotkey.ps1`.
 5. Review the defaults in `settings.json` (permission mode, model, effort) and adjust.
 
+## Plugin marketplace
+The five skills that only make sense as a set are also published as two plugins, for a machine that
+would rather take them from Claude Code's own plugin channel than run the installer:
+```
+claude plugin marketplace add <owner>/<repo>
+claude plugin install delivery@claude-base
+claude plugin install orchestration@claude-base
+```
+`delivery` carries story, sdd and work-item; `orchestration` carries wave-orchestration and
+herdr-driving. Installed this way they are namespaced, so you invoke `/delivery:story`,
+`/delivery:sdd`, `/delivery:work-item`, `/orchestration:wave-orchestration` and
+`/orchestration:herdr-driving`. Installer users keep the bare names, `/story` and the rest, which is
+what the rest of this file and `project-template\CLAUDE.md` write.
+
+One channel per machine. The installer copies those same five skills into the kit home under their
+bare names, so a machine that did both would carry two copies of each and they would drift. Pick the
+installer or the marketplace, and note that everything else the kit ships, the agents, the hooks, the
+status line and the settings, comes through the installer only.
+
 ## Guard before you push
 This repo carries a guard that blocks a push carrying a personal home path, a real email address, a
 tracker org URL, a credential shape, or a private name from your local denylist. Install it once per

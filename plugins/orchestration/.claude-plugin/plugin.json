@@ -1,0 +1,8 @@
+{
+  "name": "orchestration",
+  "description": "Running several agents at once: wave-orchestration is the law sheet for dispatch, lane conduct, gates under one build mutex and union merges, and herdr-driving is how a session drives the panes.",
+  "version": "0.1.0",
+  "author": {
+    "name": "claude-base"
+  }
+}

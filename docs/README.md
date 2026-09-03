@@ -21,7 +21,7 @@ This repo dogfoods its own spec-driven workflow. The folders below are the sourc
 - `00-product/`: vision, scope, and the domain model.
 - `01-requirements/`: functional requirements (FR-xxx), non-functional requirements (NFR-xxx), and user stories (US-xxx).
 - `02-architecture/`: architecture overview, data contracts, security and privacy, and the ADRs (numbered decisions).
-- `03-features/`: one spec per feature (F01 to F14), each mapping the FR/US it satisfies and carrying its own status line. F14 (quota wake) is implemented in the tree and stays a proposal until it is reviewed and merged.
+- `03-features/`: one spec per feature (F01 to F15), each mapping the FR/US it satisfies and carrying its own status line. F14 (quota wake) and F15 (plugin marketplace, the second channel the skill sets reach a machine through) are implemented in the tree and stay proposals until they are reviewed and merged.
 - `04-plan/`: roadmap, backlog, and `sprints/` with one file per sprint carrying its scope and definition of done.
 
 There is no `05-design/` folder because the toolkit has no UI.

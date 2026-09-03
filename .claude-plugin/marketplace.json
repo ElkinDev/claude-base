@@ -1,0 +1,19 @@
+{
+  "name": "claude-base",
+  "owner": {
+    "name": "claude-base"
+  },
+  "description": "The skill sets of the claude-base kit that only make sense whole: the delivery pipeline, and running several agents at once.",
+  "plugins": [
+    {
+      "name": "delivery",
+      "source": "./plugins/delivery",
+      "description": "The delivery pipeline as one set: a work item read from the tracker onto a branch, a story driven through plan, TDD, gates and evidence, and a spec-driven build for whole features."
+    },
+    {
+      "name": "orchestration",
+      "source": "./plugins/orchestration",
+      "description": "Running several agents at once: the law sheet for waves of implementers under one build mutex, and how to drive the Herdr panes that host them."
+    }
+  ]
+}

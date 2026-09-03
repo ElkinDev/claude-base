@@ -1,0 +1,8 @@
+{
+  "name": "delivery",
+  "description": "The delivery pipeline as one set: work-item reads the tracker and aligns the branch, story drives one task through plan, TDD, gates and evidence, and sdd builds strictly from a docs/ spec tree.",
+  "version": "0.1.0",
+  "author": {
+    "name": "claude-base"
+  }
+}

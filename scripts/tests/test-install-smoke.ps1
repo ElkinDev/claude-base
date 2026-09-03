@@ -34,6 +34,11 @@ try {
     Assert-True ($manifest.installed -match '^\d{4}-\d{2}-\d{2}T') 'the manifest carries an iso stamp'
     Assert-True ($managed.Count -gt 20) ('the manifest records every file, ' + $managed.Count + ' of them')
     Assert-True (Test-Path -LiteralPath $skill) 'the skills landed'
+    # The plugin skills reach an installer machine under their bare names, as before the move.
+    Assert-True (Test-Path -LiteralPath (Join-Path $kitHome 'skills\story\SKILL.md')) `
+        'a delivery plugin skill landed under its bare name'
+    Assert-True (Test-Path -LiteralPath (Join-Path $kitHome 'skills\wave-orchestration\SKILL.md')) `
+        'an orchestration plugin skill landed under its bare name'
     Assert-True (Test-Path -LiteralPath (Join-Path $kitHome 'settings.json')) 'settings.json landed'
     # The first three bytes, not Get-Content -Raw: the reader strips a BOM while decoding, so a
     # manifest that carried one would still read clean and the assertion could never fail.
