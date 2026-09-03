@@ -47,7 +47,7 @@ check what a project resolves to with `python scripts\evidence-path.py --print-s
 
 For a spec-driven project (a new build governed by a `docs/` spec structure), add `-Sdd` to also
 copy the kit's agent definitions into `.claude/agents/` and scaffold the `docs/` spec structure,
-then drive it with `/sdd`:
+then drive it with `/sdd` (`/delivery:sdd` from the marketplace):
 ```
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Project C:\Repo\my-app -Sdd
 ```
@@ -213,7 +213,8 @@ After every Herdr update run `python scripts\doctor.py`. A `warn herdr` line mea
 version differs from the one the kit was verified against; a `FAIL herdr <subcommand>` means that
 subcommand is gone or renamed. For each FAIL, read the new `herdr <subcommand> --help`, fix the code
 that drives it, then update `herdr\cli-surface.txt` and `herdr\verified-version.txt` in the same
-commit as the fix. The `herdr-driving` skill holds the verified behaviour of each call.
+commit as the fix. The `herdr-driving` skill (`/orchestration:herdr-driving` from the marketplace)
+holds the verified behaviour of each call.
 
 ## What the installer does not touch
 

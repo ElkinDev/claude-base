@@ -212,7 +212,8 @@ def hints(items):
     if any(item["status"] == "FAIL" and item["name"].startswith("herdr ") for item in items):
         out.append("A moved Herdr subcommand: re-verify the code that drives it, then update "
                    "herdr/cli-surface.txt and herdr/verified-version.txt in the same commit "
-                   "(see the herdr-driving skill).")
+                   "(see the herdr-driving skill, /orchestration:herdr-driving from the "
+                   "marketplace).")
     return out
 
 

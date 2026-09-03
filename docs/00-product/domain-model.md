@@ -11,7 +11,7 @@
 - Rule set: the always-on instructions. User-scope rules live in the engine; project-scope rules live in the project kit with AGENTS.md as the cross-agent canonical file.
 - Skill: a folder with `SKILL.md` (and optional assets) implementing one capability or workflow step, invocable by name.
 - Hook: an event-bound script (session start, stop, pre-compact, pre/post tool use) with one behavior contract and one implementation that runs on all three OSes.
-- Workflow: a composed delivery pipeline (`/story`, `/sdd`) orchestrating skills with STOP gates.
+- Workflow: a composed delivery pipeline (`/story` and `/sdd`, or `/delivery:story` and `/delivery:sdd` from the marketplace) orchestrating skills with STOP gates.
 - Worklog: the cross-session, per-repo, per-task state under the user's home, written by hooks and the worklog skill, so any session catches up cheaply.
 - Evidence pack: the per-story folder of proof (evidence.md, session.md, pr-comment.md, `01_testings/`, `02_PicturesPDF/`) produced near commit/PR time, with an optional Playwright recording harness.
 - Install manifest: the declarative file listing install operations (copy, render, register) with OS filters, consumed by both installers so their logic cannot drift.

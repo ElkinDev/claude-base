@@ -176,7 +176,7 @@ if ($Project) {
     Write-Output ""
     Write-Output "Project scaffolded at $proj."
     Write-Output "Next: copy the closest project-template\profiles\*.md over CLAUDE.project.md and fill it."
-    if ($Sdd) { Write-Output "SDD scaffolding added: .claude/agents/ + docs/. Drive it with /sdd." }
+    if ($Sdd) { Write-Output "SDD scaffolding added: .claude/agents/ + docs/. Drive it with /sdd, or /delivery:sdd from the marketplace." }
     if (-not $LocalOnly) {
         Write-Output "Keep it out of the team's history: re-run with -LocalOnly to add exactly the files"
         Write-Output "this run wrote to the repository's exclude file. Recommended for a repository you share."

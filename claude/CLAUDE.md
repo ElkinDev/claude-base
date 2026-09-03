@@ -5,6 +5,12 @@ stack, tracker, evidence) live in each project's `CLAUDE.md` / `CLAUDE.project.m
 where they are more specific. The full portable rule set and the per-project template live in the
 claude-base repo.
 
+Skill names in this file are written bare, which is the form `install.ps1` leaves on a machine. A
+machine that took the kit through the plugin marketplace gets the same five skills namespaced, and
+invokes them as `/delivery:story`, `/delivery:sdd`, `/delivery:work-item`,
+`/orchestration:wave-orchestration` and `/orchestration:herdr-driving`. Read a bare name here as
+the installer form, and add the plugin prefix when the machine took the marketplace route.
+
 ## Language and voice
 - Language by audience. Spanish (or whatever language the owner writes in) is used ONLY in text
   addressed to the owner: the chat reply, the status block, a question. Every exchange between

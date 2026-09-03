@@ -8,7 +8,7 @@ Install the discipline into Codex CLI (OpenAI GPT models): user-scope rules into
 
 ## Behavior
 
-- Mapping spec `adapters/codex/mapping.md` states, before implementation, the exact destinations verified against the installed Codex version at implementation time: rules to `~/.codex/AGENTS.md` (marked sections, merge-preserving), skills copied where Codex resolves SKILL.md folders, workflows (`story`, `sdd`, `explore-and-plan`, `tdd`, `quality-gates`, `definition-of-done`, `evidence-report`) exposed as prompt files so `/story`-equivalent invocations exist.
+- Mapping spec `adapters/codex/mapping.md` states, before implementation, the exact destinations verified against the installed Codex version at implementation time: rules to `~/.codex/AGENTS.md` (marked sections, merge-preserving), skills copied where Codex resolves SKILL.md folders, workflows (`story` and `sdd`, `/delivery:story` and `/delivery:sdd` from the marketplace, plus `explore-and-plan`, `tdd`, `quality-gates`, `definition-of-done`, `evidence-report`) exposed as prompt files so `/story`-equivalent invocations exist.
 - Skill compatibility pass: each shipped skill is tagged in its frontmatter as portable or Claude-only (skills referencing Claude hooks, subagent tooling, or settings are Claude-only). The adapter installs only portable ones; the matrix lists the rest as gaps with workarounds (FR-022).
 - Project scope needs nothing: Codex reads the project AGENTS.md natively (F03).
 - Documented gaps expected: hooks (no equivalent event system; the worklog becomes manual via the worklog skill), statusline, permission overlay. Optional note: per-phase model profiles are a Codex-native feature the user may configure; the adapter documents it, does not manage it.

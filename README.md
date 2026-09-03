@@ -43,7 +43,7 @@ project-template/           -> copy into each project
   CLAUDE.project.md         the active profile to fill per project
   profiles/                 examples: azure-devops-dotnet, jira-git, plain-git, personal-notes
   .claude/settings.local.json   project hook wiring (branch hooks)
-  docs/                     spec structure for spec-driven projects (for /sdd)
+  docs/                     spec structure for spec-driven projects (for /sdd, /delivery:sdd from the marketplace)
 .claude-plugin/             marketplace manifest: the plugins this repository publishes
 plugins/                    the five skills that only make sense as a set, packaged for
                             `claude plugin`. Same files, second channel: a machine takes them
@@ -153,9 +153,9 @@ an account out.
 
 ## The pipeline
 One entry point drives a task end to end, keeping a STOP gate at each step:
-`/story <id>` -> work-item (branch + evidence) -> explore-and-plan -> tdd-workflow -> quality-gates
--> e2e + automation -> definition-of-done -> evidence-report. Trigger any sub-skill directly for a
-partial run.
+`/story <id>` (`/delivery:story` from the marketplace) -> work-item (branch + evidence, `/delivery:work-item`) ->
+explore-and-plan -> tdd-workflow -> quality-gates -> e2e + automation -> definition-of-done ->
+evidence-report. Trigger any sub-skill directly for a partial run.
 
 ## Notes on the defaults
 The base ships opinionated personal defaults you should review before adopting:

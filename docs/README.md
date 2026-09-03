@@ -16,7 +16,7 @@ This folder holds two kinds of documents.
 
 ## Spec tree (development of this repo itself)
 
-This repo dogfoods its own spec-driven workflow. The folders below are the source of truth for building the toolkit, consumed by the `/sdd` skill.
+This repo dogfoods its own spec-driven workflow. The folders below are the source of truth for building the toolkit, consumed by the `/sdd` skill (`/delivery:sdd` from the marketplace).
 
 - `00-product/`: vision, scope, and the domain model.
 - `01-requirements/`: functional requirements (FR-xxx), non-functional requirements (NFR-xxx), and user stories (US-xxx).

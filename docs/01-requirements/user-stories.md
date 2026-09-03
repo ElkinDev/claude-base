@@ -22,7 +22,7 @@ As a macOS or Linux developer, I install the same engine with one command, so th
 As a developer starting a project, I scaffold the project kit and pick a profile, so the project carries its own rules and wiring.
 
 - One command copies the template; profiles are selectable; `--sdd` adds the spec tree and the agents.
-- After filling the profile, the `/story` pipeline runs end to end without any edit to skills.
+- After filling the profile, the `/story` pipeline (`/delivery:story` from the marketplace) runs end to end without any edit to skills.
 - The scaffold is committable; a teammate cloning the repo gets the same behavior with zero setup beyond the engine.
 
 ## US-004 One source of truth across agents

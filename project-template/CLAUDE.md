@@ -5,6 +5,12 @@ paths, integration branch, git discipline, evidence root, local environment) liv
 `CLAUDE.project.md`, not here. Each rule states its intent; follow it only where that intent
 applies. A rule without its reason breaks on the first edge case.
 
+Skill names in this file are written bare, which is the form `install.ps1` leaves on a machine. A
+machine that took the kit through the plugin marketplace gets the same five skills namespaced, and
+invokes them as `/delivery:story`, `/delivery:sdd`, `/delivery:work-item`,
+`/orchestration:wave-orchestration` and `/orchestration:herdr-driving`. Read a bare name here as
+the installer form, and add the plugin prefix when the machine took the marketplace route.
+
 ## Language and voice
 - Language by audience. Spanish (or whatever language the owner writes in) is used ONLY in text
   addressed to the owner: the chat reply, the status block, a question. Every exchange between

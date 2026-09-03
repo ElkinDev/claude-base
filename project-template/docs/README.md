@@ -1,9 +1,9 @@
 # docs/ - the spec structure (spec-driven development)
 
-This is the source of truth for a spec-driven project. The `/sdd` orchestrator and the
-implementer/designer agents read these files before writing anything. Fill each one for your project,
-keep it in the repo, and version it. This README documents the layout so it is self-contained on any
-machine, with no dependency on any other project.
+This is the source of truth for a spec-driven project. The `/sdd` orchestrator (`/delivery:sdd` from
+the marketplace) and the implementer/designer agents read these files before writing anything. Fill
+each one for your project, keep it in the repo, and version it. This README documents the layout so
+it is self-contained on any machine, with no dependency on any other project.
 
 ## Layout
 - `00-product/`
@@ -30,8 +30,8 @@ machine, with no dependency on any other project.
   - `02-screen-inventory.md` the screens and their states
 
 ## How it is used
-`/sdd` reads `04-plan` (roadmap + the active sprint), then the feature spec in `03-features`, then the
-ADRs in `02-architecture`, establishes the acceptance criteria and the sprint definition of done,
-implements strictly to them through the implementer/designer agents, and validates each deliverable
-against the spec and the DoD before committing. If a section does not apply to your project, say so in
-that file rather than deleting the structure.
+`/sdd` (`/delivery:sdd` from the marketplace) reads `04-plan` (roadmap + the active sprint), then the
+feature spec in `03-features`, then the ADRs in `02-architecture`, establishes the acceptance criteria
+and the sprint definition of done, implements strictly to them through the implementer/designer
+agents, and validates each deliverable against the spec and the DoD before committing. If a section
+does not apply to your project, say so in that file rather than deleting the structure.
