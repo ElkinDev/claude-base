@@ -11,6 +11,11 @@ import json
 import os
 import re
 import subprocess
+
+# A parent without a console (pythonw, a logon task) would let every herdr child open its own
+# console window for the length of the call: a black flash every poll. This flag keeps the
+# child windowless; its output is captured either way. Zero off Windows.
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 from datetime import datetime
 
 # where a session's name can come from, most deliberate first: the name given with
@@ -40,7 +45,7 @@ def rotate_and_append(log_file, line, limit=1024 * 1024):
 def herdr_agents(herdr):
     """Claude agents Herdr knows: [{pane, session, status, seq, cwd, title}]. Empty list on any failure."""
     try:
-        proc = subprocess.run([herdr, "agent", "list"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
+        proc = subprocess.run([herdr, "agent", "list"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15, creationflags=NO_WINDOW)
         payload = json.loads(proc.stdout or "{}")
     except Exception as error:
         return None, f"herdr agent list failed: {error}"
@@ -74,7 +79,7 @@ def tab_labels(herdr):
     numbers and are ignored. The launcher creates tabs as `cc-<account>-<role>`, so the role
     is on the tab whenever a session was opened with -Tab. Empty dict on any failure."""
     try:
-        proc = subprocess.run([herdr, "tab", "list"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
+        proc = subprocess.run([herdr, "tab", "list"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15, creationflags=NO_WINDOW)
         payload = json.loads(proc.stdout or "{}")
     except Exception:
         return {}
@@ -132,7 +137,7 @@ def describe_selectors(args):
 
 
 def submit(herdr, pane, prompt):
-    proc = subprocess.run([herdr, "agent", "prompt", pane, prompt], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+    proc = subprocess.run([herdr, "agent", "prompt", pane, prompt], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, creationflags=NO_WINDOW)
     detail = (proc.stdout or proc.stderr or "").strip().replace("\n", " ")
     return proc.returncode == 0, detail[:300]
 
