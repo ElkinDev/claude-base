@@ -1,6 +1,7 @@
 ---
 name: designer
 description: Produces UI and design deliverables (mockups, component specs) strictly from the design brief and feature specs. Reads the specs first, stops on ambiguity, and commits only on its own branch.
+model: opus
 effort: xhigh
 maxTurns: 100
 ---

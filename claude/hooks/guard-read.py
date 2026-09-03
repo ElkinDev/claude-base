@@ -13,12 +13,12 @@ Two rules, and nothing else is ever denied:
    Images and PDFs are exempt from this rule: they are read as pixels and pages, a slice of
    them means nothing, and a device screenshot is over 150 KB every time.
 
-The same two rules run on a shell command, because the Read tool is not the only way a file
-reaches the window: `cat`, `sed`, `head`, `tail`, `type` and `Get-Content` put the same bytes
-there. An orchestrator has a reason to prefer them, since a harness re-injects every file read
-with the Read tool at each compaction and a shell read is paid for once, so the guard has to
-follow it there or it stops guarding anything. Which files a command line prints, and whether it
-prints them whole, is read by shell_read.py beside this file.
+The same two rules run on a shell command, because the Read tool is not the only way a file reaches
+the window: `cat`, `sed`, `head`, `tail`, `type` and `Get-Content` put the same bytes there. An
+orchestrator has a reason to prefer them, since a harness re-attaches the files most recently
+touched with the Read tool at each compaction (five, each under about 12 KB) and a shell read is
+paid for once, so the guard has to follow it there or it stops guarding anything. Which files a
+command line prints, and whether it prints them whole, is read by shell_read.py beside this file.
 
 Any internal failure exits 0 without output, so the hook can never block a call.
 """

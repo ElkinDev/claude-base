@@ -149,7 +149,7 @@ function Herdr-Workspace-Args {
 }
 
 # Folders shared with the default directory. Missing ones are skipped.
-$Linked = @("skills", "plugins", "hooks", "agents", "commands", "projects")
+$Linked = @("skills", "plugins", "hooks", "tools", "agents", "commands", "projects")
 # Files brought over from the default directory.
 $Copied = @("CLAUDE.md", "settings.json")
 

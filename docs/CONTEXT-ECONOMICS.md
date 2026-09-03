@@ -61,9 +61,9 @@ Measured on the orchestration session (seven compactions in one day):
 
 - Trigger at 156k to 167k tokens (78 to 83 percent of the 200k window).
 - Floor right after: 56k to 77k (28 to 38 percent), climbing 10k to 15k in the first turns and
-  83k to 130k by turn twelve, because the harness re-injects the files that were recently read
-  ("Called the Read tool with the following input", not configurable) and the recovery hook asks
-  for re-reads.
+  83k to 130k by turn twelve, because the harness re-attaches the five files most recently touched
+  with the Read, Write or Edit tools when each is under about 12 KB ("Called the Read tool with the
+  following input", not configurable) and the recovery hook asks for re-reads.
 - Dropped per compaction: 80k to 110k tokens. Summary: 14k to 23k characters.
 - Overhead of one compaction, weighted: about 130k (the old context read once at 0.1, the
   summary written at 5, the floor re-cached at 1.25). That is six ordinary turns.
@@ -146,13 +146,17 @@ evidence-report 1169, story 956, devops-work-item 900), on a pane that had deleg
 to lanes. So an orchestrator does not invoke artifact skills at all; the lane that writes the
 artifact invokes the one it needs, pays for it inside its own window, and ends.
 
-The re-injected files are the one line of that table a habit can move. A file opened with the
-Read tool comes back after every compaction, so it is paid for again on every cycle for as long
-as the work lasts: measured over five consecutive compactions, 6087 to 9237 tokens per compaction
-on one project and 4946 on another, all of it briefs and reports already summarised. The same
-bytes read with `sed -n` or `cat` arrive as tool output, which the summary replaces instead of
-carrying. So an orchestrator, which reads a lot and edits almost nothing, reads with the shell;
-a lane, which opens a file to change it, keeps the Read tool. `claude/hooks/guard-read.py` is
+The re-attached files are the one line of that table a habit can move. After every compaction the
+harness re-attaches the five files most recently touched with the Read, Write or Edit tools, whole,
+when each is under about 12 KB (the largest seen attached was 11,755 characters; a 13,278-byte file
+came back as a path reference). Over one day of the orchestration session that was 8.2k tokens per
+cycle, and all of it was the throwaway scripts the pane had just written to record a round, 4 to
+9 KB each; the briefs and reports are larger and come back as references. The same bytes read with
+`sed -n` or `cat` arrive as tool output, which the summary replaces instead of carrying. So an
+orchestrator, which reads a lot and edits almost nothing, reads with the shell, records with
+`tools/record.py` (payload on stdin, nothing written through the Write tool), and uses the Read
+tool only on a file over 12 KB or as the one-line read that lets Edit work on it; a lane, which
+opens a file to change it, keeps the Read tool. `claude/hooks/guard-read.py` is
 wired to both routes for that reason: with the `Read` matcher alone, moving the reads to the
 shell would move them past the image and large-file guard too. Which files a command prints, and
 whether a pipe, a redirect or a substitution keeps those bytes out of the window, is parsed in
@@ -346,6 +350,8 @@ after a compaction, so a fresh session gets that pointer from you.
   Herdr), `scripts/tests/test-guard-read.py` (38, the guard as a subprocess over both the Read
   and the shell route) and `scripts/tests/test-launcher-env.ps1` (the launcher's dry run,
   default and opt-in window).
+- Offline: `claude/tools/tests/run-tests.py` (the record CLI as a subprocess over temporary files:
+  line endings, BOM, idempotence, anchors, all-or-nothing rounds, config resolution).
 - Live, end to end, on 2026-08-27 with Claude Code 2.1.250 in a throwaway session under Herdr:
   the watcher submitted `/compact` through `herdr agent prompt` at 27 percent of the window
   (53,091 tokens, idle), the pane went `working`, the PreCompact hook wrote a 1,483-byte

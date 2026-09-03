@@ -1,0 +1,7 @@
+{
+  "targets": {
+    "landings": "board/landings.md",
+    "decisions": "docs/decisions.md",
+    "plan": "~/.claude/plan-log.md"
+  }
+}

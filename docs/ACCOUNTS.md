@@ -29,7 +29,7 @@ Isolate only what must be isolated:
 |---|---|---|
 | `.credentials.json` | yes | the OAuth token, this is the account |
 | `.claude.json` | yes | account identity, per-project trust, MCP config, caches |
-| `skills/`, `plugins/`, `hooks/`, `agents/`, `commands/` | shared | you want the same tooling on every account |
+| `skills/`, `plugins/`, `hooks/`, `agents/`, `tools/`, `commands/` | shared | you want the same tooling on every account |
 | `projects/` | shared | session transcripts and agent memory |
 
 Sharing `projects/` is the one worth thinking about. It means every account sees the same session history, so `claude -r` from any account lists sessions started under another one. For one human with several accounts that is what you want. If you are sharing a machine, it is not.
@@ -138,6 +138,8 @@ The dangerous pattern is `try { $c = ... | ConvertFrom-Json } catch { $c = @{} }
 **Do not write JSON with `Set-Content -Encoding utf8`.** PowerShell 5.1 adds a BOM and Node's `JSON.parse` rejects a leading BOM. Use `[System.IO.File]::WriteAllText($path, $json, (New-Object System.Text.UTF8Encoding($false)))`, or do the writing in Python.
 
 **Watch out for `$Profile`.** It is an automatic PowerShell variable holding the path to the shell profile. Using it as a local name for something else breaks things in confusing ways.
+
+**A restored pane runs without the role or the cap.** Herdr restores a pane after a restart with the bare command it last saw, `claude -r`, and a session opened that way has none of the variables the switcher sets: no role for the hooks, no cap, no window, and no config directory, so it also runs on the default account. Nothing warns you. The status line is the only symptom, and only once the context has grown past the cap. `scripts/read-proc-env.ps1 -ProcessId <pid>` prints the five variables of a running session process, read from its environment block, and `(unset)` on all of them means the pane was not opened through `cc`. The fix is to close that session once no agent is in flight and reopen it through the switcher with the same resume flag.
 
 ## Changing which account is the default
 

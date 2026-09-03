@@ -23,21 +23,20 @@ claude/                     -> installs into ~/.claude
   statusline.ps1            model / effort / account / folder / git / context / quota status line
   claude-account.ps1        optional: switch between several Claude Code accounts (see docs/ACCOUNTS.md)
   merge-settings.py         helper the switcher uses to merge settings.json without dropping keys
-  skills/                   19 skills (story + sdd pipelines, TDD, quality gates, evidence,
-                            wave orchestration, herdr driving, ...)
+  skills/                   20 skills (story + sdd pipelines, TDD, quality gates, evidence,
+                            adversarial review, wave orchestration, herdr driving, ...)
   hooks/                    worklog, branch helpers, markitdown, read guard, big-result alarm, landings,
                             session audit, compaction checkpoint + summary persistence + recovery
+  agents/                   five agent definitions on Opus with their skills preloaded (analyst,
+                            designer, implementer, implementer-light, reviewer); -Sdd copies them
+                            into a project as well
+  tools/                    record.py: append, amend or swap a record in any file from a payload on
+                            stdin, line ending and BOM kept, one call per round instead of a script
 project-template/           -> copy into each project
   CLAUDE.md                 portable working rules (voice, persona, git, TDD, evidence, pipeline)
   CLAUDE.project.md         the active profile to fill per project
   profiles/                 examples: azure-devops-dotnet, jira-git, plain-git, personal-notes
   .claude/settings.local.json   project hook wiring (branch hooks)
-  .claude/agents/           five agent templates for /sdd; the installer copies the folder whole
-    analyst.md              decision-shaping analysis with file:line citations, read-only toward the repo
-    designer.md             UI and design deliverables from the design brief and the feature specs
-    implementer.md          implements a feature or sprint slice strictly from the written specs
-    implementer-light.md    the same at lower effort, for mechanical slices (tests, strings, docs, renames)
-    reviewer.md             adversarial review of a branch diff before merge; a disposition, never a fix
   docs/                     spec structure for spec-driven projects (for /sdd)
 herdr/                      Herdr multiplexer config, the Ctrl+Alt+N global hotkey, the verified
                             version and the CLI surface the kit drives

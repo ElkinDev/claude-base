@@ -99,20 +99,35 @@ show the correct way with a concrete example.
   actually run and verified, gates green, and the evidence pack present.
 
 ## Context economy (orchestrator)
-- An orchestrator opens briefs, lane reports and decision scripts with the shell (`sed -n`, `cat`,
-  `grep -n`), never with the Read tool. A file read with the Read tool is re-injected into the
-  window at every compaction, so one read is paid for again on every cycle: measured at 6087 to
-  9237 tokens per compaction on one project and 4946 on another. A shell read is paid for once.
-  A lane keeps using the Read tool, which is the right tool for a file it is about to edit.
+- After every compaction the harness re-attaches the five files most recently touched with the Read,
+  Write or Edit tools, whole, when each is under about 12 KB; a larger file comes back as a path
+  reference only. Measured over one day: the re-attached files were the throwaway scripts the pane
+  had just written (4 to 9 KB each, 8.2k tokens per cycle), never the briefs and reports over
+  12 KB. So an orchestrator opens briefs, lane reports and evidence with the shell (`sed -n`, `cat`,
+  `grep -n`); the Read tool is allowed on a file over 12 KB, which is not re-attached, and as the
+  one-line read (`limit: 1`) that lets Edit work on the whole file. A lane keeps using the Read
+  tool, which is the right tool for a file it is about to edit.
 - The same guard runs on both routes. A file over 150 KB is refused unless the read already asks
   for 400 lines or fewer, and that refusal names the slice commands to use instead. A screenshot is
   refused to this pane with no slice offered, because a slice of an image means nothing: delegate
   the look to a lane or a fork and ask for a written description.
-- An orchestrator does not invoke artifact skills (commit-message, pr-description, story,
-  evidence-report, adversarial-review, devops-work-item). The lane that writes the artifact invokes
-  the skill it needs. A skill loaded in a pane is restored at every compaction of that pane, whole,
-  for as long as the session lives: six of them measured at 8704 tokens restored per compaction, on
-  a pane that had already delegated the writing.
+- Records are written with the kit's record tool, never with a throwaway script:
+  `python ~/.claude/tools/record.py add|amend|swap|round <target>` with the payload on stdin as a
+  quoted heredoc, or `$HOME/.claude/tools/record.py` from PowerShell, where `~` stays literal. It
+  keeps the file's line ending and BOM, refuses an em-dash, refuses a record already present, and
+  a `round` writes every target or none. Named targets come from a
+  `record.json` in the working directory or an ancestor (template: `tools/record.example.json`).
+  In a heredoc longer than a couple of KB keep single quotes balanced or absent, typographic
+  apostrophes in prose: the shell tool fails such a heredoc before running it.
+- A long-lived orchestrating pane invokes no skill it can delegate. The lane that writes an artifact
+  invokes the skill it needs (commit-message, pr-description, story, evidence-report,
+  adversarial-review, work-item), and the implementer and reviewer agents preload theirs from their
+  definitions. The two pipeline entry points are the exception: `/story` and `/sdd` are the chain of
+  the session that runs them, invoked once at the start, and that session pays their restore at each
+  of its compactions, which is a reason to keep it short-lived. A skill loaded in a pane is restored
+  at every compaction of that pane, whole, for as long as the session lives: six of them measured at
+  8704 tokens restored per compaction, on a pane that had already delegated the writing. A Herdr
+  command is read from the herdr-driving sheet with `sed -n`, never by invoking it.
 
 ## Evidence
 Keep a structured evidence pack per task (evidence-report): evidence.md, session.md, pr-comment.md.

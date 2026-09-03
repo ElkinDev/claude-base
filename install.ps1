@@ -159,7 +159,7 @@ if ($Project) {
         $pairs += New-KitPair (Join-Path $root "claude\hooks\$hook") (Join-Path $projClaude "hooks\$hook")
     }
     if ($Sdd) {
-        $pairs += Get-KitPairs (Join-Path $tpl '.claude\agents') (Join-Path $projClaude 'agents')
+        $pairs += Get-KitPairs (Join-Path $root 'claude\agents') (Join-Path $projClaude 'agents')
         $pairs += Get-KitPairs (Join-Path $tpl 'docs') (Join-Path $proj 'docs')
     }
 
@@ -191,6 +191,8 @@ if ($Project) {
 $pairs = @()
 $pairs += Get-KitPairs (Join-Path $root 'claude\skills') (Join-Path $kitHome 'skills')
 $pairs += Get-KitPairs (Join-Path $root 'claude\hooks')  (Join-Path $kitHome 'hooks')
+$pairs += Get-KitPairs (Join-Path $root 'claude\tools')  (Join-Path $kitHome 'tools')
+$pairs += Get-KitPairs (Join-Path $root 'claude\agents') (Join-Path $kitHome 'agents')
 # The account switcher and its settings merger are optional: nothing else depends on them, they
 # sit unused until the cc function is wired up (see docs/ACCOUNTS.md).
 foreach ($file in @('statusline.ps1', 'claude-account.ps1', 'merge-settings.py', 'CLAUDE.md')) {

@@ -46,12 +46,16 @@ somewhere else writes one `Evidence root:` line in `CLAUDE.local.md`. See `docs/
 check what a project resolves to with `python scripts\evidence-path.py --print-spec`.
 
 For a spec-driven project (a new build governed by a `docs/` spec structure), add `-Sdd` to also
-scaffold `.claude/agents/` and the `docs/` spec structure, then drive it with `/sdd`:
+copy the kit's agent definitions into `.claude/agents/` and scaffold the `docs/` spec structure,
+then drive it with `/sdd`:
 ```
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Project C:\Repo\my-app -Sdd
 ```
 
-The installer copies the agents folder by wildcard, so the project gets all five templates:
+The installer copies `claude/agents` whole, so the project gets all five definitions. The user-scope
+install already puts the same five in the kit home, where every project on the machine sees them;
+the project copy exists for collaborators without the kit, and it shadows the kit copy, so re-run
+the project command after a kit update that changes them:
 
 - `analyst` decision-shaping analysis with file:line citations, read-only toward the repo
 - `designer` UI and design deliverables from the design brief and the feature specs

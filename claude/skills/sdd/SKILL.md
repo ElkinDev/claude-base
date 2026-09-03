@@ -31,8 +31,9 @@ is documented here so it is self-contained, with no dependency on any specific p
 ## Working model (roles)
 - An orchestrator session plans, sequences, validates, and owns git (branches and commits per the
   project's git discipline). It does not write implementation code inline.
-- Implementation and design run in subagents: the `.claude/agents/implementer.md` and `designer.md`
-  templates, or general-purpose subagents at high effort. Give each agent the exact spec files to
+- Implementation and design run in subagents: the kit's `implementer` and `designer` agent
+  definitions (installed in the kit home; a project copy from `-Sdd` shadows them), or
+  general-purpose subagents at high effort. Give each agent the exact spec files to
   read. Agents read the specs first and never improvise; if a spec is ambiguous or contradictory they
   STOP and report the conflict rather than inventing.
 - Agents never run git commands. The orchestrator owns history.
