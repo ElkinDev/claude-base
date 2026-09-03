@@ -25,7 +25,14 @@ import re
 
 # The two numbers the guard denies on. They live here because the parser needs them to tell a
 # bounded slice from a whole file, and guard-read.py imports them, so there is one definition.
-SIZE_LIMIT_BYTES = 150 * 1024
+# 48 KB is about 12k tokens, the ceiling for one whole tool result, chosen on the token flow
+# measurement of 2026-09-03, where text results of 60 to 150 KB were the expensive class. The
+# separate measurement, that whole results stop being re-attached above about 12 KB, is in
+# docs/CONTEXT-ECONOMICS.md lines 150 to 152 and is not the reason for this limit. It is a
+# ceiling on unbounded reads only, never on ranged ones: a read that already asks for
+# ALLOWED_LIMIT_LINES lines or fewer passes at any file size, and images and PDFs are exempt
+# from the byte rule entirely (guard-read.py, SIZE_EXEMPT_EXTENSIONS).
+SIZE_LIMIT_BYTES = 48 * 1024
 ALLOWED_LIMIT_LINES = 400
 
 COUNT_FLAGS = ("-totalcount", "-head", "-first", "-tail", "-last")

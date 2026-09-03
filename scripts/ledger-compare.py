@@ -608,7 +608,13 @@ def render_table(rows, thresholds, min_features, current_features, notes):
 # What is left to optimize
 # --------------------------------------------------------------------------
 def tool_size_totals(path, start, end):
-    """Tool-result characters inside the window, by tool name."""
+    """Tool-result characters inside the window, by tool name.
+
+    The file comes in two shapes: four columns on a machine whose ledger predates the `agent`
+    column, five after it, and mixed in between, since the hook never rewrites a header it
+    found. DictReader reads all three: it names the columns the header names and parks any
+    extra field aside, and only time, tool_name and chars are read here.
+    """
     totals = collections.Counter()
     biggest = {}
     if not path or not os.path.isfile(path):

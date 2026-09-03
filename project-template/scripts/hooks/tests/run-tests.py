@@ -34,6 +34,9 @@ GUARD_HOOK = os.path.join(GLOBAL_HOOKS, "guard-read.py")
 ALARM_HOOK = os.path.join(GLOBAL_HOOKS, "alarm-big-result.py")
 
 BIG_RESPONSE = "gradle line of noise that nobody reads\n" * 1600
+# The guard's byte ceiling, mirrored from claude/hooks/shell_read.py so a fixture can assert it
+# sits on the far side of it. The exempt fixtures are far enough above that the two never drift.
+SIZE_LIMIT_BYTES = 48 * 1024
 
 
 def load_module(path, name):
@@ -281,7 +284,7 @@ def test_image_is_denied_for_the_orchestrator(ws):
 def test_image_is_allowed_for_a_lane(ws):
     """The fixture image is over the size limit on purpose: every device screenshot is, and
     a lane that cannot open one cannot report what the phone showed."""
-    assert os.path.getsize(ws.image) > 150 * 1024, "the fixture must be above the size limit"
+    assert os.path.getsize(ws.image) > SIZE_LIMIT_BYTES, "the fixture must be above the size limit"
     payload = fixture("read-image.json", ws.replacements())
     code, stdout = run_hook(GUARD_HOOK, payload, {"CLAUDE_ROLE": None})
     assert code == 0, code
@@ -290,7 +293,7 @@ def test_image_is_allowed_for_a_lane(ws):
 
 def test_large_pdf_is_allowed(ws):
     """A PDF is read as pages, so a line limit means nothing and the size rule cannot apply."""
-    assert os.path.getsize(ws.pdf) > 150 * 1024, "the fixture must be above the size limit"
+    assert os.path.getsize(ws.pdf) > SIZE_LIMIT_BYTES, "the fixture must be above the size limit"
     payload = fixture("read-pdf.json", ws.replacements())
     code, stdout = run_hook(GUARD_HOOK, payload, {"CLAUDE_ROLE": None})
     assert code == 0, code
@@ -337,8 +340,11 @@ def test_small_result_is_only_logged(ws):
     assert stdout == "", "below the threshold nothing reaches the context, got: %s" % stdout
     expected = len(json.loads(payload)["tool_response"])
     rows = ledger_rows(os.path.join(directory, "tool-sizes.csv"))
-    assert rows[0] == "time,session_id,tool_name,chars", rows[0]
-    assert rows[-1].endswith(",Grep,%d" % expected), rows[-1]
+    # Four columns before the `agent` column landed, five after it, so the shape is read by
+    # field rather than by the whole line: only the first four are the contract here.
+    assert rows[0].split(",")[:4] == ["time", "session_id", "tool_name", "chars"], rows[0]
+    fields = rows[-1].split(",")
+    assert fields[2] == "Grep" and fields[3] == str(expected), rows[-1]
 
 
 def test_big_result_alarms_without_herdr(ws):
@@ -354,7 +360,8 @@ def test_big_result_alarms_without_herdr(ws):
     assert "Bash" in message, message
     assert str(len(BIG_RESPONSE)) in message, message
     rows = ledger_rows(os.path.join(directory, "tool-sizes.csv"))
-    assert rows[-1].endswith(",Bash,%d" % len(BIG_RESPONSE)), rows[-1]
+    fields = rows[-1].split(",")
+    assert fields[2] == "Bash" and fields[3] == str(len(BIG_RESPONSE)), rows[-1]
 
 
 TESTS = [

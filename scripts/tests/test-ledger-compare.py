@@ -494,6 +494,58 @@ class EvidenceTests(unittest.TestCase):
             self.assertEqual(frozen["rows"][0]["features"], 20)
 
 
+class ToolSizeLedgerTests(unittest.TestCase):
+    """`tool-sizes.csv` gained an `agent` column after four-column files were already on disk,
+    so every file in the wild is four columns, then five from the row the new hook wrote first.
+    The reader has to total both shapes, and total them the same."""
+
+    FOUR = ["2026-09-02T09:00:00,sess-a,Bash,1000",
+            "2026-09-02T09:01:00,sess-a,Read,2000",
+            "2026-09-02T09:02:00,sess-a,Bash,500"]
+    FIVE = ["2026-09-03T09:00:00,sess-b,Bash,300,main",
+            "2026-09-03T09:01:00,sess-b,Read,700,9f3c21",
+            "2026-09-03T09:02:00,sess-b,Grep,50,"]
+    START = dt.datetime(2026, 9, 1)
+    END = dt.datetime(2026, 9, 4)
+
+    def totals(self, lines):
+        directory = tempfile.mkdtemp(prefix="tool-sizes-test-")
+        try:
+            path = os.path.join(directory, "tool-sizes.csv")
+            with open(path, "w", encoding="utf-8", newline="") as fh:
+                fh.write("\n".join(lines) + "\n")
+            return compare.tool_size_totals(path, self.START, self.END)
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+
+    def test_a_four_column_file_totals_as_it_always_did(self):
+        totals, biggest = self.totals(["time,session_id,tool_name,chars"] + self.FOUR)
+        self.assertEqual(dict(totals), {"Bash": 1500, "Read": 2000})
+        self.assertEqual(biggest, {"Bash": 1000, "Read": 2000})
+
+    def test_a_four_column_header_over_five_column_rows_still_totals(self):
+        """The shape on every machine that had the ledger before the column landed."""
+        totals, biggest = self.totals(
+            ["time,session_id,tool_name,chars"] + self.FOUR + self.FIVE)
+        self.assertEqual(dict(totals), {"Bash": 1800, "Read": 2700, "Grep": 50})
+        self.assertEqual(biggest, {"Bash": 1000, "Read": 2000, "Grep": 50})
+
+    def test_a_five_column_header_over_four_column_rows_still_totals(self):
+        """The shape on a machine whose ledger started after the column landed and was then
+        written by an older hook, and the proof the two headers give the same totals."""
+        mixed, _ = self.totals(
+            ["time,session_id,tool_name,chars,agent"] + self.FOUR + self.FIVE)
+        old, _ = self.totals(["time,session_id,tool_name,chars"] + self.FOUR + self.FIVE)
+        self.assertEqual(dict(mixed), dict(old))
+        self.assertEqual(dict(mixed), {"Bash": 1800, "Read": 2700, "Grep": 50})
+
+    def test_the_agent_column_never_reaches_the_totals(self):
+        with_agent, _ = self.totals(["time,session_id,tool_name,chars,agent"] + self.FIVE)
+        without, _ = self.totals(
+            ["time,session_id,tool_name,chars"] + [r.rsplit(",", 1)[0] for r in self.FIVE])
+        self.assertEqual(dict(with_agent), dict(without))
+
+
 class ContextKPITests(unittest.TestCase):
     """The two KPIs ledger-day writes per session, pooled and read here.
 

@@ -39,6 +39,7 @@ Every line below is a law. Cite laws by their words in briefs; never paraphrase 
 
 - Agents never wait alive: launch long work from your own session and end the turn.
 - Waiting for a mutex or any slow condition is one blocking foreground call, repeated silently; turn-polling a wait is banned.
+- No single wait runs longer than 270 seconds, the sliding prompt cache's five minutes less the round trip: wait for a marker with `sh ~/.claude/tools/wait-marker.sh <file>` on a POSIX shell or `powershell -NoProfile -File ~/.claude/tools/wait-marker.ps1 <file>` on Windows, and call it again on exit 3; after thirty minutes without the marker, commit what exists, leave the checkpoint in the report and end the turn.
 - While a gate runs, bank the next scope item it does not compile, and end the turn only when nothing remains doable without the verdict.
 - Never pause with an uncommitted tree: commit the checkpoint first, then wait.
 - An agent keeps no notes file; its checkpoint is its final report plus the board line, and findings worth keeping go to `docs/` in main before the worktree is removed.
@@ -50,6 +51,7 @@ Every line below is a law. Cite laws by their words in briefs; never paraphrase 
 - Restore the tree before releasing the lock on every exit path, and abort the gate when the restore fingerprint does not match.
 - Style pass before any gate: run the touched modules' formatter and linter checks in one acquisition and fix the whole report set in one pass.
 - Read every report file in one pass rather than iterating gate runs, and count a report only when its writing task ran in this gate and its mtime falls inside this run's window.
+- Independent commands go in one Bash call separated by `;` with `echo "== label"` headers; a call that only looks at the previous result is merged into it; one call per question, not per command.
 - Every scripted edit asserts its match count, that the file hash moved, and that the intended new text is literally present.
 - Never pass a replacement carrying a dollar sign or backslashes through a shell into a regex engine; write the edit to a file or use the editing tool, and detect each file's newline style first on a mixed-ending tree.
 - Scripts and analysis run from a private per-lane scratch directory, never writing a bare standard-library module name where an interpreter runs.

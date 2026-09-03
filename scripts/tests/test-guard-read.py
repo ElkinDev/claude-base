@@ -10,6 +10,7 @@ The shell matcher exists because the Read tool is not the only way a file reache
 harness re-injects a Read-tool file at every compaction, so an orchestrator that follows the
 context rules reads with the shell and would otherwise walk past the guard.
 """
+import importlib.util
 import json
 import os
 import shutil
@@ -20,8 +21,21 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
-GUARD = os.path.join(ROOT, "claude", "hooks", "guard-read.py")
-SIZE_LIMIT_BYTES = 150 * 1024
+HOOKS = os.path.join(ROOT, "claude", "hooks")
+GUARD = os.path.join(HOOKS, "guard-read.py")
+
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# The two numbers come from the hook itself: a copy here would keep passing after the hook moved.
+shell_read = load("shell_read", os.path.join(HOOKS, "shell_read.py"))
+SIZE_LIMIT_BYTES = shell_read.SIZE_LIMIT_BYTES
+ALLOWED_LIMIT_LINES = shell_read.ALLOWED_LIMIT_LINES
 
 
 def run_guard(payload, role="orchestrator"):
@@ -54,6 +68,28 @@ class GuardTest(unittest.TestCase):
         cls.small = os.path.join(cls.tmp, "notes.md")
         with open(cls.small, "w", encoding="utf-8") as handle:
             handle.write("# notes\n\nshort enough to read whole.\n")
+        cls.pdf = os.path.join(cls.tmp, "manual.pdf")
+        with open(cls.pdf, "wb") as handle:
+            handle.write(b"%PDF-1.7\n" + b"\x00" * (200 * 1024))
+        # The three text sizes the rule turns on: one clearly over, and the two neighbours of
+        # the 48 KB line, so a moved constant is caught by a test and not by a lane.
+        cls.sixty = cls.text_file("sixty.txt", 60 * 1024)
+        cls.over = cls.text_file("just-over.txt", 49 * 1024)
+        cls.under = cls.text_file("just-under.txt", 47 * 1024)
+
+    @classmethod
+    def text_file(cls, name, size):
+        """A text file of exactly `size` bytes, in lines the guard can count."""
+        path = os.path.join(cls.tmp, name)
+        line = "%s\n" % ("x" * 79)
+        whole, remainder = divmod(size, len(line))
+        body = line * whole
+        if remainder:
+            body += "y" * (remainder - 1) + "\n"
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(body)
+        assert os.path.getsize(path) == size, os.path.getsize(path)
+        return path
 
     @classmethod
     def tearDownClass(cls):
@@ -91,6 +127,49 @@ class GuardTest(unittest.TestCase):
         self.assertGreater(os.path.getsize(self.image), SIZE_LIMIT_BYTES)
         self.assertGreater(os.path.getsize(self.big), 5 * 1024 * 1024)
         self.assertLess(os.path.getsize(self.small), SIZE_LIMIT_BYTES)
+
+    # ------------------------------------------------------------- where the line falls
+    def test_the_limit_is_forty_eight_kilobytes(self):
+        self.assertEqual(SIZE_LIMIT_BYTES, 48 * 1024)
+        self.assertEqual(ALLOWED_LIMIT_LINES, 400)
+
+    def test_a_sixty_kilobyte_text_file_is_denied_without_a_limit(self):
+        reason = self.denial(self.read(self.sixty), role=None)
+        self.assertIn("60 KB", reason)
+        self.assertIn("768 lines", reason)
+        self.denial(self.bash('cat "%s"' % self.sixty))
+
+    def test_the_same_sixty_kilobytes_pass_with_a_limit_of_four_hundred(self):
+        self.allowed(self.read(self.sixty, limit=ALLOWED_LIMIT_LINES))
+        self.allowed(self.bash("sed -n '1,400p' \"%s\"" % self.sixty))
+
+    def test_forty_nine_kilobytes_are_denied_and_forty_seven_are_allowed(self):
+        self.denial(self.read(self.over), role=None)
+        self.allowed(self.read(self.under), role=None)
+        self.denial(self.bash('cat "%s"' % self.over))
+        self.allowed(self.bash('cat "%s"' % self.under))
+
+    def test_a_byte_slice_is_measured_against_the_same_limit(self):
+        # `head -c N` is bounded by bytes, so the guard reads N against the ceiling itself.
+        # The boundary follows the file rule: at exactly the ceiling it passes, one over it does
+        # not, which is the same comparison that lets a file of exactly 48 KB be read whole.
+        self.allowed(self.bash('head -c %d "%s"' % (SIZE_LIMIT_BYTES - 1, self.big)))
+        self.allowed(self.bash('head -c %d "%s"' % (SIZE_LIMIT_BYTES, self.big)))
+        self.denial(self.bash('head -c %d "%s"' % (SIZE_LIMIT_BYTES + 1, self.big)))
+
+    # ------------------------------------------------------------- pixels and pages are exempt
+    def test_a_two_hundred_kilobyte_png_reaches_a_lane_on_both_routes(self):
+        self.allowed(self.read(self.image), role=None)
+        self.allowed(self.bash('cat "%s"' % self.image), role=None)
+        self.allowed(self.bash('head -c 200000 "%s"' % self.image), role=None)
+        self.allowed(self.bash('Get-Content "%s"' % self.image, tool="PowerShell"), role=None)
+
+    def test_a_pdf_over_the_limit_is_exempt_on_both_routes_for_either_role(self):
+        self.allowed(self.read(self.pdf), role=None)
+        self.allowed(self.read(self.pdf))
+        self.allowed(self.bash('cat "%s"' % self.pdf), role=None)
+        self.allowed(self.bash('cat "%s"' % self.pdf))
+        self.allowed(self.bash('Get-Content "%s"' % self.pdf, tool="PowerShell"))
 
     # ------------------------------------------------------------- images
     def test_a_bash_cat_of_an_image_is_denied_for_the_orchestrator(self):

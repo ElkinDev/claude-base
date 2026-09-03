@@ -347,7 +347,7 @@ after a compaction, so a fresh session gets that pointer from you.
 - Offline: `claude/hooks/tests/test-compaction-hooks.py` (18 tests, the hooks as subprocesses
   over a throwaway repository), `scripts/tests/test-compaction-decide.py` (9, the watcher's
   decision) with `test-compaction-tools.py` beside it (13, synthetic transcripts and a fake
-  Herdr), `scripts/tests/test-guard-read.py` (38, the guard as a subprocess over both the Read
+  Herdr), `scripts/tests/test-guard-read.py` (45, the guard as a subprocess over both the Read
   and the shell route) and `scripts/tests/test-launcher-env.ps1` (the launcher's dry run,
   default and opt-in window).
 - Offline: `claude/tools/tests/run-tests.py` (the record CLI as a subprocess over temporary files:

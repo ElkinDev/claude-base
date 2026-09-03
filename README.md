@@ -31,7 +31,9 @@ claude/                     -> installs into ~/.claude
                             designer, implementer, implementer-light, reviewer); -Sdd copies them
                             into a project as well
   tools/                    record.py: append, amend or swap a record in any file from a payload on
-                            stdin, line ending and BOM kept, one call per round instead of a script
+                            stdin, line ending and BOM kept, one call per round instead of a script;
+                            wait-marker.sh and its .ps1 twin: block until a marker file appears, at
+                            most 270 seconds, so no wait outlives the prompt cache
 project-template/           -> copy into each project
   CLAUDE.md                 portable working rules (voice, persona, git, TDD, evidence, pipeline)
   CLAUDE.project.md         the active profile to fill per project

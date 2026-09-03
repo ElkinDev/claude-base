@@ -1,10 +1,16 @@
 """PostToolUse hook for every tool: measure the result and shout when it is huge.
 
 It cannot change anything, it counts. Every tool result adds a row to
-$CLAUDE_LEDGER_DIR/tool-sizes.csv (time, session, tool, characters), so the ledger can
-later rank which tools fill the window. Above the alarm threshold it also fires a herdr
-notification, when herdr is on PATH, and returns a one-line systemMessage naming the tool
-and the size, so the offender is visible while it happens.
+$CLAUDE_LEDGER_DIR/tool-sizes.csv (time, session, tool, characters, agent), so the ledger can
+later rank which tools fill the window, and whose window they filled: a session's own turn loop
+and each of its subagents pay separately, and a total that mixes them hides which one to brief.
+Above the alarm threshold it also fires a herdr notification, when herdr is on PATH, and returns
+a one-line systemMessage naming the tool and the size, so the offender is visible while it
+happens.
+
+The agent column was added after the four-column file already existed on every machine, so a
+file that has a header keeps it: rows written from here carry five fields whatever the header
+says, and every reader of this file reads both shapes.
 
 It never blocks: every failure exits 0.
 """
@@ -18,7 +24,10 @@ from datetime import datetime
 
 ALARM_CHARS = 50000
 CSV_NAME = "tool-sizes.csv"
-CSV_HEADER = ("time", "session_id", "tool_name", "chars")
+CSV_HEADER = ("time", "session_id", "tool_name", "chars", "agent")
+SUBAGENTS_SEGMENT = "/subagents/"
+AGENT_PREFIX = "agent-"
+TRANSCRIPT_SUFFIX = ".jsonl"
 
 
 def ledger_path():
@@ -27,6 +36,27 @@ def ledger_path():
     )
     os.makedirs(directory, exist_ok=True)
     return os.path.join(directory, CSV_NAME)
+
+
+def agent_column(transcript_path):
+    """Whose window this result landed in: `main`, a subagent id, or empty when unknown.
+
+    The harness writes a subagent's transcript under a `subagents` directory as
+    `agent-<id>.jsonl`; a path without that segment belongs to the session's own turn loop.
+    An absent field is left empty rather than guessed, so a reader can tell "not a subagent"
+    from "the harness did not say".
+    """
+    path = str(transcript_path or "").replace("\\", "/")
+    if not path:
+        return ""
+    if SUBAGENTS_SEGMENT not in path:
+        return "main"
+    name = path.rsplit("/", 1)[-1]
+    if name.lower().endswith(TRANSCRIPT_SUFFIX):
+        name = name[:-len(TRANSCRIPT_SUFFIX)]
+    if name.startswith(AGENT_PREFIX):
+        name = name[len(AGENT_PREFIX):]
+    return name
 
 
 def response_size(response):
@@ -41,6 +71,11 @@ def response_size(response):
 
 
 def append_row(path, row):
+    """Append one row, writing the header only into a file that does not have one yet.
+
+    A file already carrying the four-column header keeps it: rewriting a header in place would
+    mean rewriting the whole file under a hook that must never be slow and never fail loudly.
+    """
     exists = os.path.isfile(path) and os.path.getsize(path) > 0
     with open(path, "a", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle, lineterminator="\n")
@@ -74,8 +109,10 @@ def main():
         tool = data.get("tool_name") or "unknown"
         session = data.get("session_id") or ""
         chars = response_size(data.get("tool_response"))
+        agent = agent_column(data.get("transcript_path"))
         try:
-            append_row(ledger_path(), [datetime.now().isoformat(timespec="seconds"), session, tool, chars])
+            append_row(ledger_path(),
+                       [datetime.now().isoformat(timespec="seconds"), session, tool, chars, agent])
         except Exception:
             pass
         if chars > ALARM_CHARS:

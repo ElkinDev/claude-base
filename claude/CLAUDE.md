@@ -50,10 +50,13 @@ correct way with a concrete example.
   `grep -n`); the Read tool is allowed on a file over 12 KB, which is not re-attached, and as the
   one-line read (`limit: 1`) that lets Edit work on the whole file. A lane keeps using the Read
   tool, which is the right tool for a file it is about to edit.
-- The same guard runs on both routes. A file over 150 KB is refused unless the read already asks
-  for 400 lines or fewer, and that refusal names the slice commands to use instead. A screenshot is
-  refused to this pane with no slice offered, because a slice of an image means nothing: delegate
-  the look to a lane or a fork and ask for a written description.
+- The same guard runs on both routes. A text file over 48 KB, about 12k tokens, is refused unless
+  the read already asks for 400 lines or fewer, and that refusal names the slice commands to use
+  instead. Images and PDFs are exempt from the byte rule on both routes, because a slice of pixels
+  or pages means nothing. A screenshot is still refused to this pane, with no slice offered:
+  delegate the look to a lane or a fork and ask for a written description.
+- Independent commands go in one Bash call separated by `;` with `echo "== label"` headers; a call
+  that only looks at the previous result is merged into it; one call per question, not per command.
 - Records are written with the kit's record tool, never with a throwaway script:
   `python ~/.claude/tools/record.py add|amend|swap|round <target>` with the payload on stdin as a
   quoted heredoc, or `$HOME/.claude/tools/record.py` from PowerShell, where `~` stays literal. It
