@@ -34,7 +34,10 @@ claude/                     -> installs into ~/.claude
   tools/                    record.py: append, amend or swap a record in any file from a payload on
                             stdin, line ending and BOM kept, one call per round instead of a script;
                             wait-marker.sh and its .ps1 twin: block until a marker file appears, at
-                            most 270 seconds, so no wait outlives the prompt cache
+                            most 270 seconds, so no wait outlives the prompt cache; ask-planner.sh
+                            and its .ps1 twin, with planner-law.md as their system prompt: one
+                            stateless planning call, a packet in and a plan or a verdict out, for
+                            the hours the planning model is rationed
 project-template/           -> copy into each project
   CLAUDE.md                 portable working rules (voice, persona, git, TDD, evidence, pipeline)
   CLAUDE.project.md         the active profile to fill per project

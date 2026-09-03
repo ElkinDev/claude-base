@@ -39,7 +39,7 @@ Every line below is a law. Cite laws by their words in briefs; never paraphrase 
 
 - Agents never wait alive: launch long work from your own session and end the turn.
 - Waiting for a mutex or any slow condition is one blocking foreground call, repeated silently; turn-polling a wait is banned.
-- No single wait runs longer than 270 seconds, the sliding prompt cache's five minutes less the round trip: wait for a marker with `sh ~/.claude/tools/wait-marker.sh <file>` on a POSIX shell or `powershell -NoProfile -File ~/.claude/tools/wait-marker.ps1 <file>` on Windows, and call it again on exit 3; after thirty minutes without the marker, commit what exists, leave the checkpoint in the report and end the turn.
+- No single wait runs longer than 270 seconds, the sliding prompt cache's five minutes less the round trip: wait for a marker with `sh "$HOME/.claude/tools/wait-marker.sh" <file>` on a POSIX shell, including Git Bash on Windows, or with `powershell -NoProfile -File "$HOME\.claude\tools\wait-marker.ps1" <file>` typed in PowerShell, and call it again on exit 3; after thirty minutes without the marker, commit what exists, leave the checkpoint in the report and end the turn.
 - While a gate runs, bank the next scope item it does not compile, and end the turn only when nothing remains doable without the verdict.
 - Never pause with an uncommitted tree: commit the checkpoint first, then wait.
 - An agent keeps no notes file; its checkpoint is its final report plus the board line, and findings worth keeping go to `docs/` in main before the worktree is removed.
@@ -136,5 +136,17 @@ Every line below is a law. Cite laws by their words in briefs; never paraphrase 
 - Third-party harnesses never run on the subscription's quota, and a local model's verdicts never gate a decision without a cheap verification.
 - Read the machine clock before scheduling anything.
 - Artifacts are written in the project's declared artifact language, and nothing carries em-dashes, tool attribution or person names.
+
+## Reserve mode
+
+- Reserve mode opens on one trigger only, the planning model's weekly meter at 90 or above: the pane runs `/model` to the runtime model, keeps its context and its launch line, and from that point plans and adjudicates through the stateless call below; at every other hour the planner is the pane itself and nothing in this section applies.
+- The call is `sh "$HOME/.claude/tools/ask-planner.sh" -o <answer> <packet>` on a POSIX shell, including Git Bash on Windows, and `powershell -NoProfile -File "$HOME\.claude\tools\ask-planner.ps1" -o <answer> <packet>` typed in PowerShell; from another shell that path is spelled in full, because `-File` does not expand `~`. It carries no session, no history and no tools, so everything the planner is allowed to know has to be inside the packet.
+- The packet's first line is its kind and nothing else: PLAN, ADJUDICATE or DECIDE.
+- Under the kind the packet carries, in this order, the objective in one paragraph, the numbered acceptance criteria, the workspace facts (repo, branch, tip, worktree path, test runner and its last green tail), the constraints and the protected files, an evidence digest of report tails and disposition lines, the callable menu of roles with their model and of installed tools with their paths, the concurrency limit, and the preferences.
+- A packet stays under 20 KB and carries no transcript, no whole file and no diff over 200 lines; evidence enters as tails and disposition lines, never as the files themselves.
+- At most three calls per objective: PLAN at the open, ADJUDICATE before the merge on the report digest plus the reviewer's disposition, and one DECIDE or a second PLAN when a lane returns BLOCK twice or the choice is owner-shaped.
+- Calls are made from the train's own account and only by the orchestrator; a lane never calls the planner.
+- Every packet and every answer is saved as `<evidence>/planner/<objective>-<kind>-<n>.md`, the tool's ledger row is the receipt of what the call cost, and any deviation from the returned graph is recorded in the landing row.
+- The runtime never rewrites a verdict: a BLOCK holds until a later ADJUDICATE returns CLEAR, or until the owner overrides it.
 
 When a failure teaches a law, add the law here and its reasoning to the project's own protocol history; this sheet stays laws only.
