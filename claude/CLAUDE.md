@@ -63,6 +63,14 @@ correct way with a concrete example.
   delegate the look to a lane or a fork and ask for a written description.
 - Independent commands go in one Bash call separated by `;` with `echo "== label"` headers; a call
   that only looks at the previous result is merged into it; one call per question, not per command.
+- Compact forms by default: `git status --short`, `git log --oneline`, `git diff --stat` before any
+  hunk and then only the hunks named, `ls` without `-la` unless sizes or dates are the question,
+  `grep -n` with `-m` and `cut -c` on prose, `sed -n` slices named by line. A whole file is read
+  once, with the tool that will edit it, never re-read by the shell.
+- Long output goes to disk, never into the context. The template's gradle hook already does this
+  for builds; every other long tool (device logs, uploads, bench scripts, package installs) runs
+  through the project's logged runner (`scripts/hooks/run-logged.py` in the template) or an
+  explicit redirect, and the session reads the digest and slices the log with `grep -n`.
 - Records are written with the kit's record tool, never with a throwaway script:
   `python ~/.claude/tools/record.py add|amend|swap|round <target>` with the payload on stdin as a
   quoted heredoc, or `$HOME/.claude/tools/record.py` from PowerShell, where `~` stays literal. It

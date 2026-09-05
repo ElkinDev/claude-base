@@ -52,6 +52,8 @@ Every line below is a law. Cite laws by their words in briefs; never paraphrase 
 - Style pass before any gate: run the touched modules' formatter and linter checks in one acquisition and fix the whole report set in one pass.
 - Read every report file in one pass rather than iterating gate runs, and count a report only when its writing task ran in this gate and its mtime falls inside this run's window.
 - Independent commands go in one Bash call separated by `;` with `echo "== label"` headers; a call that only looks at the previous result is merged into it; one call per question, not per command.
+- Compact forms by default: `git status --short`, `git log --oneline`, `git diff --stat` before any hunk and then only the hunks named, `ls` without `-la` unless sizes or dates are the question, `grep -n` with `-m` and `cut -c` on prose, `sed -n` slices named by line; a whole file is read once, with the tool that will edit it, never re-read by the shell.
+- Long output goes to disk, never into the context: the gate already writes each gradle phase to its own log and returns the exit file, and every other long tool (device logs, uploads, bench scripts, package installs) runs through `python scripts/hooks/run-logged.py --log <path> -- <command>` or an explicit redirect, the lane reading the digest and slicing the log with `grep -n`.
 - Every scripted edit asserts its match count, that the file hash moved, and that the intended new text is literally present.
 - Never pass a replacement carrying a dollar sign or backslashes through a shell into a regex engine; write the edit to a file or use the editing tool, and detect each file's newline style first on a mixed-ending tree.
 - Scripts and analysis run from a private per-lane scratch directory, never writing a bare standard-library module name where an interpreter runs.
@@ -132,6 +134,7 @@ Every line below is a law. Cite laws by their words in briefs; never paraphrase 
 - Wake on terminal lines only, never on per-phase lines and never on a clock.
 - An idle watchdog runs whenever lanes are in flight, the owner is never the one who notices dead air, and lanes from a closed train are stopped so their rows cannot revive on stale monitors.
 - Each lane's token figure goes into the worklog; optimization claims without measurement are guesses.
+- Shell output is measured by command family before any filter or wrapper is adopted: `python ~/.claude/tools/shell-output-by-family.py --since <date>` splits the transcripts into main sessions, lanes and other, and a tool that promises a percentage is judged against the families that dominate here, never against its own benchmark.
 - Everything scriptable is scripted; an agent doing a script's work is waste.
 - Third-party harnesses never run on the subscription's quota, and a local model's verdicts never gate a decision without a cheap verification.
 - Read the machine clock before scheduling anything.

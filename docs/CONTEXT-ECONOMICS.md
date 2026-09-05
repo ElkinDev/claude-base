@@ -197,7 +197,7 @@ the measured day spent 1,025 seconds inside its eight compactions, about two min
 
 ## 7. The toolkit
 
-Five pieces, all zero-token, all in this repo:
+Six pieces, all zero-token, all in this repo:
 
 | piece | event | what it does |
 |---|---|---|
@@ -206,6 +206,7 @@ Five pieces, all zero-token, all in this repo:
 | `claude/hooks/compact-recover.py` | SessionStart (compact) | after compaction, injects the checkpoint path and its disk-truth section (capped), plus the pointers to notes, brief and landings. Facts only, no instruction to re-read anything, since that instruction is paid for on every compaction and is obeyed even when the summary already has the answer. Under 2k characters. |
 | `scripts/compact-at-boundary.py` | a process, not a hook | watches the Claude sessions Herdr knows; when one is above a threshold of its window *and* has been waiting for input for a while (Herdr `idle`, or `done`, which is what Herdr reports right after a compaction), submits `/compact` to that pane, once, then holds that session until its transcript grows a new turn, so a submission that produced nothing is not repeated at the same number. Auto-compaction stays armed as the ceiling. |
 | `scripts/compaction-report.py` | on demand | the measurement behind this document, for your transcripts. |
+| `claude/tools/shell-output-by-family.py` | on demand | shell output by command family over a date window, split into main sessions, lanes and other; the measurement behind adopting or refusing an output filter. |
 
 Data flow of one compaction with the toolkit on:
 

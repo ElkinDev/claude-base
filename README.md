@@ -37,7 +37,10 @@ claude/                     -> installs into ~/.claude
                             most 270 seconds, so no wait outlives the prompt cache; ask-planner.sh
                             and its .ps1 twin, with planner-law.md as their system prompt: one
                             stateless planning call, a packet in and a plan or a verdict out, for
-                            the hours the planning model is rationed
+                            the hours the planning model is rationed; shell-output-by-family.py: the
+                            transcripts' shell output by command family, main sessions against
+                            lanes, so a filter or wrapper is judged against the families that
+                            dominate here and not against its own benchmark
 project-template/           -> copy into each project
   CLAUDE.md                 portable working rules (voice, persona, git, TDD, evidence, pipeline)
   CLAUDE.project.md         the active profile to fill per project
