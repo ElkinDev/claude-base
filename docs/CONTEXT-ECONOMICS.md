@@ -197,13 +197,14 @@ the measured day spent 1,025 seconds inside its eight compactions, about two min
 
 ## 7. The toolkit
 
-Six pieces, all zero-token, all in this repo:
+Seven pieces, all zero-token, all in this repo:
 
 | piece | event | what it does |
 |---|---|---|
 | `claude/hooks/precompact-checkpoint.py` | PreCompact | writes a checkpoint file with git truth (branch, tip, uncommitted files, worktrees) for the current repository or every repository directly under `cwd`, the subagents of the session with their last words, and the last text of the dialogue; then prints the summarization instructions (keep hashes, ids, paths and the next step verbatim; point at the checkpoint for git state). Never blocks. Compactions of a subagent (payload with `agent_id`) are skipped unless `CLAUDE_CHECKPOINT_SUBAGENTS=1`. |
 | `claude/hooks/postcompact-persist.py` | PostCompact | saves the summary the harness produced next to the checkpoint. Prints nothing. |
 | `claude/hooks/compact-recover.py` | SessionStart (compact) | after compaction, injects the checkpoint path and its disk-truth section (capped), plus the pointers to notes, brief and landings. Facts only, no instruction to re-read anything, since that instruction is paid for on every compaction and is obeyed even when the summary already has the answer. Under 2k characters. |
+| `claude/hooks/prompt-log.py` | UserPromptSubmit, and SessionStart (compact) with `--recover` | appends the prompt just submitted to `<checkpoints>/<session8>-prompts.md` as one stamped line, whitespace collapsed, cut at 1,500 characters, and trims the file to its last 200 KB. Prints nothing on submit, because a UserPromptSubmit hook's stdout becomes context. After a compaction, `--recover` prints the last ten entries back under a 6,000 character ceiling, verbatim, so an order given early in a session outlives the summary that paraphrases it. Slash commands, harness tags and a subagent's prompt are not what a person typed and are skipped. |
 | `scripts/compact-at-boundary.py` | a process, not a hook | watches the Claude sessions Herdr knows; when one is above a threshold of its window *and* has been waiting for input for a while (Herdr `idle`, or `done`, which is what Herdr reports right after a compaction), submits `/compact` to that pane, once, then holds that session until its transcript grows a new turn, so a submission that produced nothing is not repeated at the same number. Auto-compaction stays armed as the ceiling. |
 | `scripts/compaction-report.py` | on demand | the measurement behind this document, for your transcripts. |
 | `claude/tools/shell-output-by-family.py` | on demand | shell output by command family over a date window, split into main sessions, lanes and other; the measurement behind adopting or refusing an output filter. |
