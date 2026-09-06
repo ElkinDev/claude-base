@@ -41,7 +41,6 @@ from datetime import datetime
 HOME_CLAUDE = os.path.join(os.path.expanduser("~"), ".claude")
 DEFAULT_CONFIG = os.path.join(HOME_CLAUDE, "lane-state.json")
 DEFAULT_SHEET = os.path.join(HOME_CLAUDE, "law.md")
-DEFAULT_RULINGS = os.path.join(HOME_CLAUDE, "rulings.md")
 
 DEAD_AFTER_SECS = 2 * 3600  # a sentinel exit file older than this is a dead gate
 SENTINEL_EXIT = "97"
@@ -93,6 +92,12 @@ def clip_text(text, limit):
     return text[:limit - 3] + "..."
 
 
+def complain(path, reason):
+    """One line on stderr. The sheet still renders, so this is the only place a
+    config the tool could not use is reported."""
+    print("lane-state: config %s ignored, %s" % (posix(path), reason), file=sys.stderr)
+
+
 def config_file(explicit=None):
     return explicit or os.environ.get("CLAUDE_LANE_STATE_CONFIG") or DEFAULT_CONFIG
 
@@ -107,15 +112,29 @@ def load_config(path=None):
     A config that is not there is not an error: a fresh install renders the sheet with
     the home defaults and empty sections, which is what says the kit is installed and
     nothing is wired yet.
+
+    A config that is there and cannot be used is not an error either, for the same
+    reason a missing source is not: the recovery hook prints this sheet at every
+    compaction and swallows a renderer that fails, so a trailing comma in the config
+    would take the paragraph away without a word. What it cannot read (unreadable, not
+    valid JSON, or valid JSON that is not an object) it names on stderr, once, and
+    renders with the defaults instead.
     """
     path = config_file(path)
     base = os.path.dirname(os.path.abspath(path)) if os.path.isfile(path) else HOME_CLAUDE
     config = defaults_for(base)
+    loaded = {}
     try:
         with open(path, encoding="utf-8") as handle:
-            config.update(json.load(handle))
+            loaded = json.load(handle)
     except FileNotFoundError:
         pass
+    except (OSError, ValueError) as error:  # JSONDecodeError is a ValueError
+        complain(path, error)
+    if not isinstance(loaded, dict):
+        complain(path, "not a JSON object but a %s" % type(loaded).__name__)
+        loaded = {}
+    config.update(loaded)
     register = os.environ.get("CLAUDE_RULINGS_FILE")
     if register:
         config["rulings_file"] = register

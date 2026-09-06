@@ -303,7 +303,7 @@ class PublicDefaultsCase(unittest.TestCase):
 
     def test_every_module_default_sits_under_the_home_dir(self):
         home = os.path.normcase(os.path.expanduser("~"))
-        for name in ("DEFAULT_CONFIG", "DEFAULT_SHEET", "DEFAULT_RULINGS"):
+        for name in ("DEFAULT_CONFIG", "DEFAULT_SHEET"):
             value = getattr(lane_state, name)
             self.assertTrue(os.path.normcase(value).startswith(home),
                             "%s is not under the home dir: %s" % (name, value))
@@ -318,20 +318,25 @@ class PublicDefaultsCase(unittest.TestCase):
     def test_an_unset_config_renders_every_section_instead_of_raising(self):
         """A fresh install has no config yet. The sheet still renders: each section
         prints its empty line, and nothing scans a folder nobody configured."""
-        tmp = tempfile.mkdtemp(prefix="lane-state-unset-")
+        tmp = tempfile.mkdtemp(prefix="lane-state-unset-").replace("\\", "/")
         self.addCleanup(shutil.rmtree, tmp, True)
-        # The env seam keeps this run off the register of a live session.
-        register = write(os.path.join(tmp, "rulings.md"), RULINGS)
-        previous = os.environ.get("CLAUDE_RULINGS_FILE")
-        os.environ["CLAUDE_RULINGS_FILE"] = register
-        self.addCleanup(lambda: os.environ.__setitem__("CLAUDE_RULINGS_FILE", previous)
-                        if previous is not None
-                        else os.environ.pop("CLAUDE_RULINGS_FILE", None))
-        missing = os.path.join(tmp, "no-such-config.json")
-        config = lane_state.load_config(missing)
+        # The home is moved to the temp dir and the module reloaded from there, so the
+        # defaults this case renders are the temp ones: a run of the suite never reads
+        # the register, the lanes or the briefs of the machine it runs on.
+        for name in ("USERPROFILE", "HOME", "CLAUDE_LANE_STATE_CONFIG",
+                     "CLAUDE_LANE_STATE_SHEET", "CLAUDE_RULINGS_FILE"):
+            previous = os.environ.pop(name, None)
+            if previous is not None:
+                self.addCleanup(os.environ.__setitem__, name, previous)
+        os.environ["USERPROFILE"] = tmp
+        os.environ["HOME"] = tmp
+        fresh = load_lane_state()
+        self.assertEqual(tmp + "/.claude", fresh.HOME_CLAUDE.replace("\\", "/"))
+        config = fresh.load_config(tmp + "/.claude/no-such-config.json")
         self.assertEqual([], config["gates_dirs"])
-        self.assertEqual(register, config["rulings_file"])
-        body = lane_state.render_law(config)
+        self.assertEqual(tmp + "/.claude/rulings.md",
+                         config["rulings_file"].replace("\\", "/"))
+        body = fresh.render_law(config)
         headings = [ln for ln in body.splitlines() if ln.startswith("## ")]
         self.assertEqual(6, len(headings))
         self.assertIn("## Fixed lines\nno fixed lines configured\n", body)

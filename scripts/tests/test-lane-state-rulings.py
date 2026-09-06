@@ -36,6 +36,18 @@ def load_lane_state():
 
 lane_state = load_lane_state()
 
+# The seams a live session sets. A case that reads them reads the machine it runs on,
+# so they are dropped for the length of every case, in process and in a subprocess.
+SEAMS = ("CLAUDE_LANE_STATE_CONFIG", "CLAUDE_LANE_STATE_SHEET", "CLAUDE_RULINGS_FILE")
+
+
+def clear_seams(case):
+    for name in SEAMS:
+        previous = os.environ.pop(name, None)
+        if previous is not None:
+            case.addCleanup(os.environ.__setitem__, name, previous)
+
+
 HEADER = """# Rulings register
 
 Row shape: `- YYYY-MM-DD HH:MM [scope] ruling in one line (source)`.
@@ -54,6 +66,7 @@ def clipped(line, limit=400):
 
 class RulingsRowsCase(unittest.TestCase):
     def setUp(self):
+        clear_seams(self)
         self.tmp = tempfile.mkdtemp(prefix="rulings-test-").replace("\\", "/")
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
@@ -159,8 +172,10 @@ class RulingsRowsCase(unittest.TestCase):
 
 class RenderCase(unittest.TestCase):
     def setUp(self):
+        clear_seams(self)
         self.tmp = tempfile.mkdtemp(prefix="rulings-render-").replace("\\", "/")
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.stderr = ""
         self.rows = [row(i) for i in range(1, 31)]
         self.register = self.tmp + "/rulings.md"
         with open(self.register, "w", encoding="utf-8", newline="\n") as handle:
@@ -218,16 +233,55 @@ class RenderCase(unittest.TestCase):
         self.assertEqual(default, 170)
 
     def run_tool(self, args, env_extra=None):
+        """The tool as the hook runs it, with the seams cleared so the ambient
+        environment of the machine running the suite cannot reach it."""
         env = dict(os.environ)
         env["PYTHONIOENCODING"] = "utf-8"
-        for name in ("CLAUDE_LANE_STATE_CONFIG", "CLAUDE_LANE_STATE_SHEET",
-                     "CLAUDE_RULINGS_FILE"):
+        for name in SEAMS:
             env.pop(name, None)
         env.update(env_extra or {})
         process = subprocess.run([sys.executable, SCRIPT] + list(args),
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
-        self.assertEqual(process.returncode, 0, process.stderr.decode("utf-8", "replace"))
+        self.stderr = process.stderr.decode("utf-8", "replace")
+        self.assertEqual(process.returncode, 0, self.stderr)
         return process.stdout.decode("utf-8", "replace")
+
+    def render_with_config(self, config_path):
+        """Render with a config the tool has to survive, into a temp sheet, with the
+        home pointed at the temp dir so no source of a live session is read."""
+        target = self.tmp + "/broken-config-law.md"
+        out = self.run_tool(["--config", config_path, "law", "--out", target],
+                            {"USERPROFILE": self.tmp, "HOME": self.tmp})
+        self.assertIn("wrote " + target, out)
+        with open(target, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertEqual(6, len([ln for ln in text.splitlines() if ln.startswith("## ")]))
+        return text
+
+    def test_a_config_that_is_not_valid_json_is_ignored_and_the_sheet_renders(self):
+        """The sheet is what the recovery hook prints at every compaction, and the hook
+        swallows a renderer that fails, so a trailing comma in the config would take the
+        paragraph away silently. The config is ignored, loudly, and the sheet renders."""
+        path = self.tmp + "/broken.json"
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write('{ "fixed_lines": ["a"], }\n')
+        text = self.render_with_config(path)
+        self.assertIn("## Fixed lines\nno fixed lines configured\n", text)
+        self.assertIn(path, self.stderr)
+
+    def test_a_config_that_is_a_json_array_is_ignored_and_the_sheet_renders(self):
+        path = self.tmp + "/array.json"
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write('["fixed_lines"]\n')
+        self.render_with_config(path)
+        self.assertIn(path, self.stderr)
+        self.assertIn("not a JSON object", self.stderr)
+
+    def test_a_config_path_that_is_a_directory_is_ignored_and_the_sheet_renders(self):
+        path = self.tmp + "/a-folder"
+        os.makedirs(path)
+        self.render_with_config(path)
+        self.assertIn(path, self.stderr)
 
     def test_out_writes_the_given_path_and_the_env_sheet_stays_untouched(self):
         target = self.tmp + "/out-law.md"

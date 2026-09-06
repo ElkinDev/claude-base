@@ -19,7 +19,7 @@ The installer knows which files are its own because it records a sha256 per file
 The compaction recovery hook prints the path of a state sheet and its gates section, and the sheet is rendered by `claude/tools/lane-state.py`. Three lines wire it, and skipping them costs nothing: the hook simply drops that paragraph when the renderer is not there.
 
 1. The tool lands in `~/.claude/tools/lane-state.py` with the rest of user scope; copy it there by hand if you install without the installer.
-2. Write `~/.claude/lane-state.json` with the sources you want read: `fixed_lines`, `gates_dirs`, `landings_file`, `rulings_file`, `project_repo` (the repository whose worktrees are listed), `lanes_glob` and `briefs_glob`. Every key is optional, what you leave out falls back to a path beside the config file, and an empty `gates_dirs` scans nothing.
+2. Write `~/.claude/lane-state.json` with the sources you want read: `fixed_lines`, `gates_dirs`, `landings_file`, `rulings_file`, `project_repo` (the repository whose worktrees are listed), `lanes_glob` and `briefs_glob`. Every key is optional, what you leave out falls back to a path beside the config file, and an empty `gates_dirs` scans nothing. A config the tool cannot use, because it is unreadable, is not valid JSON, or is valid JSON that is not an object, is named on stderr and then ignored: the sheet still renders with the defaults, because the recovery hook prints it at every compaction and a config with a trailing comma must not be what takes that paragraph away.
 3. `python ~/.claude/tools/lane-state.py law` renders the sheet to `~/.claude/law.md` and prints its size. `python ~/.claude/tools/lane-state.py gates` prints the gate lines alone.
 
 ## What the kit writes, and what it never touches
