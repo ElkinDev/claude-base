@@ -9,9 +9,12 @@ SubagentStop hook rows mixed into the prose rows. Nothing under the user's home 
 read or written: every path the renderer touches comes from a temp config.
 """
 import importlib.util
+import json
 import os
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import datetime
@@ -343,6 +346,45 @@ class PublicDefaultsCase(unittest.TestCase):
         self.assertIn("## Worktrees\nno repository configured\n", body)
         self.assertIn("## Gates (last 24 h)\nno gate exit file in the last 24 h\n", body)
         self.assertIn("## Lane reports and briefs (last 24 h)\nnone\n", body)
+
+
+class ConfigEncodingCase(unittest.TestCase):
+    """A config file written on Windows carries a UTF-8 BOM more often than not:
+    PowerShell's `Out-File` and `Set-Content -Encoding utf8` both write one. A reader
+    that opens it as plain utf-8 sees the BOM as a character, json rejects it, and the
+    sheet renders with the defaults under a hook that says nothing. The tool reads the
+    first line of a lane report with the BOM stripped, so the config reader agrees.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="lane-state-bom-").replace("\\", "/")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_a_config_with_a_utf8_bom_is_read_and_not_ignored(self):
+        fixed = "the fixed line a BOM used to hide"
+        config = self.tmp + "/lane-state.json"
+        with open(config, "wb") as handle:
+            handle.write(b"\xef\xbb\xbf")
+            handle.write(json.dumps({"fixed_lines": [fixed]}).encode("utf-8"))
+        target = self.tmp + "/law.md"
+        env = dict(os.environ)
+        env["PYTHONIOENCODING"] = "utf-8"
+        for name in ("CLAUDE_LANE_STATE_CONFIG", "CLAUDE_LANE_STATE_SHEET",
+                     "CLAUDE_RULINGS_FILE"):
+            env.pop(name, None)
+        # The home goes to the temp dir, so a fallback would read nothing of this machine.
+        env["USERPROFILE"] = self.tmp
+        env["HOME"] = self.tmp
+        process = subprocess.run(
+            [sys.executable, SCRIPT, "--config", config, "law", "--out", target],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+        )
+        stderr = process.stderr.decode("utf-8", "replace")
+        self.assertEqual(0, process.returncode, stderr)
+        self.assertEqual("", stderr.strip(), "the config was ignored: " + stderr)
+        with open(target, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn("## Fixed lines\n" + fixed + "\n", text)
 
 
 if __name__ == "__main__":

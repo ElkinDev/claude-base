@@ -125,7 +125,10 @@ def load_config(path=None):
     config = defaults_for(base)
     loaded = {}
     try:
-        with open(path, encoding="utf-8") as handle:
+        # utf-8-sig, not utf-8: PowerShell's Out-File and Set-Content -Encoding utf8
+        # write a BOM, and json reads one as a character and rejects the whole file.
+        # first_line() strips a BOM for the same reason; the two readers agree.
+        with open(path, encoding="utf-8-sig") as handle:
             loaded = json.load(handle)
     except FileNotFoundError:
         pass
