@@ -14,6 +14,14 @@ The installer knows which files are its own because it records a sha256 per file
 4. For a repository, add the project scope: `powershell -ExecutionPolicy Bypass -File .\install.ps1 -Project C:\Repo\my-app -DryRun` first, then the same command without `-DryRun`. Project scope opens with an adoption preflight that lists what the repository already has and what the installer will do about each of those files.
 5. `-LocalOnly` on the project run adds the paths that run manages to the repository's exclude file, so nothing it wrote can reach the team's history by accident. `CLAUDE.md`, `CLAUDE.project.md` and the files under `docs/` are listed one by one, and everything under `.claude/` is written as the single folder line `.claude/`, which also hides anything the team later adds inside that folder. It asks git where the exclude file is, so it works the same in a plain clone, a worktree and a submodule. Recommended for any repository you share, at least until the team has decided.
 
+## The state sheet, in three lines
+
+The compaction recovery hook prints the path of a state sheet and its gates section, and the sheet is rendered by `claude/tools/lane-state.py`. Three lines wire it, and skipping them costs nothing: the hook simply drops that paragraph when the renderer is not there.
+
+1. The tool lands in `~/.claude/tools/lane-state.py` with the rest of user scope; copy it there by hand if you install without the installer.
+2. Write `~/.claude/lane-state.json` with the sources you want read: `fixed_lines`, `gates_dirs`, `landings_file`, `rulings_file`, `project_repo` (the repository whose worktrees are listed), `lanes_glob` and `briefs_glob`. Every key is optional, what you leave out falls back to a path beside the config file, and an empty `gates_dirs` scans nothing.
+3. `python ~/.claude/tools/lane-state.py law` renders the sheet to `~/.claude/law.md` and prints its size. `python ~/.claude/tools/lane-state.py gates` prints the gate lines alone.
+
 ## What the kit writes, and what it never touches
 
 User scope writes inside the kit home only, which is `%USERPROFILE%\.claude` or whatever `$KIT_HOME` points at: `skills/`, `hooks/`, `agents/`, `tools/`, `statusline.ps1`, `claude-account.ps1`, `merge-settings.py`, `CLAUDE.md`, `settings.json`, plus its own `.kit-manifest.json` and `backups/`. Nothing outside that folder.
