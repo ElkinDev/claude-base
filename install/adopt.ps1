@@ -47,6 +47,18 @@ function Test-KitPluginChannelOnly {
     return ($data.channel -eq 'marketplace')
 }
 
+function Get-KitFullPath {
+    <#
+    One comparable spelling of a path. git answers with forward slashes and the shell with
+    backslashes, either can carry a trailing separator, and Windows paths differ in case without
+    differing at all, so two spellings of one directory have to be folded before they are compared.
+    #>
+    param([string]$Path)
+    if (-not $Path) { return '' }
+    $full = [System.IO.Path]::GetFullPath($Path.Replace('/', '\'))
+    return $full.TrimEnd('\').ToLowerInvariant()
+}
+
 function Get-KitOrigin {
     <#
     Where this clone of the kit came from, as an owner/repository pair and the commit it sits on.
@@ -55,17 +67,25 @@ function Get-KitOrigin {
 
     Read from git at install time and never committed: the pair is a real account name, which the
     push guard would flag in a tracked file, and it is per machine anyway. Returns $null when git
-    is missing, when there is no origin, or when either value does not have the shape it should,
-    and the caller then leaves the placeholders of the template in place.
+    is missing, when the repository it finds is not this tree, when there is no origin, or when
+    either value does not have the shape it should. The caller then writes no plugin source at
+    all and says so, rather than shipping a source that cannot resolve.
+
+    The repository has to BE this tree. `git -C` walks up until it finds one, so a kit unpacked
+    inside somebody else's clone would otherwise be read as that clone, and its private remote and
+    its commit would land in a file the adopter is invited to commit.
     #>
     param([string]$Root)
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return $null }
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
+        $top = ((& git -C $Root rev-parse --show-toplevel 2>$null) | Out-String).Trim()
         $url = ((& git -C $Root remote get-url origin 2>$null) | Out-String).Trim()
         $sha = ((& git -C $Root rev-parse HEAD 2>$null) | Out-String).Trim()
     } finally { $ErrorActionPreference = $previous }
+    if (-not $top) { return $null }
+    if ((Get-KitFullPath $top) -ne (Get-KitFullPath $Root)) { return $null }
     if ($url -notmatch '[:/]([^/:]+)/([^/]+?)(?:\.git)?$') { return $null }
     $slug = $matches[1] + '/' + $matches[2]
     if ($sha -notmatch '^[0-9a-f]{40}$') { return $null }
