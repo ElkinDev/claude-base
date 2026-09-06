@@ -29,6 +29,69 @@ function New-KitPair {
     return [pscustomobject]@{ Source = $Source; Target = $Target; Text = $Text }
 }
 
+function Test-KitPluginChannelOnly {
+    <#
+    Whether a plugin says it reaches a machine one way only, through `claude plugin install`. The
+    installer skips those, so no skill can arrive twice, once bare and once namespaced.
+
+    It is declared in `kit.json` at the plugin root, a file this kit owns, and not in the plugin
+    manifest: `claude plugin validate --strict` fails a manifest carrying a field the format does
+    not know, and a keyword would hide a load-bearing string in an open discovery vocabulary where
+    no reader could tell it mattered. The sidecar sits outside `.claude-plugin/`, so the format's
+    checker never reads it.
+    #>
+    param([string]$PluginDir)
+    $sidecar = Join-Path $PluginDir 'kit.json'
+    if (-not (Test-Path -LiteralPath $sidecar)) { return $false }
+    try { $data = (Get-Content -LiteralPath $sidecar -Raw) | ConvertFrom-Json } catch { return $false }
+    return ($data.channel -eq 'marketplace')
+}
+
+function Get-KitFullPath {
+    <#
+    One comparable spelling of a path. git answers with forward slashes and the shell with
+    backslashes, either can carry a trailing separator, and Windows paths differ in case without
+    differing at all, so two spellings of one directory have to be folded before they are compared.
+    #>
+    param([string]$Path)
+    if (-not $Path) { return '' }
+    $full = [System.IO.Path]::GetFullPath($Path.Replace('/', '\'))
+    return $full.TrimEnd('\').ToLowerInvariant()
+}
+
+function Get-KitOrigin {
+    <#
+    Where this clone of the kit came from, as an owner/repository pair and the commit it sits on.
+    A scaffolded project pins its plugin source to exactly that, so the project takes the kit at
+    the version it was scaffolded from and nothing moves under it later.
+
+    Read from git at install time and never committed: the pair is a real account name, which the
+    push guard would flag in a tracked file, and it is per machine anyway. Returns $null when git
+    is missing, when the repository it finds is not this tree, when there is no origin, or when
+    either value does not have the shape it should. The caller then writes no plugin source at
+    all and says so, rather than shipping a source that cannot resolve.
+
+    The repository has to BE this tree. `git -C` walks up until it finds one, so a kit unpacked
+    inside somebody else's clone would otherwise be read as that clone, and its private remote and
+    its commit would land in a file the adopter is invited to commit.
+    #>
+    param([string]$Root)
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return $null }
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $top = ((& git -C $Root rev-parse --show-toplevel 2>$null) | Out-String).Trim()
+        $url = ((& git -C $Root remote get-url origin 2>$null) | Out-String).Trim()
+        $sha = ((& git -C $Root rev-parse HEAD 2>$null) | Out-String).Trim()
+    } finally { $ErrorActionPreference = $previous }
+    if (-not $top) { return $null }
+    if ((Get-KitFullPath $top) -ne (Get-KitFullPath $Root)) { return $null }
+    if ($url -notmatch '[:/]([^/:]+)/([^/]+?)(?:\.git)?$') { return $null }
+    $slug = $matches[1] + '/' + $matches[2]
+    if ($sha -notmatch '^[0-9a-f]{40}$') { return $null }
+    return [pscustomobject]@{ Slug = $slug; Sha = $sha }
+}
+
 function Get-KitMissingDirs {
     # Read before anything is written, so a dry run can name the folders a real run would create.
     param($Pairs)

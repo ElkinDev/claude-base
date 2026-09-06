@@ -158,6 +158,30 @@ if ($Project) {
     foreach ($hook in @('branch-check.ps1', 'branch-upstream-fix.ps1')) {
         $pairs += New-KitPair (Join-Path $root "claude\hooks\$hook") (Join-Path $projClaude "hooks\$hook")
     }
+    # The project's settings are rendered, not copied. The tracked template names the source of
+    # the single-channel plugins with placeholders, because the real one is this clone and a real
+    # owner and repository committed to a shared template would be a leak. Both placeholders are
+    # filled from the clone the installer is running out of, pinned to the commit it sits on, so
+    # the project takes the plugins at exactly the version it was scaffolded from.
+    #
+    # A tree that cannot name its own source, a downloaded archive or a clone whose remote is not
+    # called origin, drops both keys instead of shipping the placeholders: a project pointed at a
+    # source that does not exist, with a plugin enabled against it, is worse off than a project
+    # with no plugin source at all. It is said out loud rather than passed over in silence.
+    $origin = Get-KitOrigin $root
+    $projSettings = (Get-Content -LiteralPath (Join-Path $tpl '.claude\settings.json') -Raw)
+    if ($origin) {
+        $projSettings = $projSettings.Replace('<owner>/<repo>', $origin.Slug).Replace('<pinned-commit>', $origin.Sha)
+    } else {
+        foreach ($key in @('extraKnownMarketplaces', 'enabledPlugins')) {
+            $projSettings = [regex]::Replace($projSettings, '(?sm)^  "' + $key + '": \{.*?^  \},\r?\n', '')
+        }
+        Write-Output "warn: this kit tree has no readable git origin, so the scaffolded project gets"
+        Write-Output "      no plugin source: extraKnownMarketplaces and enabledPlugins are left out."
+        Write-Output "      Install the plugins by hand, or scaffold from a clone with an origin remote."
+        Write-Output ""
+    }
+    $pairs += New-KitPair $null (Join-Path $projClaude 'settings.json') $projSettings
     if ($Sdd) {
         $pairs += Get-KitPairs (Join-Path $root 'claude\agents') (Join-Path $projClaude 'agents')
         $pairs += Get-KitPairs (Join-Path $tpl 'docs') (Join-Path $proj 'docs')
@@ -197,9 +221,19 @@ $pairs += Get-KitPairs (Join-Path $root 'claude\agents') (Join-Path $kitHome 'ag
 # sees no difference. A machine takes them through the installer or through the marketplace, never
 # both at once (README, "Plugin marketplace" in INSTALL.md). Read from the folder, so adding a
 # plugin needs no edit here.
+#
+# The exception is a plugin that declares itself single-channel: a scaffolded project enables it
+# for itself (see the project scope above), so copying its skills here would put two copies of
+# each on the machine, one bare and one namespaced, free to drift. The declaration is a keyword
+# in the plugin's own manifest, read here rather than a list of names held in this script, and a
+# keyword because the format's own checker fails --strict on a field it does not know.
 $pluginRoot = Join-Path $root 'plugins'
 if (Test-Path -LiteralPath $pluginRoot) {
     foreach ($plugin in (Get-ChildItem -LiteralPath $pluginRoot -Directory)) {
+        if (Test-KitPluginChannelOnly $plugin.FullName) {
+            Write-Output "skip plugin  $($plugin.Name) (single channel, installed with claude plugin install)"
+            continue
+        }
         $pairs += Get-KitPairs (Join-Path $plugin.FullName 'skills') (Join-Path $kitHome 'skills')
     }
 }

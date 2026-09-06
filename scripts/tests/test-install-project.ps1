@@ -164,6 +164,97 @@ try {
     $names = @(Get-KitPairs $src (Join-Path $base 'target') | ForEach-Object { Split-Path -Leaf $_.Target })
     Assert-True ($names -contains 'landing.py') 'the file the kit ships is installed'
     Assert-True ($names.Count -eq 1) ('and nothing else is, whatever the clone carries: ' + ($names -join ', '))
+
+    # ------------------------------------------ where a project takes plugins from
+    Write-Host "`r`nphase 10, a scaffolded project points at the clone it was scaffolded from"
+    $tracked = (Get-Content -LiteralPath (Join-Path $script:RepoRoot 'project-template\.claude\settings.json') -Raw)
+    Assert-Match $tracked '<owner>/<repo>' 'the tracked template still carries the placeholder'
+    Assert-Match $tracked '<pinned-commit>' 'and the placeholder commit beside it'
+    $scaffold = Join-Path $fresh '.claude\settings.json'
+    Assert-True (Test-Path -LiteralPath $scaffold) 'the scaffolded project got a settings.json of its own'
+    # Guarded, because a failure above must stay one FAIL line: reading a file that is not there
+    # would be a terminating error and would take the rest of this phase with it.
+    $written = if (Test-Path -LiteralPath $scaffold) { (Get-Content -LiteralPath $scaffold -Raw) } else { '' }
+    $parsed  = if ($written) { ($written | ConvertFrom-Json) } else { $null }
+    Assert-True (-not $written.Contains('<owner>/<repo>')) 'no placeholder survived into the copy that was written'
+    Assert-True (-not $written.Contains('<pinned-commit>')) 'neither did the commit placeholder'
+    $source = if ($parsed) { $parsed.extraKnownMarketplaces.'claude-base'.source } else { $null }
+    Assert-Regex ([string]$source.repo) '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$' 'the copy carries a real owner/repo pair'
+    Assert-Regex ([string]$source.sha) '^[0-9a-f]{40}$' 'and the commit of the clone it came from'
+    $enabled = if ($parsed) { $parsed.enabledPlugins } else { $null }
+    Assert-True ($enabled.'groundwork@claude-base' -eq $true) 'the single-channel plugin is enabled for the project'
+    Assert-True (-not (@($enabled.PSObject.Properties.Name) -contains 'delivery@claude-base')) `
+        'and the plugins the installer also copies are not, so nothing arrives twice'
+    Assert-True ($written.Contains('filter-gradle-output.py')) 'the hook the template already carried is still there'
+
+    # ------------------------------------- a kit tree that cannot name its source
+    Write-Host "`r`nphase 11, a kit tree with no readable origin writes no plugin source at all"
+    # A downloaded archive, or a clone whose remote is not called origin: the placeholders cannot
+    # be filled, and a project pointed at `<owner>/<repo>` with the plugin enabled against it is
+    # worse than a project with no plugin source. Staged as a copy carrying only what the project
+    # scope reads, and with no .git of any kind.
+    $bare = Join-Path $base 'kit-no-git'
+    New-Item -ItemType Directory -Force -Path (Join-Path $bare 'claude') | Out-Null
+    Copy-Item -LiteralPath (Join-Path $script:RepoRoot 'install.ps1') -Destination $bare
+    Copy-Item -LiteralPath (Join-Path $script:RepoRoot 'install') -Destination $bare -Recurse
+    Copy-Item -LiteralPath (Join-Path $script:RepoRoot 'project-template') -Destination $bare -Recurse
+    Copy-Item -LiteralPath (Join-Path $script:RepoRoot 'claude\hooks') -Destination (Join-Path $bare 'claude') -Recurse
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $bare '.git'))) 'the staged tree carries no git metadata'
+    $orphan = Join-Path $base 'orphan-app'
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = ((& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $bare 'install.ps1') `
+                    -Project $orphan 2>&1) | Out-String)
+        $code = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previous }
+    Assert-True ($code -eq 0) ("the run out of that tree still scaffolds the project (exit $code)")
+    Assert-Match $out 'no readable git origin' 'and says why the project gets no plugin source'
+    $orphanSettings = Join-Path $orphan '.claude\settings.json'
+    Assert-True (Test-Path -LiteralPath $orphanSettings) 'the project still gets its settings.json'
+    $orphanText = if (Test-Path -LiteralPath $orphanSettings) { (Get-Content -LiteralPath $orphanSettings -Raw) } else { '' }
+    Assert-True (-not $orphanText.Contains('extraKnownMarketplaces')) 'no plugin source is written'
+    Assert-True (-not $orphanText.Contains('enabledPlugins')) 'and no plugin is enabled against one'
+    Assert-True (-not $orphanText.Contains('<owner>/<repo>')) 'no placeholder was left behind either'
+    $orphanParsed = if ($orphanText) { ($orphanText | ConvertFrom-Json) } else { $null }
+    Assert-True ($null -ne $orphanParsed) 'what was written is still valid json'
+    Assert-True ($orphanText.Contains('filter-gradle-output.py')) 'and it still carries the hook wiring'
+
+    # The same case one level out, and the dangerous one: the kit tree unpacked inside somebody
+    # else's clone. `git -C` walks up until it finds a repository, so without a guard the
+    # ancestor's remote and commit are read as the kit's own and written into the scaffolded
+    # project: a private slug and a foreign sha, in a file the installer invites them to commit.
+    # The host here is a name no forge owns, so the fixture cannot itself trip the push guard.
+    $outerRepo = Join-Path $base 'host-repo'
+    New-Item -ItemType Directory -Force -Path $outerRepo | Out-Null
+    Invoke-Git @('init', '-q', $outerRepo) | Out-Null
+    Invoke-Git @('-C', $outerRepo, 'remote', 'add', 'origin',
+                 'https://example.invalid/acme-private/secret-monorepo.git') | Out-Null
+    Set-Content -LiteralPath (Join-Path $outerRepo 'README.md') -Value 'a repository of their own' -Encoding UTF8
+    Invoke-Git @('-C', $outerRepo, 'add', '-A') | Out-Null
+    Invoke-Git @('-C', $outerRepo, '-c', 'user.name=suite', '-c', 'user.email=suite-identity',
+                 'commit', '-q', '-m', 'first') | Out-Null
+    $ancestorSha = (Invoke-Git @('-C', $outerRepo, 'rev-parse', 'HEAD')).Trim()
+    Assert-Regex $ancestorSha '^[0-9a-f]{40}$' 'the host repository has a commit of its own'
+    Copy-Item -LiteralPath $bare -Destination (Join-Path $outerRepo 'kit') -Recurse
+    $nested = Join-Path $base 'nested-app'
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = ((& powershell -NoProfile -ExecutionPolicy Bypass `
+                    -File (Join-Path $outerRepo 'kit\install.ps1') -Project $nested 2>&1) | Out-String)
+        $code = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previous }
+    Assert-True ($code -eq 0) ("the run out of a tree inside another repository succeeds (exit $code)")
+    Assert-Match $out 'no readable git origin' 'and warns, because that repository is not the kit'
+    $nestedSettings = Join-Path $nested '.claude\settings.json'
+    Assert-True (Test-Path -LiteralPath $nestedSettings) 'the project still gets its settings.json'
+    $nestedText = if (Test-Path -LiteralPath $nestedSettings) { (Get-Content -LiteralPath $nestedSettings -Raw) } else { '' }
+    Assert-True (-not $nestedText.Contains('extraKnownMarketplaces')) 'no plugin source is written'
+    Assert-True (-not $nestedText.Contains('enabledPlugins')) 'and no plugin is enabled against one'
+    Assert-True (-not $nestedText.Contains('acme-private')) 'the host repository slug is nowhere in it'
+    Assert-True (-not $nestedText.Contains('secret-monorepo')) 'nor the rest of that slug'
+    Assert-True (-not $nestedText.Contains($ancestorSha)) 'nor the commit of the repository it sat in'
 } finally {
     if (Test-Path -LiteralPath $worktree) {
         Invoke-Git @('-C', $main, 'worktree', 'remove', '--force', $worktree) | Out-Null
