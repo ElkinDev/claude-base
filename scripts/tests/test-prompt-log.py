@@ -27,6 +27,7 @@ HEADER = "Last typed prompts of this session (owner or the analyst relay), verba
 ENTRY_CAP = 1500
 FILE_CAP = 200_000
 BLOCK_CAP = 6000
+BOM = b"\xef\xbb\xbf"
 
 
 def run_hook(payload, checkpoint_dir, args=()):
@@ -135,6 +136,40 @@ class PromptLogTest(unittest.TestCase):
         for line in lines:
             self.assertRegex(line, STAMP, "a partial line survived the trim")
         self.assertEqual(self.text_of(lines[-1]), "la ultima")
+
+    def test_a_tail_without_a_line_boundary_keeps_the_prompt_just_written(self):
+        """A log whose last FILE_CAP bytes hold no earlier newline: the only boundary is the
+        terminator of the line just appended, so cutting at it would empty the file."""
+        os.makedirs(self.checkpoints, exist_ok=True)
+        with open(self.log, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("z" * 300_000)
+        self.append("la ultima")
+        size = os.path.getsize(self.log)
+        self.assertGreater(size, 0, "the trim emptied the log")
+        self.assertLessEqual(size, FILE_CAP)
+        with open(self.log, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertTrue(text.rstrip("\n").endswith("la ultima"), text[-60:])
+        code, out, err = run_hook(self.payload(""), self.checkpoints, args=["--recover"])
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("No prompt log", out, "the trim lost the whole log")
+
+    # --------------------------------------------------------------- the BOM PowerShell pipes
+    def test_a_payload_behind_a_utf8_bom_is_still_logged(self):
+        raw = BOM + json.dumps(self.payload("con bom")).encode("utf-8")
+        code, out, err = run_hook(raw, self.checkpoints)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "")
+        self.assertEqual(self.text_of(self.lines()[0]), "con bom")
+
+    def test_recover_reads_a_payload_behind_a_utf8_bom(self):
+        self.append("primera")
+        raw = BOM + json.dumps(self.payload("")).encode("utf-8")
+        code, out, err = run_hook(raw, self.checkpoints, args=["--recover"])
+        self.assertEqual(code, 0, err)
+        lines = [line for line in out.split("\n") if line]
+        self.assertEqual(lines[0], HEADER + self.log + ":")
+        self.assertEqual(self.text_of(lines[1]), "primera")
 
     # --------------------------------------------------------------- reading it back
     def test_recover_prints_the_last_entries_under_the_header(self):

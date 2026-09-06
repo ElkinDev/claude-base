@@ -63,7 +63,15 @@ def entry_text(prompt):
 
 
 def trim(path):
-    """Keep the last FILE_CAP bytes of the file, whole lines only."""
+    """Keep the last FILE_CAP bytes of the file, whole lines only.
+
+    The first line of that tail is normally half a line, so it goes. When the only newline in
+    the tail is the terminator of the line just appended, or there is none at all, cutting there
+    would throw the whole log away, so the tail is kept as it stands: a prompt that survives with
+    a ragged first line beats a file emptied by its own trim. The rewrite goes through a
+    temporary file and os.replace, so a process killed mid-trim leaves the old file, not a
+    truncated one.
+    """
     try:
         if os.path.getsize(path) <= FILE_CAP:
             return
@@ -71,9 +79,12 @@ def trim(path):
             handle.seek(-FILE_CAP, os.SEEK_END)
             data = handle.read()
         cut = data.find(b"\n")
-        data = data[cut + 1:] if cut >= 0 else b""
-        with open(path, "wb") as handle:
+        if 0 <= cut < len(data) - 1:
+            data = data[cut + 1:]
+        temp = path + ".trim"
+        with open(temp, "wb") as handle:
             handle.write(data)
+        os.replace(temp, path)
     except Exception:
         pass
 
@@ -126,7 +137,9 @@ def write(text):
 
 def main(argv):
     try:
-        data = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace") or "{}")
+        # utf-8-sig, not utf-8: PowerShell 5.1 puts a BOM in front of anything it pipes to a
+        # native command, and a BOM left in the text makes json.loads raise on a good payload.
+        data = json.loads(sys.stdin.buffer.read().decode("utf-8-sig", "replace") or "{}")
     except Exception:
         data = {}
     if not isinstance(data, dict):
