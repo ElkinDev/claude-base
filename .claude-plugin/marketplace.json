@@ -3,7 +3,7 @@
   "owner": {
     "name": "claude-base"
   },
-  "description": "The skill sets of the claude-base kit that only make sense whole: the delivery pipeline, and running several agents at once.",
+  "description": "The skill sets of the claude-base kit that only make sense whole: the delivery pipeline, running several agents at once, and the work before the code.",
   "plugins": [
     {
       "name": "delivery",
@@ -14,6 +14,11 @@
       "name": "orchestration",
       "source": "./plugins/orchestration",
       "description": "Running several agents at once: the law sheet for waves of implementers under one build mutex, and how to drive the Herdr panes that host them."
+    },
+    {
+      "name": "groundwork",
+      "source": "./plugins/groundwork",
+      "description": "The work before the code: the vocabulary a design conversation runs on, and a spec cut into vertical slices that declare what blocks them."
     }
   ]
 }

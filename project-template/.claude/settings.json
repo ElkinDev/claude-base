@@ -1,5 +1,17 @@
 {
   "env": {},
+  "extraKnownMarketplaces": {
+    "claude-base": {
+      "source": {
+        "source": "github",
+        "repo": "<owner>/<repo>",
+        "sha": "<pinned-commit>"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "groundwork@claude-base": true
+  },
   "hooks": {
     "PreToolUse": [
       {

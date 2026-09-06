@@ -97,6 +97,7 @@ would rather take them from Claude Code's own plugin channel than run the instal
 claude plugin marketplace add <owner>/<repo>
 claude plugin install delivery@claude-base
 claude plugin install orchestration@claude-base
+claude plugin install groundwork@claude-base
 ```
 `delivery` carries story, sdd and work-item; `orchestration` carries wave-orchestration and
 herdr-driving. Installed this way they are namespaced, so you invoke `/delivery:story`,
@@ -108,6 +109,13 @@ One channel per machine. The installer copies those same five skills into the ki
 bare names, so a machine that did both would carry two copies of each and they would drift. Pick the
 installer or the marketplace, and note that everything else the kit ships, the agents, the hooks, the
 status line and the settings, comes through the installer only.
+
+`groundwork` is the exception, and it is the third line above on every machine, installer or not.
+The installer skips it on purpose, which is why its skills exist in one form only, invoked as
+`/groundwork:codebase-design` and `/groundwork:slice-plan`. That makes the rule above true per skill
+and not only per machine. A project scaffolded with `install.ps1 -Project` enables the plugin for
+itself and pins it to the commit of the clone it was scaffolded from, so a fresh project has those
+skills the first time it is opened, with no install step of its own.
 
 ## Guard before you push
 This repo carries a guard that blocks a push carrying a personal home path, a real email address, a

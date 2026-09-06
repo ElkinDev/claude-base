@@ -29,6 +29,45 @@ function New-KitPair {
     return [pscustomobject]@{ Source = $Source; Target = $Target; Text = $Text }
 }
 
+function Test-KitPluginChannelOnly {
+    <#
+    Whether a plugin says it reaches a machine one way only, through `claude plugin install`. The
+    installer skips those, so no skill can arrive twice, once bare and once namespaced. It is a
+    keyword rather than a field of its own because `claude plugin validate --strict` fails a
+    manifest carrying a field the format does not know.
+    #>
+    param([string]$PluginDir)
+    $manifest = Join-Path $PluginDir '.claude-plugin\plugin.json'
+    if (-not (Test-Path -LiteralPath $manifest)) { return $false }
+    try { $data = (Get-Content -LiteralPath $manifest -Raw) | ConvertFrom-Json } catch { return $false }
+    return (@($data.keywords) -contains 'plugin-channel-only')
+}
+
+function Get-KitOrigin {
+    <#
+    Where this clone of the kit came from, as an owner/repository pair and the commit it sits on.
+    A scaffolded project pins its plugin source to exactly that, so the project takes the kit at
+    the version it was scaffolded from and nothing moves under it later.
+
+    Read from git at install time and never committed: the pair is a real account name, which the
+    push guard would flag in a tracked file, and it is per machine anyway. Returns $null when git
+    is missing, when there is no origin, or when either value does not have the shape it should,
+    and the caller then leaves the placeholders of the template in place.
+    #>
+    param([string]$Root)
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return $null }
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $url = ((& git -C $Root remote get-url origin 2>$null) | Out-String).Trim()
+        $sha = ((& git -C $Root rev-parse HEAD 2>$null) | Out-String).Trim()
+    } finally { $ErrorActionPreference = $previous }
+    if ($url -notmatch '[:/]([^/:]+)/([^/]+?)(?:\.git)?$') { return $null }
+    $slug = $matches[1] + '/' + $matches[2]
+    if ($sha -notmatch '^[0-9a-f]{40}$') { return $null }
+    return [pscustomobject]@{ Slug = $slug; Sha = $sha }
+}
+
 function Get-KitMissingDirs {
     # Read before anything is written, so a dry run can name the folders a real run would create.
     param($Pairs)

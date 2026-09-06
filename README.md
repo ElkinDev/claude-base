@@ -46,14 +46,20 @@ project-template/           -> copy into each project
   CLAUDE.project.md         the active profile to fill per project
   profiles/                 examples: azure-devops-dotnet, jira-git, plain-git, personal-notes
   .claude/settings.local.json   project hook wiring (branch hooks)
+  .claude/settings.json     plugin source and the plugins a scaffolded project enables, rendered
+                            by the installer from the clone it runs out of
   docs/                     spec structure for spec-driven projects (for /sdd, /delivery:sdd from the marketplace)
 .claude-plugin/             marketplace manifest: the plugins this repository publishes
-plugins/                    the five skills that only make sense as a set, packaged for
-                            `claude plugin`. Same files, second channel: a machine takes them
-                            through the installer or through the marketplace, never both
+plugins/                    the skills that only make sense as a set, packaged for `claude plugin`.
+                            For five of them these are the same files on a second channel: a
+                            machine takes those through the installer or the plugin channel,
+                            never both. The third plugin has one channel of its own
   delivery/                 story, sdd, work-item: one task from the tracker to the evidence pack
   orchestration/            wave-orchestration, herdr-driving: several agents at once, and the
                             panes that host them
+  groundwork/               design vocabulary and spec slicing, skipped by the installer so its
+                            two skills exist only as `/groundwork:...`; carries its own NOTICE.md
+THIRD-PARTY-NOTICES.md      the upstream licence of the skills derived from a third-party set
 herdr/                      Herdr multiplexer config, the Ctrl+Alt+N global hotkey, the verified
                             version and the CLI surface the kit drives
 scripts/                    zero-token tooling: usage ledger and board, compaction watcher and report,
@@ -106,12 +112,19 @@ On a machine that does not run the installer, the two skill sets come from the m
 claude plugin marketplace add <owner>/<repo>
 claude plugin install delivery@claude-base
 claude plugin install orchestration@claude-base
+claude plugin install groundwork@claude-base
 ```
 One channel per machine, never both. From the marketplace the five skills arrive namespaced
 (`/delivery:story`, `/delivery:sdd`, `/orchestration:wave-orchestration`); from the installer they
 land under their bare names (`/story`, `/sdd`, ...) exactly as before. A machine that took both
 would carry two copies of each, free to drift apart. Everything else, the agents, the hooks and the
 status line, has one channel only: the installer.
+
+`groundwork` is the third line above and it belongs on every machine, because the installer skips
+it deliberately. Its skills therefore have a single form, `/groundwork:codebase-design` and
+`/groundwork:slice-plan`, and the rule holds per skill rather than only per machine. A project
+scaffolded with `-Project` enables the plugin for itself, pinned to the commit of the clone that
+scaffolded it, so it has them on first open.
 
 See `INSTALL.md` for a full setup, including another machine, Herdr, and the hotkey. Installing into
 a repository that already has company rules, git hooks or lint wiring is covered on its own in
