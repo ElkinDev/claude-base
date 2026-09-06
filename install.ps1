@@ -162,12 +162,24 @@ if ($Project) {
     # the single-channel plugins with placeholders, because the real one is this clone and a real
     # owner and repository committed to a shared template would be a leak. Both placeholders are
     # filled from the clone the installer is running out of, pinned to the commit it sits on, so
-    # the project takes the plugins at exactly the version it was scaffolded from. A clone with
-    # no readable origin keeps the placeholders and the project simply gets no plugin source.
+    # the project takes the plugins at exactly the version it was scaffolded from.
+    #
+    # A tree that cannot name its own source, a downloaded archive or a clone whose remote is not
+    # called origin, drops both keys instead of shipping the placeholders: a project pointed at a
+    # source that does not exist, with a plugin enabled against it, is worse off than a project
+    # with no plugin source at all. It is said out loud rather than passed over in silence.
     $origin = Get-KitOrigin $root
     $projSettings = (Get-Content -LiteralPath (Join-Path $tpl '.claude\settings.json') -Raw)
     if ($origin) {
         $projSettings = $projSettings.Replace('<owner>/<repo>', $origin.Slug).Replace('<pinned-commit>', $origin.Sha)
+    } else {
+        foreach ($key in @('extraKnownMarketplaces', 'enabledPlugins')) {
+            $projSettings = [regex]::Replace($projSettings, '(?sm)^  "' + $key + '": \{.*?^  \},\r?\n', '')
+        }
+        Write-Output "warn: this kit tree has no readable git origin, so the scaffolded project gets"
+        Write-Output "      no plugin source: extraKnownMarketplaces and enabledPlugins are left out."
+        Write-Output "      Install the plugins by hand, or scaffold from a clone with an origin remote."
+        Write-Output ""
     }
     $pairs += New-KitPair $null (Join-Path $projClaude 'settings.json') $projSettings
     if ($Sdd) {

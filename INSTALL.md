@@ -92,7 +92,9 @@ See `herdr/README.md`. In short:
 
 ## Plugin marketplace
 The five skills that only make sense as a set are also published as two plugins, for a machine that
-would rather take them from Claude Code's own plugin channel than run the installer:
+would rather take them from Claude Code's own plugin channel than run the installer. A third plugin,
+`groundwork`, carries two more that reach a machine this way and no other, so the block below
+installs three:
 ```
 claude plugin marketplace add <owner>/<repo>
 claude plugin install delivery@claude-base

@@ -32,15 +32,19 @@ function New-KitPair {
 function Test-KitPluginChannelOnly {
     <#
     Whether a plugin says it reaches a machine one way only, through `claude plugin install`. The
-    installer skips those, so no skill can arrive twice, once bare and once namespaced. It is a
-    keyword rather than a field of its own because `claude plugin validate --strict` fails a
-    manifest carrying a field the format does not know.
+    installer skips those, so no skill can arrive twice, once bare and once namespaced.
+
+    It is declared in `kit.json` at the plugin root, a file this kit owns, and not in the plugin
+    manifest: `claude plugin validate --strict` fails a manifest carrying a field the format does
+    not know, and a keyword would hide a load-bearing string in an open discovery vocabulary where
+    no reader could tell it mattered. The sidecar sits outside `.claude-plugin/`, so the format's
+    checker never reads it.
     #>
     param([string]$PluginDir)
-    $manifest = Join-Path $PluginDir '.claude-plugin\plugin.json'
-    if (-not (Test-Path -LiteralPath $manifest)) { return $false }
-    try { $data = (Get-Content -LiteralPath $manifest -Raw) | ConvertFrom-Json } catch { return $false }
-    return (@($data.keywords) -contains 'plugin-channel-only')
+    $sidecar = Join-Path $PluginDir 'kit.json'
+    if (-not (Test-Path -LiteralPath $sidecar)) { return $false }
+    try { $data = (Get-Content -LiteralPath $sidecar -Raw) | ConvertFrom-Json } catch { return $false }
+    return ($data.channel -eq 'marketplace')
 }
 
 function Get-KitOrigin {

@@ -6,10 +6,12 @@ paths, integration branch, git discipline, evidence root, local environment) liv
 applies. A rule without its reason breaks on the first edge case.
 
 Skill names in this file are written bare, which is the form `install.ps1` leaves on a machine. A
-machine that took the kit through the plugin marketplace gets the same five skills namespaced, and
+machine that took the kit through the plugin channel gets the same five skills namespaced, and
 invokes them as `/delivery:story`, `/delivery:sdd`, `/delivery:work-item`,
-`/orchestration:wave-orchestration` and `/orchestration:herdr-driving`. Read a bare name here as
-the installer form, and add the plugin prefix when the machine took the marketplace route.
+`/orchestration:wave-orchestration` and `/orchestration:herdr-driving`. Two more exist in that form
+alone, `/groundwork:codebase-design` and `/groundwork:slice-plan`, because the installer skips their
+plugin on purpose, so seven skills carry a prefix there. Read a bare name here as the installer
+form, and add the plugin prefix when the machine took the plugin route.
 
 ## Language and voice
 - Language by audience. Spanish (or whatever language the owner writes in) is used ONLY in text

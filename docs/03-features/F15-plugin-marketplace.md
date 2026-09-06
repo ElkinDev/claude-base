@@ -1,12 +1,12 @@
 # F15: Plugin marketplace
 
-Status: proposal. The tree carries the manifests, the two plugins and the installer change; nothing is reviewed or merged yet, and no FR covers this channel: the requirement is proposed with the feature.
+Status: proposal. The tree carries the manifests, the two plugins this feature introduces and the installer change; nothing is reviewed or merged yet, and no FR covers this channel: the requirement is proposed with the feature. A third plugin was added later by F17 and is specified there, so the tree now holds three.
 
 Stories: US-001, US-007. Depends on: ADR-002 (two-layer model), ADR-003 (the Claude-native SKILL.md is the canonical source). Neither is changed: a plugin is a second way to deliver the same files, not a second format.
 
 ## Summary
 
-Publish the skills that only make sense as a set through Claude Code's own plugin channel, so a machine can take them with `claude plugin install` instead of running the installer. `.claude-plugin/marketplace.json` at the root lists two plugins under `plugins/`: `delivery` (story, sdd, work-item) and `orchestration` (wave-orchestration, herdr-driving). Each carries its own `.claude-plugin/plugin.json` and its skills at `skills/<name>/SKILL.md`, byte for byte the files that were under `claude/skills/`.
+Publish the skills that only make sense as a set through Claude Code's own plugin channel, so a machine can take them with `claude plugin install` instead of running the installer. `.claude-plugin/marketplace.json` at the root lists the plugins under `plugins/`. This feature adds two of them: `delivery` (story, sdd, work-item) and `orchestration` (wave-orchestration, herdr-driving); the third, `groundwork`, belongs to F17. Each carries its own `.claude-plugin/plugin.json` and its skills at `skills/<name>/SKILL.md`, byte for byte the files that were under `claude/skills/`.
 
 ## Behavior
 
@@ -26,7 +26,7 @@ A `core` plugin for the remaining fifteen skills. It needs two things this featu
 
 ## Acceptance
 
-- The marketplace root and both plugins pass `claude plugin validate` and `claude plugin validate --strict`, with no warning.
+- The marketplace root and every plugin the file lists pass `claude plugin validate` and `claude plugin validate --strict`, with no warning.
 - A fresh `install.ps1` run lands `skills/story/SKILL.md` and `skills/wave-orchestration/SKILL.md` at the kit home, asserted by `scripts/tests/test-install-smoke.ps1`.
 - No skill directory name exists under both `claude/skills` and a plugin, asserted by `scripts/tests/test-marketplace.py`.
 - Every skill name `project-template/CLAUDE.md` hands a reader resolves under `claude/skills` or under a plugin.

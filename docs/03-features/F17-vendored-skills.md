@@ -13,7 +13,7 @@ The upstream text is not vendored as it stands. Each file is rewritten in the ki
 ## Behavior
 
 - `decision-rounds` cannot live in a plugin. It is preloaded by `claude/agents/analyst.md`, an agent definition names a skill bare, and the harness resolves that name at the kit home (F15, "Edge cases"). It therefore sits under `claude/skills/` and reaches a machine through the installer only.
-- `groundwork` declares itself single-channel with the keyword `plugin-channel-only` in its own manifest, and `install.ps1` skips any plugin carrying it. The declaration is a keyword and not a field of its own because `claude plugin validate --strict` fails a manifest that carries a field the format does not know.
+- `groundwork` declares itself single-channel in `plugins/groundwork/kit.json`, a sidecar this kit owns holding `{"channel": "marketplace"}`, and `install.ps1` skips any plugin carrying one. It is not in the plugin manifest for two reasons: `claude plugin validate --strict` fails a manifest that carries a field the format does not know, and `keywords`, the one field that would have taken the string, is an open discovery vocabulary where nothing tells a reader that one entry is load bearing. The sidecar sits outside `.claude-plugin/`, so the format's checker never reads it.
 - A scaffolded project enables `groundwork` for itself. `project-template/.claude/settings.json` carries `extraKnownMarketplaces` and `enabledPlugins`, with the owner, the repository and the commit as placeholders. `install.ps1 -Project` fills them from the clone it is running out of, pinning the source to the commit the clone sits on. The tracked template keeps the placeholders, because a real account name in a shared file is what the push guard exists to catch.
 - The invariant becomes stronger, not weaker. It used to read "one channel per machine"; it now reads "one channel per skill", which is true on every machine whatever its owner installed. `delivery` and `orchestration` are unchanged and stay out of `enabledPlugins`, since the installer still copies them.
 - No skill names a tracker, a triage label or a scratch folder. Where the upstream text published to a tracker, the kit's version writes a file under the docs tree and stops; anything that has to reach a tracker goes through `work-item`, which reads the profile.
@@ -21,7 +21,7 @@ The upstream text is not vendored as it stands. Each file is rewritten in the ki
 
 ## Edge cases
 
-- `install.ps1` running from a clone with no readable origin leaves the placeholders in the scaffolded settings, and the project simply has no plugin source until someone fills it in. It is not an error: the rest of the scaffold is unaffected.
+- `install.ps1` running from a tree with no readable origin, a downloaded archive or a clone whose remote is not called origin, writes neither `extraKnownMarketplaces` nor `enabledPlugins` into the scaffolded settings, and says so in a warning naming both keys. Shipping the placeholders would point a project at a source that does not exist with a plugin enabled against it, which is worse than having no plugin source. The rest of the scaffold is unaffected and the run still succeeds.
 - The person guard in `scripts/tests/test-marketplace.py` matches two capitalised words in a row anywhere in a manifest value and its waiver set is empty, so the new manifest and the new entry are written to carry none.
 - A refresh from upstream is a comparison, not a re-copy. The notices pin the commit the files were taken at, so a later change upstream can be read as a diff against it and applied, or declined, on purpose.
 
@@ -33,7 +33,7 @@ The rest of the upstream library. Its remaining skills either assume a tracker t
 
 - The root and all three plugins pass `claude plugin validate` and `claude plugin validate --strict` with no warning.
 - `python scripts/tests/test-marketplace.py` is green, including the person guard over the new manifest values and the set intersection that proves no skill name exists under both `claude/skills` and a plugin.
-- A fresh `install.ps1` run lands `skills/decision-rounds/SKILL.md` at the kit home and lands neither skill of the single-channel plugin, asserted by `scripts/tests/test-install-smoke.ps1` against the manifests rather than a list of names.
-- `install.ps1 -Project` writes a `.claude/settings.json` carrying a real owner, repository and commit, while the tracked template still carries its placeholders, asserted by `scripts/tests/test-install-project.ps1`.
+- A fresh `install.ps1` run lands `skills/decision-rounds/SKILL.md` at the kit home and lands neither skill of the single-channel plugin, asserted by `scripts/tests/test-install-smoke.ps1` against the sidecars rather than a list of names.
+- `install.ps1 -Project` writes a `.claude/settings.json` carrying a real owner, repository and commit, while the tracked template still carries its placeholders; from a tree with no origin it writes neither key and warns. Both asserted by `scripts/tests/test-install-project.ps1`.
 - `claude/agents/analyst.md` plus the bodies of the skills it preloads stays under 8000 bytes, and no other agent's total grows.
 - Both notice files carry the MIT text and the upstream commit, and each vendored file is named by the notice of the channel it ships on.

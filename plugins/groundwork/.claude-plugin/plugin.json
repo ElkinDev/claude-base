@@ -2,9 +2,6 @@
   "name": "groundwork",
   "description": "The work before the code: the vocabulary a design conversation runs on, and a feature spec cut into vertical slices that each declare what blocks them.",
   "version": "0.1.0",
-  "keywords": [
-    "plugin-channel-only"
-  ],
   "author": {
     "name": "claude-base"
   }
