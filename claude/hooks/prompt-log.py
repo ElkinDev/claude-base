@@ -62,15 +62,30 @@ def entry_text(prompt):
     return text
 
 
+def ends_with_newline(path):
+    """True when the file is absent, empty or already ends with a line break."""
+    try:
+        size = os.path.getsize(path)
+        if size == 0:
+            return True
+        with open(path, "rb") as handle:
+            handle.seek(-1, os.SEEK_END)
+            return handle.read(1) == b"\n"
+    except Exception:
+        return True
+
+
 def trim(path):
     """Keep the last FILE_CAP bytes of the file, whole lines only.
 
-    The first line of that tail is normally half a line, so it goes. When the only newline in
-    the tail is the terminator of the line just appended, or there is none at all, cutting there
-    would throw the whole log away, so the tail is kept as it stands: a prompt that survives with
-    a ragged first line beats a file emptied by its own trim. The rewrite goes through a
-    temporary file and os.replace, so a process killed mid-trim leaves the old file, not a
-    truncated one.
+    The tail starts mid line, so everything up to the first newline goes and what is kept is
+    whole lines only, the freshly appended one always among them: append never glues an entry to
+    a file that does not end with a newline, so the last line of the tail is always a whole entry
+    and cutting at that first newline can never leave a ragged fragment behind. The one shape
+    that cannot be cut, a tail whose only newline is its last byte or that has none at all, is
+    kept as it stands rather than emptied, which is a file that no longer comes from this hook.
+    The rewrite goes through a temporary file and os.replace, so a process killed mid-trim leaves
+    the old file, not a truncated one.
     """
     try:
         if os.path.getsize(path) <= FILE_CAP:
@@ -99,8 +114,11 @@ def append(data):
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        # A log left without its final newline, by a kill mid-write or by a hand that edited it,
+        # would swallow this entry into its last line. The separator keeps every entry a line.
+        lead = "" if ends_with_newline(path) else "\n"
         with open(path, "a", encoding="utf-8", newline="\n") as handle:
-            handle.write(f"- {stamp} {text}\n")
+            handle.write(f"{lead}- {stamp} {text}\n")
         trim(path)
     except Exception:
         pass

@@ -147,12 +147,22 @@ class PromptLogTest(unittest.TestCase):
         size = os.path.getsize(self.log)
         self.assertGreater(size, 0, "the trim emptied the log")
         self.assertLessEqual(size, FILE_CAP)
-        with open(self.log, encoding="utf-8") as handle:
-            text = handle.read()
-        self.assertTrue(text.rstrip("\n").endswith("la ultima"), text[-60:])
+        lines = self.lines()
+        for line in lines:
+            self.assertRegex(line, STAMP, "the trim kept a ragged line")
+        self.assertEqual(self.text_of(lines[-1]), "la ultima")
         code, out, err = run_hook(self.payload(""), self.checkpoints, args=["--recover"])
         self.assertEqual(code, 0, err)
         self.assertNotIn("No prompt log", out, "the trim lost the whole log")
+        self.assertIn("la ultima", out, "the block came back without the entry that was kept")
+
+    def test_a_file_that_does_not_end_with_a_newline_gets_a_line_of_its_own(self):
+        os.makedirs(self.checkpoints, exist_ok=True)
+        with open(self.log, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("- 2026-09-01 10:00 sin salto de linea")
+        self.append("la siguiente")
+        self.assertEqual([self.text_of(line) for line in self.lines()],
+                         ["sin salto de linea", "la siguiente"])
 
     # --------------------------------------------------------------- the BOM PowerShell pipes
     def test_a_payload_behind_a_utf8_bom_is_still_logged(self):
