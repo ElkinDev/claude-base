@@ -167,6 +167,24 @@ class RulingsBlockCase(unittest.TestCase):
         out = self.run_hook(path, args=("--rulings",))
         self.assertEqual(out, "No rulings yet in %s." % path)
 
+    # --- the defaults of a public hook ------------------------------------
+    def test_the_hook_carries_no_path_of_one_machine(self):
+        """The kit is installed on any home, so a default that names a drive letter
+        and somebody's folder is a default that works on one machine only. The three
+        defaults are home-relative and the env seams move them from there."""
+        with open(HOOK, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+        # The offending lines are named, not the whole file: a failure here has to be
+        # readable, and printing the source drowns it.
+        guilty = ["%d: %s" % (n, line) for n, line in enumerate(lines, 1)
+                  if "C:/" in line or "C:\\" in line]
+        self.assertEqual(guilty, [], "the hook names a path of one machine")
+        home = os.path.expanduser("~")
+        for name in ("RULINGS_FILE", "LANE_STATE_SCRIPT", "LANE_STATE_SHEET"):
+            value = getattr(hook, name)
+            self.assertTrue(os.path.normcase(value).startswith(os.path.normcase(home)),
+                            "%s is not under the home dir: %s" % (name, value))
+
     # --- the --rulings mode -----------------------------------------------
     def test_rulings_alone_prints_the_block_and_nothing_else(self):
         rows = [row(i) for i in range(1, 4)]

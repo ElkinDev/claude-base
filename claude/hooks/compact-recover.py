@@ -91,7 +91,7 @@ def disk_truth_section(path):
     return section
 
 
-RULINGS_FILE = "C:/Repo/project-evidence/rulings.md"
+RULINGS_FILE = os.path.join(os.path.expanduser("~"), ".claude", "rulings.md")
 RULINGS_ROWS = 30
 # The 26 rows the register opens with measure 7,275 characters with their heading, so a
 # smaller cap cuts the seed itself. The block prints before the state sheet, so what CAP
@@ -153,8 +153,8 @@ def rulings_block():
     return heading + RULINGS_MARKER
 
 
-LANE_STATE_SCRIPT = "C:/Repo/project-evidence/scripts/lane-state.py"
-LANE_STATE_SHEET = "C:/Repo/project-evidence/law.md"
+LANE_STATE_SCRIPT = os.path.join(os.path.expanduser("~"), ".claude", "tools", "lane-state.py")
+LANE_STATE_SHEET = os.path.join(os.path.expanduser("~"), ".claude", "law.md")
 SHEET_TIMEOUT = 5
 GATES_CAP = 700
 GATES_MARKER = "\n[gates cut]"
