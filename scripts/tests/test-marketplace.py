@@ -36,7 +36,7 @@ KEBAB = re.compile(r"^%s$" % TOKEN)
 # The guard is fail-closed by design: no lexical rule tells a person credit from a product
 # credit, so every capitalised pair reads as a person and a product name a manifest legitimately
 # publishes is an explicit, reviewed waiver here, one entry per pair. Empty today, because the
-# three manifests carry none. A waiver matches the full greedy hit, so a three word product name
+# four manifests carry none. A waiver matches the full greedy hit, so a three word product name
 # has to be listed as its whole match.
 WAIVED_NAMES = frozenset()
 # Two or more capitalised words in a row, searched anywhere in a value: anchored to the whole
@@ -178,11 +178,13 @@ class MarketplaceFile(unittest.TestCase):
             self.assertTrue(entry["description"].strip())
             self.assertTrue(re.match(r"^\d+\.\d+\.\d+$", manifest["version"]), manifest["version"])
 
-    def test_the_two_plugins_carry_the_skills_that_only_work_as_a_set(self):
+    def test_each_plugin_carries_the_skills_that_only_work_as_a_set(self):
         self.assertEqual(skill_dirs(os.path.join(PLUGINS, "delivery", "skills")),
                          ["sdd", "story", "work-item"])
         self.assertEqual(skill_dirs(os.path.join(PLUGINS, "orchestration", "skills")),
                          ["herdr-driving", "wave-orchestration"])
+        self.assertEqual(skill_dirs(os.path.join(PLUGINS, "groundwork", "skills")),
+                         ["codebase-design", "slice-plan"])
 
 
 class PluginSkills(unittest.TestCase):
@@ -198,7 +200,7 @@ class PluginSkills(unittest.TestCase):
                 self.assertEqual(data.get("name"), skill)
                 self.assertTrue(data.get("description", "").strip(), skill)
                 checked += 1
-        self.assertEqual(checked, 5)
+        self.assertEqual(checked, 7)
 
     def test_no_skill_is_offered_by_both_channels(self):
         # The load bearing one. A name on both sides installs twice, bare from install.ps1 and
@@ -267,8 +269,85 @@ class SkillNamingConvention(unittest.TestCase):
             self.assertIn(form, kit)
 
 
+class SingleChannelPlugin(unittest.TestCase):
+    """The plugin that reaches a machine one way only.
+
+    `install.ps1` copies every `plugins/*/skills/*` into the kit home under its bare name, so a
+    plugin whose skills a project is meant to take from the plugin channel would arrive twice.
+    The manifest says so itself, with a keyword the installer reads off the file rather than a
+    name list held in the script, and this class fixes what that declaration is.
+
+    The keyword carries it because the format's own checker rejects an invented top-level field:
+    `--strict` turns the unknown-field warning into a failure, and `keywords` is the field the
+    schema already has for a label like this one.
+    """
+
+    ONLY = "plugin-channel-only"
+
+    def keywords(self, plugin):
+        return read_json(os.path.join(PLUGINS, plugin, ".claude-plugin",
+                                      "plugin.json")).get("keywords", [])
+
+    def test_the_new_plugin_declares_the_single_channel(self):
+        self.assertIn(self.ONLY, self.keywords("groundwork"))
+
+    def test_the_two_older_plugins_declare_none_so_the_installer_still_copies_them(self):
+        for plugin in ("delivery", "orchestration"):
+            self.assertNotIn(self.ONLY, self.keywords(plugin), plugin)
+
+    def test_the_single_channel_skills_are_offered_by_nothing_else(self):
+        single = [name for name in plugin_names() if self.ONLY in self.keywords(name)]
+        self.assertEqual(single, ["groundwork"])
+        packed = set()
+        for plugin in single:
+            packed |= set(skill_dirs(os.path.join(PLUGINS, plugin, "skills")))
+        self.assertEqual(packed, {"codebase-design", "slice-plan"})
+        self.assertEqual(packed & set(skill_dirs(KIT_SKILLS)), set())
+
+    def test_the_skill_an_agent_preloads_stays_on_the_installer_channel(self):
+        # An agent definition names a skill bare and the harness resolves it at the kit home, so
+        # a preloaded skill cannot travel in a plugin (F15, "Edge cases"). decision-rounds is
+        # preloaded by the analyst, which is why it sits under claude/skills and nowhere else.
+        agent = read(os.path.join(ROOT, "claude", "agents", "analyst.md"))
+        self.assertIn("- decision-rounds", agent)
+        self.assertIn("decision-rounds", skill_dirs(KIT_SKILLS))
+        for plugin in plugin_names():
+            self.assertNotIn("decision-rounds",
+                             skill_dirs(os.path.join(PLUGINS, plugin, "skills")))
+
+
+class VendoredNotices(unittest.TestCase):
+    """Vendored text carries its upstream licence. The permission notice has to travel with both
+    channels, so it sits once at the repository root and once at the plugin root, and each names
+    the commit the files were taken at."""
+
+    COMMIT = "3cca18b"
+    PERMISSION = ("The above copyright notice and this permission notice shall be included in "
+                  "all\ncopies or substantial portions of the Software.")
+
+    def files(self):
+        return [os.path.join(ROOT, "THIRD-PARTY-NOTICES.md"),
+                os.path.join(PLUGINS, "groundwork", "NOTICE.md")]
+
+    def test_both_notices_carry_the_permission_text_and_the_upstream_commit(self):
+        for path in self.files():
+            text = read(path)
+            self.assertIn(self.PERMISSION, text, path)
+            self.assertIn("MIT License", text, path)
+            self.assertIn(self.COMMIT, text, path)
+
+    def test_each_vendored_file_is_named_by_the_notice_of_its_channel(self):
+        plugin = read(os.path.join(PLUGINS, "groundwork", "NOTICE.md"))
+        for skill in skill_dirs(os.path.join(PLUGINS, "groundwork", "skills")):
+            self.assertIn("skills/%s/" % skill, plugin, skill)
+        root = read(os.path.join(ROOT, "THIRD-PARTY-NOTICES.md"))
+        self.assertIn("claude/skills/decision-rounds/SKILL.md", root)
+        for skill in skill_dirs(os.path.join(PLUGINS, "groundwork", "skills")):
+            self.assertIn("plugins/groundwork/skills/%s/" % skill, root, skill)
+
+
 class ManifestHygiene(unittest.TestCase):
-    """The three json files are published. No person, no address, no personal attribution."""
+    """The four json files are published. No person, no address, no personal attribution."""
 
     def files(self):
         out = [MARKETPLACE]
@@ -284,7 +363,7 @@ class ManifestHygiene(unittest.TestCase):
                 for value in person_hits(quoted(read(path)), waived)]
 
     def test_no_manifest_carries_an_address_or_a_person(self):
-        self.assertEqual(len(self.files()), 3)
+        self.assertEqual(len(self.files()), 4)
         repository = read_json(MARKETPLACE)["name"]
         for path in self.files():
             text = read(path)

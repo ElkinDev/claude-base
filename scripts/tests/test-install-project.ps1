@@ -164,6 +164,28 @@ try {
     $names = @(Get-KitPairs $src (Join-Path $base 'target') | ForEach-Object { Split-Path -Leaf $_.Target })
     Assert-True ($names -contains 'landing.py') 'the file the kit ships is installed'
     Assert-True ($names.Count -eq 1) ('and nothing else is, whatever the clone carries: ' + ($names -join ', '))
+
+    # ------------------------------------------ where a project takes plugins from
+    Write-Host "`r`nphase 10, a scaffolded project points at the clone it was scaffolded from"
+    $tracked = (Get-Content -LiteralPath (Join-Path $script:RepoRoot 'project-template\.claude\settings.json') -Raw)
+    Assert-Match $tracked '<owner>/<repo>' 'the tracked template still carries the placeholder'
+    Assert-Match $tracked '<pinned-commit>' 'and the placeholder commit beside it'
+    $scaffold = Join-Path $fresh '.claude\settings.json'
+    Assert-True (Test-Path -LiteralPath $scaffold) 'the scaffolded project got a settings.json of its own'
+    # Guarded, because a failure above must stay one FAIL line: reading a file that is not there
+    # would be a terminating error and would take the rest of this phase with it.
+    $written = if (Test-Path -LiteralPath $scaffold) { (Get-Content -LiteralPath $scaffold -Raw) } else { '' }
+    $parsed  = if ($written) { ($written | ConvertFrom-Json) } else { $null }
+    Assert-True (-not $written.Contains('<owner>/<repo>')) 'no placeholder survived into the copy that was written'
+    Assert-True (-not $written.Contains('<pinned-commit>')) 'neither did the commit placeholder'
+    $source = if ($parsed) { $parsed.extraKnownMarketplaces.'claude-base'.source } else { $null }
+    Assert-Regex ([string]$source.repo) '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$' 'the copy carries a real owner/repo pair'
+    Assert-Regex ([string]$source.sha) '^[0-9a-f]{40}$' 'and the commit of the clone it came from'
+    $enabled = if ($parsed) { $parsed.enabledPlugins } else { $null }
+    Assert-True ($enabled.'groundwork@claude-base' -eq $true) 'the single-channel plugin is enabled for the project'
+    Assert-True (-not (@($enabled.PSObject.Properties.Name) -contains 'delivery@claude-base')) `
+        'and the plugins the installer also copies are not, so nothing arrives twice'
+    Assert-True ($written.Contains('filter-gradle-output.py')) 'the hook the template already carried is still there'
 } finally {
     if (Test-Path -LiteralPath $worktree) {
         Invoke-Git @('-C', $main, 'worktree', 'remove', '--force', $worktree) | Out-Null

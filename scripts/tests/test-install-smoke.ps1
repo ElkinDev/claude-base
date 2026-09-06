@@ -39,6 +39,27 @@ try {
         'a delivery plugin skill landed under its bare name'
     Assert-True (Test-Path -LiteralPath (Join-Path $kitHome 'skills\wave-orchestration\SKILL.md')) `
         'an orchestration plugin skill landed under its bare name'
+    # A plugin that declares a single channel is the exception: its skills are meant to reach a
+    # project through `claude plugin install`, so copying them here too would put two copies of
+    # each on the machine. The set is read off the manifests, never off a name written here, so
+    # this asserts the installer's rule and not a list that would drift from it.
+    $pluginRoot = Join-Path $script:RepoRoot 'plugins'
+    $singleChannel = @(Get-ChildItem -LiteralPath $pluginRoot -Directory | Where-Object {
+        $file = Join-Path $_.FullName '.claude-plugin\plugin.json'
+        (Test-Path -LiteralPath $file) -and
+            (@((Get-Content -LiteralPath $file -Raw | ConvertFrom-Json).keywords) -contains 'plugin-channel-only')
+    })
+    Assert-True ($singleChannel.Count -eq 1) `
+        ('one plugin declares a single channel, found ' + $singleChannel.Count)
+    $held = @($singleChannel | ForEach-Object {
+        Get-ChildItem -LiteralPath (Join-Path $_.FullName 'skills') -Directory } | ForEach-Object { $_.Name })
+    Assert-True ($held.Count -ge 2) ('it publishes its skills: ' + ($held -join ', '))
+    foreach ($name in $held) {
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $kitHome "skills\$name"))) `
+            ("the installer left $name to the plugin channel")
+    }
+    Assert-True (Test-Path -LiteralPath (Join-Path $kitHome 'skills\decision-rounds\SKILL.md')) `
+        'the skill the analyst preloads still comes through the installer'
     Assert-True (Test-Path -LiteralPath (Join-Path $kitHome 'settings.json')) 'settings.json landed'
     # The first three bytes, not Get-Content -Raw: the reader strips a BOM while decoding, so a
     # manifest that carried one would still read clean and the assertion could never fail.
