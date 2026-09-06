@@ -186,6 +186,39 @@ try {
     Assert-True (-not (@($enabled.PSObject.Properties.Name) -contains 'delivery@claude-base')) `
         'and the plugins the installer also copies are not, so nothing arrives twice'
     Assert-True ($written.Contains('filter-gradle-output.py')) 'the hook the template already carried is still there'
+
+    # ------------------------------------- a kit tree that cannot name its source
+    Write-Host "`r`nphase 11, a kit tree with no readable origin writes no plugin source at all"
+    # A downloaded archive, or a clone whose remote is not called origin: the placeholders cannot
+    # be filled, and a project pointed at `<owner>/<repo>` with the plugin enabled against it is
+    # worse than a project with no plugin source. Staged as a copy carrying only what the project
+    # scope reads, and with no .git of any kind.
+    $bare = Join-Path $base 'kit-no-git'
+    New-Item -ItemType Directory -Force -Path (Join-Path $bare 'claude') | Out-Null
+    Copy-Item -LiteralPath (Join-Path $script:RepoRoot 'install.ps1') -Destination $bare
+    Copy-Item -LiteralPath (Join-Path $script:RepoRoot 'install') -Destination $bare -Recurse
+    Copy-Item -LiteralPath (Join-Path $script:RepoRoot 'project-template') -Destination $bare -Recurse
+    Copy-Item -LiteralPath (Join-Path $script:RepoRoot 'claude\hooks') -Destination (Join-Path $bare 'claude') -Recurse
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $bare '.git'))) 'the staged tree carries no git metadata'
+    $orphan = Join-Path $base 'orphan-app'
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = ((& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $bare 'install.ps1') `
+                    -Project $orphan 2>&1) | Out-String)
+        $code = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previous }
+    Assert-True ($code -eq 0) ("the run out of that tree still scaffolds the project (exit $code)")
+    Assert-Match $out 'no readable git origin' 'and says why the project gets no plugin source'
+    $orphanSettings = Join-Path $orphan '.claude\settings.json'
+    Assert-True (Test-Path -LiteralPath $orphanSettings) 'the project still gets its settings.json'
+    $orphanText = if (Test-Path -LiteralPath $orphanSettings) { (Get-Content -LiteralPath $orphanSettings -Raw) } else { '' }
+    Assert-True (-not $orphanText.Contains('extraKnownMarketplaces')) 'no plugin source is written'
+    Assert-True (-not $orphanText.Contains('enabledPlugins')) 'and no plugin is enabled against one'
+    Assert-True (-not $orphanText.Contains('<owner>/<repo>')) 'no placeholder was left behind either'
+    $orphanParsed = if ($orphanText) { ($orphanText | ConvertFrom-Json) } else { $null }
+    Assert-True ($null -ne $orphanParsed) 'what was written is still valid json'
+    Assert-True ($orphanText.Contains('filter-gradle-output.py')) 'and it still carries the hook wiring'
 } finally {
     if (Test-Path -LiteralPath $worktree) {
         Invoke-Git @('-C', $main, 'worktree', 'remove', '--force', $worktree) | Out-Null

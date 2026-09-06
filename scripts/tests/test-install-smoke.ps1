@@ -41,13 +41,13 @@ try {
         'an orchestration plugin skill landed under its bare name'
     # A plugin that declares a single channel is the exception: its skills are meant to reach a
     # project through `claude plugin install`, so copying them here too would put two copies of
-    # each on the machine. The set is read off the manifests, never off a name written here, so
-    # this asserts the installer's rule and not a list that would drift from it.
+    # each on the machine. The set is read off each plugin's own kit.json sidecar, never off a
+    # name written here, so this asserts the installer's rule and not a list that would drift.
     $pluginRoot = Join-Path $script:RepoRoot 'plugins'
     $singleChannel = @(Get-ChildItem -LiteralPath $pluginRoot -Directory | Where-Object {
-        $file = Join-Path $_.FullName '.claude-plugin\plugin.json'
+        $file = Join-Path $_.FullName 'kit.json'
         (Test-Path -LiteralPath $file) -and
-            (@((Get-Content -LiteralPath $file -Raw | ConvertFrom-Json).keywords) -contains 'plugin-channel-only')
+            ((Get-Content -LiteralPath $file -Raw | ConvertFrom-Json).channel -eq 'marketplace')
     })
     Assert-True ($singleChannel.Count -eq 1) `
         ('one plugin declares a single channel, found ' + $singleChannel.Count)

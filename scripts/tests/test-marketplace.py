@@ -44,7 +44,8 @@ WAIVED_NAMES = frozenset()
 NAME = r"[A-Z][a-z]+(?: [A-Z][a-z]+)+"
 PERSON = re.compile(NAME)
 NAMESPACED = ["`/delivery:story`", "`/delivery:sdd`", "`/delivery:work-item`",
-              "`/orchestration:wave-orchestration`", "`/orchestration:herdr-driving`"]
+              "`/orchestration:wave-orchestration`", "`/orchestration:herdr-driving`",
+              "`/groundwork:codebase-design`", "`/groundwork:slice-plan`"]
 
 
 def read(path):
@@ -219,7 +220,7 @@ class TemplateMentions(unittest.TestCase):
     # shape it no longer reads drops names silently, and a reader sent to a name nobody parsed
     # is exactly the break this class is here to catch. Exact rather than a floor, because a
     # floor clears on a parser that has stopped reading a shape the template still uses.
-    NAMED_IN_TEMPLATE = 19
+    NAMED_IN_TEMPLATE = 21
 
     def setUp(self):
         self.named = mentions(read(TEMPLATE))
@@ -274,29 +275,41 @@ class SingleChannelPlugin(unittest.TestCase):
 
     `install.ps1` copies every `plugins/*/skills/*` into the kit home under its bare name, so a
     plugin whose skills a project is meant to take from the plugin channel would arrive twice.
-    The manifest says so itself, with a keyword the installer reads off the file rather than a
-    name list held in the script, and this class fixes what that declaration is.
+    The plugin says so itself in `kit.json` at its root, read by the installer rather than a name
+    list held in the script, and this class fixes where that declaration lives and what it says.
 
-    The keyword carries it because the format's own checker rejects an invented top-level field:
-    `--strict` turns the unknown-field warning into a failure, and `keywords` is the field the
-    schema already has for a label like this one.
+    A sidecar and not the plugin manifest, for two reasons. The format's own checker fails
+    `--strict` on a top-level field it does not know, so `"channel"` could not go in the manifest
+    at all; and `keywords` is an open discovery vocabulary, where nothing tells a reader that one
+    string is load bearing. `kit.json` sits outside `.claude-plugin/`, so the checker never reads
+    it and the kit owns its meaning.
     """
 
-    ONLY = "plugin-channel-only"
+    ONLY = "marketplace"
 
-    def keywords(self, plugin):
-        return read_json(os.path.join(PLUGINS, plugin, ".claude-plugin",
-                                      "plugin.json")).get("keywords", [])
+    def sidecar(self, plugin):
+        return os.path.join(PLUGINS, plugin, "kit.json")
 
-    def test_the_new_plugin_declares_the_single_channel(self):
-        self.assertIn(self.ONLY, self.keywords("groundwork"))
+    def channel(self, plugin):
+        path = self.sidecar(plugin)
+        return read_json(path).get("channel") if os.path.isfile(path) else None
 
-    def test_the_two_older_plugins_declare_none_so_the_installer_still_copies_them(self):
+    def test_the_new_plugin_declares_the_single_channel_in_its_sidecar(self):
+        self.assertTrue(os.path.isfile(self.sidecar("groundwork")))
+        self.assertEqual(self.channel("groundwork"), self.ONLY)
+
+    def test_the_declaration_is_not_in_the_manifest_the_format_checks(self):
+        manifest = read(os.path.join(PLUGINS, "groundwork", ".claude-plugin", "plugin.json"))
+        self.assertNotIn("plugin-channel-only", manifest)
+        self.assertNotIn("channel", read_json(os.path.join(
+            PLUGINS, "groundwork", ".claude-plugin", "plugin.json")))
+
+    def test_the_two_older_plugins_carry_no_sidecar_so_the_installer_still_copies_them(self):
         for plugin in ("delivery", "orchestration"):
-            self.assertNotIn(self.ONLY, self.keywords(plugin), plugin)
+            self.assertFalse(os.path.exists(self.sidecar(plugin)), plugin)
 
     def test_the_single_channel_skills_are_offered_by_nothing_else(self):
-        single = [name for name in plugin_names() if self.ONLY in self.keywords(name)]
+        single = [name for name in plugin_names() if self.channel(name) == self.ONLY]
         self.assertEqual(single, ["groundwork"])
         packed = set()
         for plugin in single:
