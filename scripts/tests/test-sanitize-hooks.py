@@ -46,6 +46,29 @@ class InstallTest(GuardCase):
         for kind in ("pre-push", "pre-commit"):
             self.assertIn(guard.MARKER, read(self.hook(kind)))
 
+    def test_install_writes_the_commit_msg_hook_beside_the_pre_push_one(self):
+        """The attribution strip is not optional the way the staged scan is: a message the rule
+        forbids is written by the harness, not by a hand that can be asked to run a flag."""
+        result = self.run_guard("--install-hook")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        body = read(self.hook("commit-msg"))
+        self.assertIn(guard.ATTRIBUTION_MARKER, body)
+        self.assertNotIn("\r\n", body)
+        self.assertFalse(os.path.exists(self.hook("pre-commit")))
+
+    def test_install_leaves_a_commit_msg_hook_that_is_not_ours_alone(self):
+        write(self.hook("commit-msg"), "#!/bin/sh\necho someone else owns this\n")
+        result = self.run_guard("--install-hook")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("someone else owns this", read(self.hook("commit-msg")))
+        self.assertIn("scripts/git-hooks/commit-msg", result.stdout)
+
+    def test_uninstall_removes_the_commit_msg_hook_too(self):
+        self.run_guard("--install-hook")
+        result = self.run_guard("--uninstall-hook")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(os.path.exists(self.hook("commit-msg")))
+
     def test_install_rewrites_a_hook_that_is_ours(self):
         self.run_guard("--install-hook")
         write(self.hook(), read(self.hook()) + "\necho drifted\n")

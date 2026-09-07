@@ -9,6 +9,7 @@ model runs and nothing touches the network.
     python test-compaction-hooks.py
 """
 import glob
+import importlib.util
 import json
 import os
 import shutil
@@ -23,7 +24,19 @@ PRE = os.path.join(HOOKS, "precompact-checkpoint.py")
 POST = os.path.join(HOOKS, "postcompact-persist.py")
 RECOVER = os.path.join(HOOKS, "compact-recover.py")
 SESSION = "11111111-2222-3333-4444-555555555555"
-RECOVER_CAP = 2000  # what compact-recover.py prints, the marker that says it was cut included
+
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# What compact-recover.py prints, the marker that says it was cut included. The number comes
+# from the hook, not from a copy here: a copy keeps passing after the hook moved it, which is
+# the one thing the case below exists to catch.
+RECOVER_CAP = load("compact_recover", RECOVER).CAP
 
 
 def git(repo, *args):
@@ -73,6 +86,12 @@ class CompactionHooksTest(unittest.TestCase):
         for name in list(env):
             if name.startswith("CLAUDE_CHECKPOINT_"):
                 env.pop(name)
+        # compact-recover.py opens with the seat block, so the pane that runs the suite would
+        # otherwise decide what its first line says. No role is a lane, and one launcher
+        # variable set keeps the loud line of an unlaunched session out of these cases.
+        for name in ("CLAUDE_ROLE", "CLAUDE_BRIEFS_DIR", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"):
+            env.pop(name, None)
+        env["CLAUDE_CODE_DISABLE_1M_CONTEXT"] = "1"
         env["CLAUDE_CHECKPOINT_DIR"] = self.ckpt
         for name, value in extra.items():
             if value is None:
@@ -271,7 +290,9 @@ class CompactionHooksTest(unittest.TestCase):
         data = {"session_id": SESSION, "transcript_path": self.transcript, "cwd": self.repo, "hook_event_name": "SessionStart", "source": "compact"}
         code, out, err = self.run_hook(RECOVER, data)
         self.assertEqual(code, 0, err)
-        first = out.splitlines()[0]
+        # The seat block opens the output, so the checkpoint paragraph is the one after it.
+        self.assertEqual(out.splitlines()[0], "Seat: none (lane)")
+        first = [line for line in out.splitlines() if line.startswith("[compaction recovery")][0]
         self.assertIn(checkpoint, first)
         self.assertIn("is the git truth", first)
         self.assertIn("only if the summary lacks a path, a tip or a decision", first)
@@ -281,10 +302,12 @@ class CompactionHooksTest(unittest.TestCase):
         self.assertNotIn("read its", lowered)
         self.assertNotIn("notes.autosave", lowered)
 
-    def test_recover_output_is_capped_at_two_thousand_characters(self):
+    def test_recover_output_is_capped_at_the_cap_the_hook_declares(self):
         """The cap is the ceiling on what every compaction pays for the recovery block, so the
-        marker that says the text was cut is counted inside it and never added on top."""
-        self.assertEqual(RECOVER_CAP, 2000)
+        marker that says the text was cut is counted inside it and never added on top. Claude
+        Code truncates hook stdout above about 10,000 characters, so the number keeps a margin
+        of 1,000 under it and is pinned here, so moving it stays a deliberate act."""
+        self.assertEqual(RECOVER_CAP, 9000)
         self.run_hook(PRE, self.payload())
         landings = os.path.join(self.tmp, "landings.md")
         with open(landings, "w", encoding="utf-8") as handle:

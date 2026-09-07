@@ -2,8 +2,11 @@
 tends to drop: the newest checkpoint written by precompact-checkpoint.py (path plus its
 disk-truth section), the last rows of the rulings register, the head of the worktree's
 NOTES.md, the newest brief in CLAUDE_BRIEFS_DIR and the tail of CLAUDE_LANDINGS_FILE.
-No model runs. With --rulings it prints the rulings block alone, which is what a
-SessionStart on startup, resume or clear wires, and then stdin is not read at all.
+No model runs. Both modes open with the seat block: which chair the pane holds, the loud line
+when nothing launched the session, and the newest resume brief of that seat. With --rulings it
+prints the seat block and the rulings block and nothing else, which is what a SessionStart on
+startup, resume, clear or fork wires; stdin is read there too, because the payload is what tells
+a subagent from the session that launched it.
 
 The block states facts and gives no orders. An instruction to re-read a file is paid for
 on every compaction and is acted on whether or not the summary already carries the answer,
@@ -206,14 +209,89 @@ def state_sheet():
     return paragraph + ("\n" + gates if gates else "")
 
 
-def main():
-    if "--rulings" in sys.argv[1:]:
-        sys.stdout.buffer.write(rulings_block().encode("utf-8"))
-        return 0
+SEATS = ("orchestrator", "analyst")
+BRIEFS_DIR = os.path.join(os.path.expanduser("~"), ".claude", "briefs")
+# The three variables the account launcher sets on every launch. None of them in the environment
+# means nothing launched this session: a bare restore after a logon, or a session started by hand.
+LAUNCHER_VARS = ("CLAUDE_ROLE", "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "CLAUDE_CODE_DISABLE_1M_CONTEXT")
+UNLAUNCHED = ("Not launched through the account launcher: no seat, no window, no --no-chrome. "
+              "Relaunch through it before working.")
+
+
+def seat():
+    """The seat of this session, or "" when the pane holds none.
+
+    A seat is a markdown file appended to the system prompt, but the file is not readable from
+    here and a resumed session carries its seat in the conversation rather than in the launch
+    line. CLAUDE_ROLE is what both launches set, so the variable is the seam, and any value that
+    is not a seat, the default lane included, is no seat at all.
+    """
+    role = (os.environ.get("CLAUDE_ROLE") or "").strip().lower()
+    return role if role in SEATS else ""
+
+
+def resume_brief(name):
+    """The line naming the newest resume brief of this seat, or "" when there is no directory.
+
+    Newest by name, not by modification time: the name carries the day the brief is for, and a
+    brief corrected after it was written is still the brief of its own day. A directory that is
+    not there is not a fault, it is a project without a board, so nothing is said about it.
+    """
+    folder = os.environ.get("CLAUDE_BRIEFS_DIR") or BRIEFS_DIR
+    if not os.path.isdir(folder):
+        return ""
+    files = sorted(glob.glob(os.path.join(folder, f"{name}-resume-*.md")))
+    if not files:
+        return f"Resume brief: none found in {folder}"
+    return f"Resume brief: {files[-1]} (read it first)"
+
+
+def seat_block(data):
+    """Which chair this pane holds, printed before anything else.
+
+    A subagent inherits the whole environment of the session that launched it, so the variable
+    alone cannot tell them apart; the payload can, and an agent holds no chair, so a payload
+    that names one prints nothing.
+    """
+    if data.get("agent_id") or data.get("agent_type"):
+        return ""
+    name = seat()
+    lines = [f"Seat: {name}" if name else "Seat: none (lane)"]
+    if not any(var in os.environ for var in LAUNCHER_VARS):
+        lines.append(UNLAUNCHED)
+    if name:
+        line = resume_brief(name)
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def payload():
+    """The hook JSON on stdin, as a dict, whatever arrives.
+
+    Read in both modes, because the subagent exclusion of the seat block lives in the payload.
+    A terminal on stdin is nobody piping anything, so it is never read: a hook run by hand must
+    not hang on a read that will not return. utf-8-sig, not utf-8, because PowerShell puts a BOM
+    in front of what it pipes to a native command.
+    """
     try:
-        data = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace") or "{}")
+        if sys.stdin is None or sys.stdin.isatty():
+            return {}
+        data = json.loads(sys.stdin.buffer.read().decode("utf-8-sig", "replace") or "{}")
     except Exception:
-        data = {}
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def main():
+    data = payload()
+    block = seat_block(data)
+    if "--rulings" in sys.argv[1:]:
+        text = rulings_block()
+        if block:
+            text = block + "\n\n" + text
+        sys.stdout.buffer.write(text.encode("utf-8"))
+        return 0
     cwd = data.get("cwd") or os.getcwd()
     session_id = str(data.get("session_id") or "")
     transcript_path = str(data.get("transcript_path") or "")
@@ -226,6 +304,8 @@ def main():
             out.append(section)
     else:
         out = [f"[compaction recovery {stamp}] No checkpoint for this session, so the summary plus the facts below are what there is."]
+    if block:
+        out.insert(0, block)
     out.append(rulings_block())
     sheet = state_sheet()
     if sheet:
