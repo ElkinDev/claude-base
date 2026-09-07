@@ -268,6 +268,7 @@ Assert-Regex $out ('(?m)^EXTRA=.*--no-chrome ' + [regex]::Escape($startLine) + '
 Assert-Regex $out ('(?m)^COMMAND=claude --name orchestrator-\d{4}-\d{4} --append-system-prompt-file ' + [regex]::Escape($seatFile) + ' --no-chrome ' + [regex]::Escape("'" + $startLine + "'") + '\r?$') 'and the command the tab and window paths run ends with it too, quoted for its spaces'
 $commandLine = ([regex]::Match($out, '(?m)^COMMAND=.*$')).Value
 Assert-True (([regex]::Matches($commandLine, '--name')).Count -eq 1) 'and names the session once there as well'
+Assert-True (-not ($out -match 'Start line not added')) 'and nothing stands aside, so nothing is said about it'
 Assert-Regex $out '(?m)^EXTRA=--name orchestrator-\d{4}-\d{4} ' 'a fresh seat launch carries the minute in its name'
 $extraLine = ([regex]::Match($out, '(?m)^EXTRA=.*$')).Value
 Assert-True (([regex]::Matches($extraLine, '--name')).Count -eq 1) 'the session is named once, never twice'
@@ -286,6 +287,7 @@ Assert-True (([regex]::Matches($extraLine, '--name')).Count -eq 1) 'a name given
 Assert-Match $out '--name mine' 'and it is the one that travels'
 Assert-Regex $out '(?m)^FRESH=true\r?$' 'a name of your own still leaves the launch fresh'
 Assert-Regex $out '(?m)^START=none \(positional given\)\r?$' 'and its value is the last token, so the start line stands aside for it'
+Assert-Match $out 'Start line not added: the last argument reads as your prompt; type the start of day yourself.' 'and the launcher says so out loud, since a plan line only the tests read is a silent drop'
 
 Write-Host "`r`nphase 11, a seat with no file is one visible line, not a failed launch"
 $out = Get-LauncherLiteral demo -ShowEnv -Role analyst
@@ -331,6 +333,7 @@ Assert-Regex $out '(?m)^FRESH=false\r?$' '--resume is read as a resume'
 Assert-Regex $out '(?m)^START=none\r?$' 'a resume gets no start line'
 Assert-True (-not ($out -match '--name')) 'and keeps the name the session already has'
 Assert-Match $out ('--append-system-prompt-file ' + $seatFile) 'a resumed seat still wears its seat'
+Assert-True (-not ($out -match 'Start line not added')) 'and nothing stands aside on a resume, which never had a start line'
 $out = Invoke-Wrapper demo -ShowEnv -Role orchestrator -- -r
 Assert-Regex $out '(?m)^FRESH=false\r?$' '-r past the separator is a resume too'
 Assert-True (-not ($out -match '--name')) 'and is not renamed either'
@@ -364,6 +367,7 @@ $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator review
 Assert-Exit 0 'a prompt of your own opens clean'
 Assert-Regex $out '(?m)^FRESH=true\r?$' 'it is still a fresh launch'
 Assert-Regex $out '(?m)^START=none \(positional given\)\r?$' 'but the start line stands aside, and the plan says why'
+Assert-Match $out 'Start line not added: the last argument reads as your prompt; type the start of day yourself.' 'and the line is visible on the launch itself, not only in the dry run'
 Assert-Regex $out ('(?m)^COMMAND=claude --name orchestrator-\d{4}-\d{4} --append-system-prompt-file ' + [regex]::Escape($seatFile) + ' review --no-chrome\r?$') 'so the only prompt in the command is the one you typed'
 $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator --model opus
 Assert-Exit 0 'a trailing option value opens clean'
@@ -377,6 +381,22 @@ $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator --chrome
 Assert-Exit 0 'asking for the browser opens clean'
 Assert-True (-not ($out -match 'no-chrome')) 'a chrome flag of your own is not overridden'
 Assert-Regex $out ('(?m)^COMMAND=claude --name orchestrator-\d{4}-\d{4} --append-system-prompt-file ' + [regex]::Escape($seatFile) + ' --chrome ' + [regex]::Escape("'" + $startLine + "'") + '\r?$') 'and the start line is still the last token'
+# The word can appear inside a path, so the flag is looked for as an exact token: a substring
+# test turns a directory called chrome-cache into a request for the browser.
+$out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator --add-dir C:\chrome-cache
+Assert-Exit 0 'a path that merely contains the word opens clean'
+Assert-Regex $out '(?m)^COMMAND=.* --no-chrome\r?$' 'a path containing chrome does not pass for a chrome flag'
+
+Write-Host "`r`nphase 18, the short form of resume with the id attached to it"
+# Verified against claude itself: `claude -rnonexistent-id -p hi` answers "--resume requires a
+# valid session ID ... Provided value nonexistent-id", so the id attached to -r is parsed as the
+# value of --resume, and a launcher that reads only the bare -r renames and re-prompts a resume.
+$out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator -rabc123
+Assert-Exit 0 'the attached form opens clean'
+Assert-Regex $out '(?m)^FRESH=false\r?$' '-r<id> is a resume'
+Assert-Regex $out '(?m)^START=none\r?$' 'so it carries no start line'
+Assert-True (-not ($out -match '--name')) 'and no second name'
+Assert-True (-not ($out -match 'Start line not added')) 'and nothing stands aside, since it is not a fresh launch'
 
 Remove-Item Env:\CLAUDE_BRIEFS_DIR -ErrorAction SilentlyContinue
 Remove-Item Env:\CLAUDE_CLOSING_HOUR -ErrorAction SilentlyContinue
