@@ -369,10 +369,16 @@ class GuardTest(unittest.TestCase):
         payload["agent_type"] = guard.BULK_READER_AGENT
         self.denial(payload, role=None)
 
-    def test_the_image_rule_is_unchanged_by_the_exemption(self):
-        # A subagent has always been allowed pixels, and a pane that is not one has not.
-        self.allowed(self.bulk_read(self.image))
-        self.assertIn("orchestrator", self.denial(self.read(self.image)))
+    def test_the_exemption_cannot_short_circuit_the_image_rule(self):
+        # Called through the hook this would prove nothing: every subagent is already exempt from
+        # the image rule, so a bulk-reader payload with a PNG passes for a reason that has nothing
+        # to do with the size exemption. The claim worth holding is about the order inside
+        # verdict(), so it is made against verdict() itself: with the size check off, in the one
+        # context where the image rule bites (orchestrator, not a subagent), the image denial must
+        # still come back. An exemption written as an early return would swallow it.
+        reason = guard.verdict(self.image, None, "orchestrator", False, check_size=False)
+        self.assertIsNotNone(reason, "the image rule was skipped when the size check was off")
+        self.assertIn("orchestrator", reason)
 
     def test_an_unknown_tool_is_never_touched(self):
         self.allowed({"tool_name": "Edit", "tool_input": {"file_path": self.big}, "cwd": self.tmp})

@@ -69,6 +69,10 @@ DELEGATION_SENTENCE = "Delegation is allowed only to bulk-reader, never to any o
 CAP_IN_AGENT = "if more than four files are named, read the first four and say which were left"
 CAP_IN_SKILL = "up to four files per call; more files, more calls"
 
+MAX_TURNS_FILE_CAP = 4
+# The budget has to hold the work the cap allows: four reads and the turn that answers. Below that
+# the agent runs out mid-file set; far above it, the bound stops meaning anything.
+MAX_TURNS_FLOOR = MAX_TURNS_FILE_CAP + 1
 MAX_TURNS_CEILING = 12
 EXPECTED_TOOLS = ["Read", "Grep", "Glob"]
 
@@ -132,6 +136,7 @@ class BulkReaderAgent(unittest.TestCase):
     def test_turn_budget_is_bounded(self):
         raw = self.fields.get("maxTurns")
         self.assertIsNotNone(raw, "the definition declares no maxTurns")
+        self.assertGreaterEqual(int(raw), MAX_TURNS_FLOOR)
         self.assertLessEqual(int(raw), MAX_TURNS_CEILING)
 
     def test_body_closes_with_the_orientation_line(self):
@@ -210,7 +215,9 @@ class Documentation(unittest.TestCase):
 
     def test_the_measured_figures_are_in_the_subsection(self):
         section = self.section()
-        for figure in ("841", "37 s", "34"):
+        # Each figure carries its unit, so a bare 34 somewhere in the prose cannot stand in for
+        # the token count the paragraph exists to report.
+        for figure in ("841-line", "37 s", "34 K"):
             self.assertIn(figure, section, "missing figure %s" % figure)
 
     def test_both_limits_are_in_the_subsection(self):
@@ -220,6 +227,12 @@ class Documentation(unittest.TestCase):
 
     def test_the_prize_is_stated_honestly(self):
         self.assertIn(DOCS_HYGIENE, self.section())
+
+    def test_the_page_says_what_holds_the_delegation_line(self):
+        # The reviewer's tools line now carries Agent, which is a general licence unless something
+        # narrows it. The page has to name the thing that does, or a reader takes the sentence in
+        # the definition for the boundary.
+        self.assertIn("guard-delegate.py", self.section())
 
     def test_the_percentages_carry_their_source(self):
         # A bare percentage is a number nobody can check. The source stays generic, because
