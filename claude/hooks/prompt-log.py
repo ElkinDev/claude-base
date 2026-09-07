@@ -5,10 +5,11 @@ paraphrases what was asked; this file does not, so an order given at the start o
 still readable at the end of it.
 
 stdin: the hook JSON (session_id, transcript_path, cwd, prompt; agent_id and agent_type when a
-subagent is the one submitting). Append mode prints nothing at all: on UserPromptSubmit whatever
-the hook writes to stdout is added to the model's context, so a hook whose job is to write a
-file has no business paying for a line in the window. --recover prints the block, capped, since
-there its stdout is the point.
+subagent is the one submitting). Append mode prints nothing at all for most of the day: on
+UserPromptSubmit whatever the hook writes to stdout is added to the model's context, so a hook
+whose job is to write a file has no business paying for a line in the window. The exception is
+the closing round of a seated session, one line saying the day ends and what it owes before it
+does. --recover prints the block, capped, since there its stdout is the point.
 
 Never blocks a prompt: every failure exits 0 in silence. Slash commands, the harness tags
 (task notifications, system reminders, local command output) and a subagent's prompt are not
@@ -104,6 +105,48 @@ def trim(path):
         pass
 
 
+SEATS = ("orchestrator", "analyst")
+CLOSING_WINDOW = 45
+NOTICE = ("Closing round: the day ends at %s. Write the resume brief, land or stop every agent, "
+          "nothing running at the hour.")
+
+
+def clock(value):
+    """`HH:MM` as minutes since midnight, or None when the text is not a time of day."""
+    parts = str(value or "").strip().split(":")
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        return None
+    hours, minutes = int(parts[0]), int(parts[1])
+    if hours > 23 or minutes > 59:
+        return None
+    return hours * 60 + minutes
+
+
+def closing_notice(data):
+    """The one line a seated session is told once the closing round has opened.
+
+    The round opens CLOSING_WINDOW minutes before CLAUDE_CLOSING_HOUR and does not shut: a
+    session still typing after the hour is the case the line exists for. A lane has no day to
+    close and a subagent holds no chair, so neither is told anything, and a session without the
+    variable is a session on a machine that never set a closing hour.
+
+    CLAUDE_TEST_NOW replaces the clock, so the cases around the edge of the window are exact
+    rather than a suite that has to be run at nine in the evening.
+    """
+    if data.get("agent_id") or data.get("agent_type"):
+        return ""
+    if (os.environ.get("CLAUDE_ROLE") or "").strip().lower() not in SEATS:
+        return ""
+    hour = (os.environ.get("CLAUDE_CLOSING_HOUR") or "").strip()
+    end = clock(hour)
+    if end is None:
+        return ""
+    now = clock(os.environ.get("CLAUDE_TEST_NOW"))
+    if now is None:
+        now = clock(datetime.now().strftime("%H:%M"))
+    return "" if now < end - CLOSING_WINDOW else NOTICE % hour
+
+
 def append(data):
     text = entry_text(data.get("prompt"))
     if not text or data.get("agent_id"):
@@ -164,7 +207,11 @@ def main(argv):
         data = {}
     if "--recover" in argv:
         return recover(data)
-    return append(data)
+    code = append(data)
+    notice = closing_notice(data)
+    if notice:
+        write(notice)
+    return code
 
 
 if __name__ == "__main__":

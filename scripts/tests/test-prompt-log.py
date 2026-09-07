@@ -34,6 +34,11 @@ def run_hook(payload, checkpoint_dir, args=()):
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"
     env["CLAUDE_CHECKPOINT_DIR"] = checkpoint_dir
+    # The hook prints one line in the closing round of a seated session, so a suite run from a
+    # seated pane late in the day would read that line as output the cases below forbid. The
+    # closing round has its own suite, claude/hooks/tests/test-seats.py.
+    for name in ("CLAUDE_ROLE", "CLAUDE_CLOSING_HOUR", "CLAUDE_TEST_NOW"):
+        env.pop(name, None)
     process = subprocess.run(
         [sys.executable, HOOK] + list(args),
         input=payload if isinstance(payload, bytes) else json.dumps(payload).encode("utf-8"),
