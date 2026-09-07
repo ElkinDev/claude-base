@@ -284,7 +284,8 @@ Assert-Exit 0 'a name of your own is accepted on a seated launch'
 $extraLine = ([regex]::Match($out, '(?m)^EXTRA=.*$')).Value
 Assert-True (([regex]::Matches($extraLine, '--name')).Count -eq 1) 'a name given by hand is never doubled'
 Assert-Match $out '--name mine' 'and it is the one that travels'
-Assert-Regex $out ('(?m)^START=' + [regex]::Escape($startLine) + '\r?$') 'a name of your own still leaves the launch fresh'
+Assert-Regex $out '(?m)^FRESH=true\r?$' 'a name of your own still leaves the launch fresh'
+Assert-Regex $out '(?m)^START=none \(positional given\)\r?$' 'and its value is the last token, so the start line stands aside for it'
 
 Write-Host "`r`nphase 11, a seat with no file is one visible line, not a failed launch"
 $out = Get-LauncherLiteral demo -ShowEnv -Role analyst
@@ -323,7 +324,7 @@ Write-Host "`r`nphase 14, fresh is decided token by token, never by searching th
 $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator --add-dir C:\repo-cache
 Assert-Exit 0 'an argument that merely contains the letters is not a continue'
 Assert-Regex $out '(?m)^FRESH=true\r?$' 'nor a resume'
-Assert-Regex $out ('(?m)^START=' + [regex]::Escape($startLine) + '\r?$') 'so the start line is still planned'
+Assert-Regex $out '(?m)^START=none \(positional given\)\r?$' 'and the path it carries is the last token, so the start line stands aside for it'
 $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator --resume
 Assert-Exit 0 'a resume opens clean'
 Assert-Regex $out '(?m)^FRESH=false\r?$' '--resume is read as a resume'

@@ -77,14 +77,28 @@ $startLine = "Session start: read the newest resume brief of your seat, then the
 # Fresh is read off the argument array as exact tokens, before anything is added to it and
 # before $extraStr exists: a substring search over the joined string finds -c inside
 # --no-chrome and calls every launch a resume.
-$fresh = -not (@($Extra) | Where-Object { $_ -in @("-r", "--resume", "-c", "--continue") })
+# claude spells a resume four ways and two of them carry the id in the same token, so the
+# equals forms are matched on their prefix. A launch that already reopens a conversation must
+# not be renamed or handed a start line on top of what it reopens.
+$fresh = -not (@($Extra) | Where-Object { ($_ -in @("-r", "--resume", "-c", "--continue")) -or ($_ -like "--resume=*") -or ($_ -like "--continue=*") })
 $named = (@($Extra) -contains "--name") -or (@($Extra) -contains "-n")
+# A last token that does not begin with a dash is the prompt the owner typed. The start line
+# would be a second prompt, so it stands aside and says so. A trailing option value, --model
+# opus for instance, reads the same way: a launcher cannot know which options take a value.
+$typed = @($Extra | Where-Object { $_ -ne $null })
+$positional = ($typed.Count -gt 0) -and ($typed[-1] -notlike "-*")
 $seatPlan = "none"
 $startPlan = "none"
+# Agents never use the browser: every role but research starts without the Chrome integration,
+# which keeps its instructions and tools out of every context. Pass --chrome explicitly, or use
+# -Role research, when a session needs the browser. It joins the array here, before the seat
+# block, so the start line the seat adds after it is the last token of the command.
+if ($Role -ne "research" -and -not (@($Extra) | Where-Object { $_ -match "chrome" })) { $Extra = @($Extra | Where-Object { $_ -ne $null }) + @("--no-chrome") }
+
 if ($isSeat) {
     # Two seated panes in one folder share the projects junction, so -c can load the other
     # seat's conversation. That was proven live, so the flag is refused here, not documented.
-    if (@($Extra) | Where-Object { $_ -in @("-c", "--continue") }) {
+    if (@($Extra) | Where-Object { ($_ -in @("-c", "--continue")) -or ($_ -like "--continue=*") }) {
         Write-Host "A seated role never continues the most recent conversation of a folder (the profiles share it); resume with -r and the picker, or -r <id>." -ForegroundColor Red
         exit 1
     }
@@ -110,10 +124,11 @@ if ($isSeat) {
     # The minute is in the name, so the picker separates today's chair from yesterday's, and
     # the start line goes last, where claude reads a positional argument as the first prompt.
     if ($fresh -and -not $named) { $Extra = @("--name", ($Role + "-" + (Get-Date -Format "MMdd-HHmm"))) + @($Extra | Where-Object { $_ -ne $null }) }
-    if ($fresh) {
+    if ($fresh -and -not $positional) {
         $startPlan = $startLine
         $Extra = @($Extra | Where-Object { $_ -ne $null }) + @($startLine)
     }
+    elseif ($fresh) { $startPlan = "none (positional given)" }
 }
 elseif ($roleGiven -and -not $named) { $Extra = @("--name", $Role) + @($Extra | Where-Object { $_ -ne $null }) }
 
@@ -180,6 +195,9 @@ if ($ShowEnv) {
     # What the launcher hands to claude untouched, so a test can see that an unbound flag was
     # forwarded and not swallowed by a parameter of this script.
     Write-Output ("EXTRA=" + ($Extra -join " "))
+    # The array above is what the in-window path passes; this is the string the tab and the
+    # new-window paths run after the environment part, quoting included.
+    Write-Output "COMMAND=claude$extraStr"
     # The seat, whether this launch is fresh, the start line it would carry, and the two
     # variables a seated session reads. A role with no chair prints none and (unset).
     Write-Output "SEAT=$seatPlan"
@@ -190,10 +208,6 @@ if ($ShowEnv) {
     exit 0
 }
 $roleTag = if ($Role -eq "lane") { "" } else { "-$Role" }
-# Agents never use the browser: orchestrator and lane sessions start without the Chrome
-# integration, which keeps its instructions and tools out of every context. Pass --chrome
-# explicitly, or use -Role research, when a session needs the browser.
-if ($Role -ne "research" -and -not ($extraStr -match "chrome")) { $extraStr += " --no-chrome" }
 # -Workspace takes the id (w8) or the number the UI shows (5); the number is resolved here.
 function Herdr-Workspace-Args {
     if (-not $Workspace) { return @() }
