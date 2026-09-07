@@ -7,7 +7,8 @@
                                                      blobs it adds or modifies, and the names
                                                      of the refs passed with --ref-name
     python scripts/sanitize-check.py PATH [PATH ...] explicit files or folders
-    python scripts/sanitize-check.py --install-hook  the pre-push guard (--pre-commit adds the
+    python scripts/sanitize-check.py --install-hook  the pre-push guard and the commit-msg
+                                                     attribution strip (--pre-commit adds the
                                                      staged check as a pre-commit hook)
 
 Three rule sets. The committed generic rules (`scripts/sanitize-rules.txt`) describe leaks
@@ -50,8 +51,16 @@ ALLOW_FILE = HERE / "sanitize-allow.txt"
 HOOK_SOURCE = HERE / "git-hooks"
 
 MARKER = "# kit sanitize guard v1"
+# The commit-msg hook is not a scan, it is the attribution strip, so it carries its own marker
+# and its own version. The line is what says a hook on disk is ours and may be rewritten.
+ATTRIBUTION_MARKER = "# kit attribution strip v1"
 INVOKE = 'sh "$(git rev-parse --show-toplevel)/scripts/git-hooks/%s" "$@"'
-HOOK_KINDS = ("pre-push", "pre-commit")
+HOOK_KINDS = ("pre-push", "pre-commit", "commit-msg")
+# What an install writes without a flag: the push guard and the attribution strip. The staged
+# scan stays opt-in, because it runs on every commit and its cost is a choice; the strip is not
+# a choice, since the message the rule forbids is written by the harness and not by the hand
+# that would have to remember a flag.
+INSTALL_KINDS = ("pre-push", "commit-msg")
 
 
 # ---------------------------------------------------------------- the git hooks
@@ -69,6 +78,11 @@ def write_hook(source, target):
         os.chmod(str(target), 0o755)
     except OSError:
         pass
+
+
+def marker(kind):
+    """The line that says the hook of this kind on disk is ours."""
+    return ATTRIBUTION_MARKER if kind == "commit-msg" else MARKER
 
 
 def install_hooks(repo, kinds):
@@ -90,7 +104,7 @@ def install_hooks(repo, kinds):
         target = target_dir / kind
         if target.exists():
             body = target.read_text(encoding="utf-8", errors="replace")
-            if MARKER not in body:
+            if marker(kind) not in body:
                 print("%s already exists and is not ours, so nothing was written." % target)
                 print("Add this line to it:")
                 print("  " + INVOKE % kind)
@@ -111,7 +125,7 @@ def uninstall_hooks(repo, kinds):
         if not target.exists():
             continue
         body = target.read_text(encoding="utf-8", errors="replace")
-        if MARKER not in body:
+        if marker(kind) not in body:
             print("left %s alone: it is not ours" % target)
             continue
         target.unlink()
@@ -170,7 +184,8 @@ def parse(argv):
     parser.add_argument("--messages-only", action="store_true",
                         help="with --range, scan only the commit messages and ref names")
     parser.add_argument("--json", action="store_true", help="print the result as JSON")
-    parser.add_argument("--install-hook", action="store_true", help="install the pre-push hook")
+    parser.add_argument("--install-hook", action="store_true",
+                        help="install the pre-push hook and the commit-msg attribution strip")
     parser.add_argument("--uninstall-hook", action="store_true", help="remove our hooks")
     parser.add_argument("--pre-commit", action="store_true",
                         help="with --install-hook, also install the pre-commit hook")
@@ -242,7 +257,8 @@ def main(argv=None):
     args = parse(argv)
     repo, _ = plumbing.repo_root()
     if args.install_hook:
-        return install_hooks(repo, HOOK_KINDS if args.pre_commit else HOOK_KINDS[:1])
+        kinds = INSTALL_KINDS + (("pre-commit",) if args.pre_commit else ())
+        return install_hooks(repo, kinds)
     if args.uninstall_hook:
         return uninstall_hooks(repo, HOOK_KINDS)
     if tracked_denylist(repo):

@@ -90,7 +90,8 @@ install/                    what the installer runs on: lib.ps1 the ownership ru
 # check the machine has what the kit needs (git, python, claude, Git Bash, optionally Herdr)
 python scripts\doctor.py
 
-# install the guard that blocks a push carrying a personal path, an address or a secret
+# install the guard that blocks a push carrying a personal path, an address or a secret,
+# and the commit-msg hook that strips AI attribution from a message
 # (add --pre-commit to check what a commit is about to record as well)
 python scripts\sanitize-check.py --install-hook
 
