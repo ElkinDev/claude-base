@@ -131,6 +131,11 @@ def nodes(screen):
     return list(ET.parse(dump(screen)).getroot().iter("node"))
 
 
+def source(screen):
+    with open(dump(screen), encoding="utf-8") as fh:
+        return fh.read()
+
+
 class WholeFrame(unittest.TestCase):
     """Case 1. The frame the hand derivation says the filter owes for each screen."""
 
@@ -200,7 +205,7 @@ class Completeness(unittest.TestCase):
 
     def test_system_chrome_is_dropped(self):
         text = frame("home")
-        self.assertIn("com.android.systemui:id/clock", open(dump("home"), encoding="utf-8").read())
+        self.assertIn("com.android.systemui:id/clock", source("home"))
         self.assertNotIn("systemui", text)
         self.assertNotIn("9:41", text)
         self.assertNotIn("navigationBarBackground", text)
@@ -342,7 +347,7 @@ class RowGrammar(unittest.TestCase):
 
     def test_a_long_label_is_trimmed_to_the_cap(self):
         raw = "Rent and building maintenance charge"
-        self.assertIn(raw, open(dump("home"), encoding="utf-8").read())
+        self.assertIn(raw, source("home"))
         line = [ln for ln in rows(frame("home")) if ln.startswith("5 ")][0]
         self.assertEqual("5 Rent and building maintena.. @540,690", line)
         self.assertEqual(28, len("Rent and building maintena.."))
