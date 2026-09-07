@@ -77,10 +77,11 @@ $startLine = "Session start: read the newest resume brief of your seat, then the
 # Fresh is read off the argument array as exact tokens, before anything is added to it and
 # before $extraStr exists: a substring search over the joined string finds -c inside
 # --no-chrome and calls every launch a resume.
-# claude spells a resume four ways and two of them carry the id in the same token, so the
-# equals forms are matched on their prefix. A launch that already reopens a conversation must
-# not be renamed or handed a start line on top of what it reopens.
-$fresh = -not (@($Extra) | Where-Object { ($_ -in @("-r", "--resume", "-c", "--continue")) -or ($_ -like "--resume=*") -or ($_ -like "--continue=*") })
+# claude spells a resume several ways and three of them carry the id in the same token: it
+# answers "--resume requires a valid session ID ... Provided value nonexistent-id" to
+# `claude -rnonexistent-id -p hi`, so -r<id> parses as well as --resume=<id>. A launch that
+# already reopens a conversation must not be renamed or handed a start line on top of it.
+$fresh = -not (@($Extra) | Where-Object { ($_ -in @("-r", "--resume", "-c", "--continue")) -or ($_ -like "--resume=*") -or ($_ -like "--continue=*") -or ($_ -like "-r?*") })
 $named = (@($Extra) -contains "--name") -or (@($Extra) -contains "-n")
 # A last token that does not begin with a dash is the prompt the owner typed. The start line
 # would be a second prompt, so it stands aside and says so. A trailing option value, --model
@@ -93,7 +94,7 @@ $startPlan = "none"
 # which keeps its instructions and tools out of every context. Pass --chrome explicitly, or use
 # -Role research, when a session needs the browser. It joins the array here, before the seat
 # block, so the start line the seat adds after it is the last token of the command.
-if ($Role -ne "research" -and -not (@($Extra) | Where-Object { $_ -match "chrome" })) { $Extra = @($Extra | Where-Object { $_ -ne $null }) + @("--no-chrome") }
+if ($Role -ne "research" -and -not (@($Extra) | Where-Object { $_ -in @("--chrome", "--no-chrome") })) { $Extra = @($Extra | Where-Object { $_ -ne $null }) + @("--no-chrome") }
 
 if ($isSeat) {
     # Two seated panes in one folder share the projects junction, so -c can load the other
@@ -128,7 +129,12 @@ if ($isSeat) {
         $startPlan = $startLine
         $Extra = @($Extra | Where-Object { $_ -ne $null }) + @($startLine)
     }
-    elseif ($fresh) { $startPlan = "none (positional given)" }
+    elseif ($fresh) {
+        # Visible, like the missing seat above: dropping the start line without a word is how a
+        # chair opens with no start of day and nobody notices until the session asks what to do.
+        $startPlan = "none (positional given)"
+        Write-Host "Start line not added: the last argument reads as your prompt; type the start of day yourself." -ForegroundColor Yellow
+    }
 }
 elseif ($roleGiven -and -not $named) { $Extra = @("--name", $Role) + @($Extra | Where-Object { $_ -ne $null }) }
 
