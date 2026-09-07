@@ -393,6 +393,18 @@ class SeatDocsTest(unittest.TestCase):
                 "COMMAND=", "SEAT=", "FRESH=", "START="):
             self.assertIn(phrase, text, "the page never says: " + phrase)
 
+    def test_the_seats_page_carries_the_line_the_launcher_prints_when_it_stands_aside(self):
+        """A reader who types a prompt of their own sees a yellow line and has to know it is
+        the plan, not a failure. The line is asserted verbatim, because that is what they match
+        against the pane, and the attached resume spelling is asserted beside the equals one:
+        `-r<id>` reopens a conversation, so it carries no start line either."""
+        text = read(os.path.join(DOCS, "SEATS.md"))
+        for phrase in (
+                "Start line not added: the last argument reads as your prompt; "
+                "type the start of day yourself.",
+                "`-r<id>`"):
+            self.assertIn(phrase, text, "the page never says: " + phrase)
+
     def test_the_context_economics_page_describes_the_rulings_mode_as_it_runs(self):
         text = read(os.path.join(DOCS, "CONTEXT-ECONOMICS.md"))
         self.assertNotIn("prints that block alone and reads no stdin", text)
