@@ -27,6 +27,19 @@ $launcher = Join-Path $script:RepoRoot 'claude\claude-account.ps1'
 # Phase 9 sets the variable on purpose and clears it again, so nothing is lost by clearing here.
 Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
 
+# The launcher reads its seats from CLAUDE_SEATS_DIR, so every phase runs against a temporary
+# directory and no assertion depends on the seats this machine happens to have installed. It
+# starts empty, because a role with a chair and no file is what the early phases must see; the
+# seat phases write the file when they need it.
+$seatsDir = Join-Path $env:TEMP ('launcher-seats-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $seatsDir -Force | Out-Null
+$env:CLAUDE_SEATS_DIR = $seatsDir
+$seatFile = Join-Path $seatsDir 'orchestrator.md'
+$missingSeat = Join-Path $seatsDir 'analyst.md'
+$defaultBriefs = Join-Path $env:USERPROFILE '.claude\briefs'
+$startLine = 'Session start: read the newest resume brief of your seat, then the state sheet, then continue with its first actions.'
+$refusal = 'A seated role never continues the most recent conversation of a folder (the profiles share it); resume with -r and the picker, or -r <id>.'
+
 function Get-LauncherEnv {
     param([string[]]$LauncherArgs)
     $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $launcher @LauncherArgs 2>&1 | Out-String
@@ -108,7 +121,7 @@ Assert-Exit 0 'the dry run exits clean'
 Assert-Regex $out '(?m)^CLAUDE_ROLE=lane\r?$' 'the default role is lane'
 Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=1\r?$' 'the context stays capped at 200k'
 Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=\(removed\)\r?$' 'the window variable is cleared, not inherited'
-Assert-Regex $out '(?m)^EXTRA=\r?$' 'nothing is forwarded when nothing was passed'
+Assert-Regex $out '(?m)^EXTRA=--no-chrome\r?$' 'nothing is forwarded but the browser the role turns off'
 Assert-Match $out "`$env:CLAUDE_CODE_DISABLE_1M_CONTEXT = '1'" 'the pane command caps the context too'
 Assert-Match $out 'Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW' 'the pane command clears the window too'
 Assert-True (-not ($out -match "PANE_COMMAND=.*AUTO_COMPACT_WINDOW = '")) 'the pane command sets no window'
@@ -118,7 +131,8 @@ $out = Get-LauncherEnv @('-ShowEnv', '-Role', 'orchestrator')
 Assert-Exit 0 'the dry run exits clean'
 Assert-Regex $out '(?m)^CLAUDE_ROLE=orchestrator\r?$' 'the role travels to the session'
 Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=1\r?$' 'the orchestrator is capped'
-Assert-Match $out 'EXTRA=--name orchestrator' 'an explicit role also names the session'
+Assert-Regex $out '(?m)^SEAT=none\r?$' 'the seats directory is empty here, so the session takes no chair'
+Assert-Regex $out ('(?m)^EXTRA=--name orchestrator-\d{4}-\d{4} --no-chrome ' + [regex]::Escape($startLine) + '\r?$') 'an explicit role names the session with the minute it started, and adds nothing else'
 
 Write-Host "`r`nphase 3, research is the uncapped role and still sets no window"
 $out = Get-LauncherEnv @('-ShowEnv', '-Role', 'research')
@@ -166,7 +180,7 @@ Assert-Forwarded (Invoke-Wrapper demo -ShowEnv -- -c) '-c' 'wrapper -- -c'
 # read the launcher for a bug that lives in PowerShell.
 $out = Get-LauncherLiteral demo -ShowEnv -v
 Assert-Exit 0 '-v binds -Verbose and does not fail'
-Assert-Regex $out '(?m)^EXTRA=\r?$' '-v is taken by -Verbose and never reaches claude'
+Assert-Regex $out '(?m)^EXTRA=--no-chrome\r?$' '-v is taken by -Verbose and never reaches claude'
 
 Write-Host "`r`nphase 8, the window binds by prefix, and only inside its range"
 $out = Get-LauncherLiteral demo -Wi 230000 -ShowEnv
@@ -208,17 +222,10 @@ Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
 # --- the seat ----------------------------------------------------------------------
 # A seat is a plain markdown file naming who the session is. The launcher appends it with
 # --append-system-prompt-file, which leaves the default prompt whole, and it appends it only
-# for a role that has a chair: orchestrator and analyst. CLAUDE_SEATS_DIR points the launcher
-# at a temporary directory here, so the suite never reads or needs the real seats.
-$seatsDir = Join-Path $env:TEMP ('launcher-seats-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
-New-Item -ItemType Directory -Path $seatsDir -Force | Out-Null
-$seatFile = Join-Path $seatsDir 'orchestrator.md'
+# for a role that has a chair: orchestrator and analyst. The temporary seats directory has been
+# empty until here, which is what the phases above asserted; from here it holds an orchestrator
+# seat, and never an analyst one, so both cases are real.
 Set-Content -LiteralPath $seatFile -Value '# Seat: orchestrator' -Encoding ASCII
-$missingSeat = Join-Path $seatsDir 'analyst.md'
-$defaultBriefs = Join-Path $env:USERPROFILE '.claude\briefs'
-$startLine = 'Session start: read the newest resume brief of your seat, then the state sheet, then continue with its first actions.'
-$refusal = 'A seated role never continues the most recent conversation of a folder (the profiles share it); resume with -r and the picker, or -r <id>.'
-$env:CLAUDE_SEATS_DIR = $seatsDir
 Remove-Item Env:\CLAUDE_BRIEFS_DIR -ErrorAction SilentlyContinue
 Remove-Item Env:\CLAUDE_CLOSING_HOUR -ErrorAction SilentlyContinue
 
@@ -257,7 +264,10 @@ Assert-Regex $out ('(?m)^SEAT=' + [regex]::Escape($seatFile) + '\r?$') 'the plan
 Assert-Match $out ('--append-system-prompt-file ' + $seatFile) 'the seat reaches claude as an appended prompt file'
 Assert-Regex $out '(?m)^FRESH=true\r?$' 'a launch with no resume flag is fresh'
 Assert-Regex $out ('(?m)^START=' + [regex]::Escape($startLine) + '\r?$') 'the plan names the start line'
-Assert-Regex $out ('(?m)^EXTRA=.*' + [regex]::Escape($startLine) + '\r?$') 'the start line is the last argument, so claude reads it as the prompt'
+Assert-Regex $out ('(?m)^EXTRA=.*--no-chrome ' + [regex]::Escape($startLine) + '\r?$') 'the start line is the last element of the array the in-window path hands claude'
+Assert-Regex $out ('(?m)^COMMAND=claude --name orchestrator-\d{4}-\d{4} --append-system-prompt-file ' + [regex]::Escape($seatFile) + ' --no-chrome ' + [regex]::Escape("'" + $startLine + "'") + '\r?$') 'and the command the tab and window paths run ends with it too, quoted for its spaces'
+$commandLine = ([regex]::Match($out, '(?m)^COMMAND=.*$')).Value
+Assert-True (([regex]::Matches($commandLine, '--name')).Count -eq 1) 'and names the session once there as well'
 Assert-Regex $out '(?m)^EXTRA=--name orchestrator-\d{4}-\d{4} ' 'a fresh seat launch carries the minute in its name'
 $extraLine = ([regex]::Match($out, '(?m)^EXTRA=.*$')).Value
 Assert-True (([regex]::Matches($extraLine, '--name')).Count -eq 1) 'the session is named once, never twice'
@@ -304,7 +314,7 @@ Assert-Exit 1 'the long spelling is refused too'
 Assert-True (-not ($out -match 'Seat file missing')) 'and before the seat file is even looked for'
 $out = Get-LauncherLiteral demo -ShowEnv -Role lane -c
 Assert-Exit 0 'a lane still continues: it shares no chair'
-Assert-Regex $out '(?m)^EXTRA=--name lane -c\r?$' 'and -c reaches claude untouched'
+Assert-Regex $out '(?m)^EXTRA=--name lane -c --no-chrome\r?$' 'and -c reaches claude untouched'
 
 Write-Host "`r`nphase 14, fresh is decided token by token, never by searching the joined string"
 # --no-chrome is appended to the argument string before any later check and it carries -c
@@ -335,6 +345,38 @@ Assert-Match $out "`$env:CLAUDE_BRIEFS_DIR = 'C:\evidence\briefs'" 'and the pane
 $out = Invoke-InWindowSeat 'orchestrator'
 Assert-Regex $out '(?m)^CLAUDE_BRIEFS_DIR=C:\\evidence\\briefs\r?$' 'the in-window path carries it as well'
 Assert-Regex $out '(?m)^CLAUDE_CLOSING_HOUR=21:15\r?$' 'with the hour it was given'
+Write-Host "`r`nphase 16, the resume spellings that carry an id, and a prompt of your own"
+# claude accepts --resume=<id> as well as --resume <id>. The equals spelling is one token, so
+# the exact-token test has to read its prefix or a resume looks like a fresh launch and gets a
+# second name and a start line on top of the conversation it reopens.
+$out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator --resume=abc123
+Assert-Exit 0 'the equals spelling opens clean'
+Assert-Regex $out '(?m)^FRESH=false\r?$' '--resume=<id> is a resume'
+Assert-Regex $out '(?m)^START=none\r?$' 'so it carries no start line'
+Assert-True (-not ($out -match '--name')) 'and no second name'
+$out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator --continue=abc123
+Assert-Exit 1 '--continue=<id> is refused the way --continue is'
+Assert-Match $out $refusal 'with the same line'
+# A positional the owner typed is the prompt of that session. Adding the start line after it
+# would hand claude two prompts, so the launcher stands aside and says so.
+$out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator review
+Assert-Exit 0 'a prompt of your own opens clean'
+Assert-Regex $out '(?m)^FRESH=true\r?$' 'it is still a fresh launch'
+Assert-Regex $out '(?m)^START=none \(positional given\)\r?$' 'but the start line stands aside, and the plan says why'
+Assert-Regex $out ('(?m)^COMMAND=claude --name orchestrator-\d{4}-\d{4} --append-system-prompt-file ' + [regex]::Escape($seatFile) + ' review --no-chrome\r?$') 'so the only prompt in the command is the one you typed'
+$out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator --model opus
+Assert-Exit 0 'a trailing option value opens clean'
+Assert-Regex $out '(?m)^START=none \(positional given\)\r?$' 'and reads as a prompt too, since a launcher cannot know which options take a value'
+
+Write-Host "`r`nphase 17, the browser is turned off in the array, before the seat is added"
+$out = Get-LauncherLiteral demo -ShowEnv -Role research
+Assert-Exit 0 'research opens clean'
+Assert-True (-not ($out -match 'no-chrome')) 'research keeps the browser'
+$out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator --chrome
+Assert-Exit 0 'asking for the browser opens clean'
+Assert-True (-not ($out -match 'no-chrome')) 'a chrome flag of your own is not overridden'
+Assert-Regex $out ('(?m)^COMMAND=claude --name orchestrator-\d{4}-\d{4} --append-system-prompt-file ' + [regex]::Escape($seatFile) + ' --chrome ' + [regex]::Escape("'" + $startLine + "'") + '\r?$') 'and the start line is still the last token'
+
 Remove-Item Env:\CLAUDE_BRIEFS_DIR -ErrorAction SilentlyContinue
 Remove-Item Env:\CLAUDE_CLOSING_HOUR -ErrorAction SilentlyContinue
 Remove-Item Env:\CLAUDE_SEATS_DIR -ErrorAction SilentlyContinue
