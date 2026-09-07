@@ -471,6 +471,15 @@ class SeatDocsTest(unittest.TestCase):
                      "CLAUDE_BRIEFS_DIR=", "CLAUDE_CLOSING_HOUR="):
             self.assertIn(line, roles, "the roles section never names " + line)
         self.assertNotIn("does not do yet", roles)
+        # The seats page tells the reader to write -Role in full, because a wrapper can swallow
+        # the short alias; this page taught the alias for the same roles, so it teaches the same
+        # spelling now and keeps -o named as the alias it is.
+        self.assertIn("`cc work -Role orchestrator`", roles)
+        self.assertIn("`-Role analyst`", roles)
+        self.assertNotIn("`-o analyst`", roles)
+        self.assertIn("alias", roles)
+        # every resume spelling the launcher accepts, the attached one included
+        self.assertIn("-r<session id>", roles)
 
 
 if __name__ == "__main__":
