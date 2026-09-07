@@ -12,11 +12,10 @@ a boundary. This hook is the boundary, and these tests are what say so.
 
 The rule is narrow on purpose, and closed on the field it reads. It fires only when the caller is
 one of the read-only agents, which the harness names in the payload as agent_type, and it allows
-exactly one target, named. A main session
-carries no agent_type and is never touched, because a person driving a session is not a read-only
-agent and stopping them from delegating would break the kit for everyone. Any other tool is ignored
-outright, and a payload the hook cannot parse leaves the call alone: a guard that blocks work when
-it breaks is worse than no guard.
+exactly one target, named. A main session carries no agent_type and is never touched, because a
+person driving a session is not a read-only agent and stopping them from delegating would break
+the kit for everyone. Any other tool is ignored outright, and a payload the hook cannot parse
+leaves the call alone: a guard that blocks work when it breaks is worse than no guard.
 
 The hook runs the way the harness runs it, as a subprocess with the payload JSON on stdin.
 """
@@ -150,6 +149,24 @@ class GuardDelegateTest(unittest.TestCase):
         payload = self.agent_call("implementer", caller="analyst")
         payload["tool_input"]["subagent_type"] = None
         self.assertIn("subagent_type", self.denial(payload))
+
+    def test_a_missing_tool_input_is_denied_for_a_read_only_caller(self):
+        # No tool_input at all names no target, and a read-only caller must name one.
+        payload = self.agent_call("implementer", caller="reviewer")
+        del payload["tool_input"]
+        self.assertIn("subagent_type", self.denial(payload))
+
+    def test_a_null_tool_input_is_denied_for_a_read_only_caller(self):
+        payload = self.agent_call("implementer", caller="reviewer")
+        payload["tool_input"] = None
+        self.assertIn("subagent_type", self.denial(payload))
+
+    def test_a_non_string_subagent_type_is_denied_for_a_read_only_caller(self):
+        # The integer 0 and a list are not the allowed target however they are coerced.
+        for odd in (0, ["bulk-reader"]):
+            payload = self.agent_call("implementer", caller="analyst")
+            payload["tool_input"]["subagent_type"] = odd
+            self.assertIn("bulk-reader", self.denial(payload))
 
     def test_a_main_session_without_a_target_is_still_not_touched(self):
         # No agent_type means no rule, whatever the tool input looks like.
