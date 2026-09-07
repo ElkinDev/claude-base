@@ -291,5 +291,42 @@ class SeatSettingsTest(unittest.TestCase):
         self.assertIs(self.settings.get("attribution", {}).get("sessionUrl"), False)
 
 
+DOCS = os.path.join(ROOT, "docs")
+
+
+def section(text, heading):
+    """One `## ` section of a markdown page, heading included."""
+    start = text.find(heading)
+    if start < 0:
+        return ""
+    end = text.find("\n## ", start + 1)
+    return text[start:end if end > 0 else len(text)]
+
+
+class SeatDocsTest(unittest.TestCase):
+    """The page a reader opens to learn what a seat is, and the two pages that point at it."""
+
+    def test_the_seats_page_carries_the_lines_a_reader_types(self):
+        text = read(os.path.join(DOCS, "SEATS.md"))
+        for phrase in ("-Role orchestrator", "-- -r", "seats/orchestrator.md",
+                       "seats/analyst.md", "--append-system-prompt-file", "CLAUDE_ROLE"):
+            self.assertIn(phrase, text, "the page never says " + phrase)
+
+    def test_the_seats_page_states_the_refusal_the_loud_line_and_the_deferral(self):
+        text = read(os.path.join(DOCS, "SEATS.md")).lower()
+        for phrase in ("refuse", "not launched through the account launcher", "deferred"):
+            self.assertIn(phrase, text, "the page never says " + phrase)
+
+    def test_the_readme_points_at_the_seats_page(self):
+        self.assertIn("docs/SEATS.md", read(os.path.join(ROOT, "README.md")))
+
+    def test_the_roles_section_of_the_accounts_page_names_the_seat(self):
+        roles = section(read(os.path.join(DOCS, "ACCOUNTS.md")), "## Roles")
+        self.assertTrue(roles, "the accounts page has no Roles section")
+        self.assertIn("docs/SEATS.md", roles)
+        self.assertIn("four things", roles)
+        self.assertIn("seat", roles.lower())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
