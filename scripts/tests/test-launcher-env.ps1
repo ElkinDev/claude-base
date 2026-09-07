@@ -269,6 +269,13 @@ $out = Invoke-InWindowSeat 'orchestrator'
 Assert-Regex $out ('(?m)^CLAUDE_BRIEFS_DIR=' + [regex]::Escape($defaultBriefs) + '\r?$') 'the in-window path exports the briefs directory too'
 Assert-Regex $out '(?m)^CLAUDE_CLOSING_HOUR=22:00\r?$' 'and the closing hour too'
 
+$out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator --name mine
+Assert-Exit 0 'a name of your own is accepted on a seated launch'
+$extraLine = ([regex]::Match($out, '(?m)^EXTRA=.*$')).Value
+Assert-True (([regex]::Matches($extraLine, '--name')).Count -eq 1) 'a name given by hand is never doubled'
+Assert-Match $out '--name mine' 'and it is the one that travels'
+Assert-Regex $out ('(?m)^START=' + [regex]::Escape($startLine) + '\r?$') 'a name of your own still leaves the launch fresh'
+
 Write-Host "`r`nphase 11, a seat with no file is one visible line, not a failed launch"
 $out = Get-LauncherLiteral demo -ShowEnv -Role analyst
 Assert-Exit 0 'a missing seat still opens a session'
