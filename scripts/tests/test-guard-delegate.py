@@ -128,9 +128,34 @@ class GuardDelegateTest(unittest.TestCase):
             self.assertEqual(code, 0, err)
             self.assertEqual(out, "", "a payload the hook cannot read must pass: %r" % body)
 
-    def test_a_missing_subagent_type_is_not_a_denial(self):
-        payload = self.agent_call("implementer", caller="reviewer")
+    # ------------------------------------------------------------- the field it keys on
+    # An absent subagent_type is not an absent delegation. The harness resolves an omitted type
+    # to the general-purpose agent, which carries every tool, so a rule that reads a missing
+    # field as "nothing to check" hands a read-only agent the widest agent there is. For a
+    # caller on the list the field is required, and its absence is a denial like any other.
+    def test_a_read_only_caller_must_name_the_target(self):
+        for missing in (None, "", "   "):
+            payload = self.agent_call("implementer", caller="reviewer")
+            if missing is None:
+                del payload["tool_input"]["subagent_type"]
+            else:
+                payload["tool_input"]["subagent_type"] = missing
+            reason = self.denial(payload)
+            self.assertIn("subagent_type", reason, "the reason must say what is missing")
+            self.assertIn("bulk-reader", reason)
+
+    def test_a_null_subagent_type_is_denied_too(self):
+        payload = self.agent_call("implementer", caller="analyst")
+        payload["tool_input"]["subagent_type"] = None
+        self.assertIn("subagent_type", self.denial(payload))
+
+    def test_a_main_session_without_a_target_is_still_not_touched(self):
+        # No agent_type means no rule, whatever the tool input looks like.
+        payload = self.agent_call("implementer")
         del payload["tool_input"]["subagent_type"]
+        self.allowed(payload)
+        payload = self.agent_call("implementer")
+        payload["tool_input"]["subagent_type"] = None
         self.allowed(payload)
 
 
