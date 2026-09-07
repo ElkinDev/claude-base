@@ -197,4 +197,133 @@ $out = Invoke-InWindowRole 'research' 0
 Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=999999\r?$' 'the in-window path leaves research alone'
 Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
 
+
+# --- the seat ----------------------------------------------------------------------
+# A seat is a plain markdown file naming who the session is. The launcher appends it with
+# --append-system-prompt-file, which leaves the default prompt whole, and it appends it only
+# for a role that has a chair: orchestrator and analyst. CLAUDE_SEATS_DIR points the launcher
+# at a temporary directory here, so the suite never reads or needs the real seats.
+$seatsDir = Join-Path $env:TEMP ('launcher-seats-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $seatsDir -Force | Out-Null
+$seatFile = Join-Path $seatsDir 'orchestrator.md'
+Set-Content -LiteralPath $seatFile -Value '# Seat: orchestrator' -Encoding ASCII
+$missingSeat = Join-Path $seatsDir 'analyst.md'
+$defaultBriefs = Join-Path $env:USERPROFILE '.claude\briefs'
+$startLine = 'Session start: read the newest resume brief of your seat, then the state sheet, then continue with its first actions.'
+$refusal = 'A seated role never continues the most recent conversation of a folder (the profiles share it); resume with -r and the picker, or -r <id>.'
+$env:CLAUDE_SEATS_DIR = $seatsDir
+Remove-Item Env:\CLAUDE_BRIEFS_DIR -ErrorAction SilentlyContinue
+Remove-Item Env:\CLAUDE_CLOSING_HOUR -ErrorAction SilentlyContinue
+
+# The applied environment is a function inside the launcher and -ShowEnv exits before it runs,
+# so the seat plan lines and Apply-Role are lifted by name and run in a child process, the way
+# phase 9 lifts the cap. The plan string and the function are built separately and have drifted
+# apart before, which is why the seat variables are asserted on both.
+function Invoke-InWindowSeat {
+    param([string]$RoleName)
+    $text = Get-Content -LiteralPath $launcher -Raw
+    $lifted = @()
+    foreach ($anchor in @('^\$isSeat = .+$', '^\$briefsDir = .+$', '^\$closingHour = .+$', '^\$capContext = .+$')) {
+        $line = ([regex]::Match($text, '(?m)' + $anchor)).Value
+        if ($line -eq '') { throw "the launcher no longer holds the line this test lifts: $anchor" }
+        $lifted += $line
+    }
+    $applyRole = ([regex]::Match($text, '(?ms)^function Apply-Role \{.*?^\}')).Value
+    if ($applyRole -eq '') { throw 'the launcher no longer holds the in-window path this test lifts' }
+    $probe = Join-Path $env:TEMP ('launcher-seat-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.ps1')
+    $body = @(("`$Role = '" + $RoleName + "'"), '$Window = 0') + $lifted + @(
+        $applyRole,
+        'Apply-Role',
+        'Write-Output ("CLAUDE_BRIEFS_DIR=" + $env:CLAUDE_BRIEFS_DIR)',
+        'Write-Output ("CLAUDE_CLOSING_HOUR=" + $env:CLAUDE_CLOSING_HOUR)'
+    )
+    Set-Content -LiteralPath $probe -Value $body -Encoding ASCII
+    try { $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $probe 2>&1 | Out-String }
+    finally { Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue }
+    return $out
+}
+
+Write-Host "`r`nphase 10, a seated role opens with its seat appended, named and started"
+$out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator
+Assert-Exit 0 'the dry run exits clean'
+Assert-Regex $out ('(?m)^SEAT=' + [regex]::Escape($seatFile) + '\r?$') 'the plan names the seat file it found'
+Assert-Match $out ('--append-system-prompt-file ' + $seatFile) 'the seat reaches claude as an appended prompt file'
+Assert-Regex $out '(?m)^FRESH=true\r?$' 'a launch with no resume flag is fresh'
+Assert-Regex $out ('(?m)^START=' + [regex]::Escape($startLine) + '\r?$') 'the plan names the start line'
+Assert-Regex $out ('(?m)^EXTRA=.*' + [regex]::Escape($startLine) + '\r?$') 'the start line is the last argument, so claude reads it as the prompt'
+Assert-Regex $out '(?m)^EXTRA=--name orchestrator-\d{4}-\d{4} ' 'a fresh seat launch carries the minute in its name'
+$extraLine = ([regex]::Match($out, '(?m)^EXTRA=.*$')).Value
+Assert-True (([regex]::Matches($extraLine, '--name')).Count -eq 1) 'the session is named once, never twice'
+Assert-Regex $out ('(?m)^CLAUDE_BRIEFS_DIR=' + [regex]::Escape($defaultBriefs) + '\r?$') 'the briefs directory falls back under the user home'
+Assert-Regex $out '(?m)^CLAUDE_CLOSING_HOUR=22:00\r?$' 'the closing hour falls back to 22:00'
+Assert-Match $out ("`$env:CLAUDE_BRIEFS_DIR = '" + $defaultBriefs + "'") 'the pane command carries the briefs directory'
+Assert-Match $out "`$env:CLAUDE_CLOSING_HOUR = '22:00'" 'the pane command carries the closing hour'
+$out = Invoke-InWindowSeat 'orchestrator'
+Assert-Regex $out ('(?m)^CLAUDE_BRIEFS_DIR=' + [regex]::Escape($defaultBriefs) + '\r?$') 'the in-window path exports the briefs directory too'
+Assert-Regex $out '(?m)^CLAUDE_CLOSING_HOUR=22:00\r?$' 'and the closing hour too'
+
+Write-Host "`r`nphase 11, a seat with no file is one visible line, not a failed launch"
+$out = Get-LauncherLiteral demo -ShowEnv -Role analyst
+Assert-Exit 0 'a missing seat still opens a session'
+Assert-Regex $out '(?m)^CLAUDE_ROLE=analyst\r?$' 'analyst is a role the launcher accepts'
+Assert-Regex $out '(?m)^SEAT=none\r?$' 'no seat is claimed when the file is absent'
+Assert-Match $out ('Seat file missing: ' + $missingSeat + '; the session opens without a seat.') 'the absent file is named on one line'
+Assert-True (-not ($out -match 'append-system-prompt-file')) 'and nothing is appended, since claude refuses to start on a missing file'
+
+Write-Host "`r`nphase 12, lane and research have no chair and are left alone"
+$out = Get-LauncherLiteral demo -ShowEnv -Role lane
+Assert-Exit 0 'the dry run exits clean'
+Assert-Regex $out '(?m)^SEAT=none\r?$' 'a lane takes no seat'
+Assert-True (-not ($out -match 'Seat file missing')) 'and says nothing about a file it never wanted'
+Assert-Regex $out '(?m)^START=none\r?$' 'a lane gets no start line'
+Assert-Regex $out '(?m)^CLAUDE_BRIEFS_DIR=\(unset\)\r?$' 'the launcher names no briefs directory for a lane'
+Assert-Regex $out '(?m)^CLAUDE_CLOSING_HOUR=\(unset\)\r?$' 'nor a closing hour'
+Assert-True (-not ($out -match 'CLAUDE_BRIEFS_DIR = ')) 'and the pane command exports neither'
+
+Write-Host "`r`nphase 13, a seated role refuses to continue the last conversation of a folder"
+$out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator -c
+Assert-Exit 1 'the launcher refuses -c and exits 1'
+Assert-Match $out $refusal 'the refusal says what to do instead'
+Assert-True (-not ($out -match 'CLAUDE_ROLE=')) 'and it happens before anything is planned'
+$out = Get-LauncherLiteral demo -ShowEnv -Role analyst --continue
+Assert-Exit 1 'the long spelling is refused too'
+Assert-True (-not ($out -match 'Seat file missing')) 'and before the seat file is even looked for'
+$out = Get-LauncherLiteral demo -ShowEnv -Role lane -c
+Assert-Exit 0 'a lane still continues: it shares no chair'
+Assert-Regex $out '(?m)^EXTRA=--name lane -c\r?$' 'and -c reaches claude untouched'
+
+Write-Host "`r`nphase 14, fresh is decided token by token, never by searching the joined string"
+# --no-chrome is appended to the argument string before any later check and it carries -c
+# inside it, so a substring search calls a bare seat launch a resume and refuses it. The array
+# is read as exact tokens instead, and a path that merely contains -c proves the difference.
+$out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator --add-dir C:\repo-cache
+Assert-Exit 0 'an argument that merely contains the letters is not a continue'
+Assert-Regex $out '(?m)^FRESH=true\r?$' 'nor a resume'
+Assert-Regex $out ('(?m)^START=' + [regex]::Escape($startLine) + '\r?$') 'so the start line is still planned'
+$out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator --resume
+Assert-Exit 0 'a resume opens clean'
+Assert-Regex $out '(?m)^FRESH=false\r?$' '--resume is read as a resume'
+Assert-Regex $out '(?m)^START=none\r?$' 'a resume gets no start line'
+Assert-True (-not ($out -match '--name')) 'and keeps the name the session already has'
+Assert-Match $out ('--append-system-prompt-file ' + $seatFile) 'a resumed seat still wears its seat'
+$out = Invoke-Wrapper demo -ShowEnv -Role orchestrator -- -r
+Assert-Regex $out '(?m)^FRESH=false\r?$' '-r past the separator is a resume too'
+Assert-True (-not ($out -match '--name')) 'and is not renamed either'
+
+Write-Host "`r`nphase 15, the environment names the briefs directory and the closing hour"
+$env:CLAUDE_BRIEFS_DIR = 'C:\evidence\briefs'
+$env:CLAUDE_CLOSING_HOUR = '21:15'
+$out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator
+Assert-Exit 0 'the dry run exits clean'
+Assert-Regex $out '(?m)^CLAUDE_BRIEFS_DIR=C:\\evidence\\briefs\r?$' 'an environment already set wins over the fallback'
+Assert-Regex $out '(?m)^CLAUDE_CLOSING_HOUR=21:15\r?$' 'the closing hour too'
+Assert-Match $out "`$env:CLAUDE_BRIEFS_DIR = 'C:\evidence\briefs'" 'and the pane command carries what it found'
+$out = Invoke-InWindowSeat 'orchestrator'
+Assert-Regex $out '(?m)^CLAUDE_BRIEFS_DIR=C:\\evidence\\briefs\r?$' 'the in-window path carries it as well'
+Assert-Regex $out '(?m)^CLAUDE_CLOSING_HOUR=21:15\r?$' 'with the hour it was given'
+Remove-Item Env:\CLAUDE_BRIEFS_DIR -ErrorAction SilentlyContinue
+Remove-Item Env:\CLAUDE_CLOSING_HOUR -ErrorAction SilentlyContinue
+Remove-Item Env:\CLAUDE_SEATS_DIR -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $seatsDir -Recurse -Force -ErrorAction SilentlyContinue
+
 Write-TestResult
