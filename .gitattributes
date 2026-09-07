@@ -11,6 +11,8 @@ scripts/git-hooks/** text eol=lf
 scripts/sanitize-rules.txt text eol=lf
 scripts/sanitize-allow.txt text eol=lf
 scripts/tests/fixtures/sanitize/** text eol=lf
+# The uiautomator dumps the frame tool is tested against, compared byte for byte.
+claude/tools/tests/fixtures/xmlframe/** text eol=lf
 .gitignore text eol=lf
 .gitattributes text eol=lf
 *.ps1 text eol=crlf

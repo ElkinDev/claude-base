@@ -162,6 +162,62 @@ shell would move them past the image and large-file guard too. Which files a com
 whether a pipe, a redirect or a substitution keeps those bytes out of the window, is parsed in
 `claude/hooks/shell_read.py`.
 
+### A compact frame instead of a screenshot
+
+The same arithmetic decides how an agent looks at a screen it is driving. A screenshot is an
+image, exempt from the byte rule above because a slice of pixels means nothing, and it costs a
+couple of thousand tokens no later turn can search. The raw `uiautomator dump` behind it is text,
+and worse: five to sixteen thousand tokens of nested attributes, almost all of them layout.
+
+`claude/tools/xmlframe.py` is the filter in between. It reads one dump already on disk and writes
+one line per element an agent can act on, carrying the label, the resource id, the enabled,
+checked and selected state and a tap centre, plus a last line with the screen text that belongs
+to no row. The frame is not a redaction: its labels and its read line are the screen's own text
+copied verbatim, so a frame carries the same sensitivity as the dump and the screenshot it
+replaces and belongs exactly where those two belong. Measured over one pilot of five screens,
+the frames came in between five hundred and nine hundred tokens: a twentieth of the same
+screens' raw dumps at the median, a ninth on the sparsest of them, and in the region of a
+quarter of what a screenshot of the same screen cost. The ratio widens as the screen gets
+busier, which is the opposite of a screenshot. Those are one pilot's numbers on one application,
+quoted as the band they came in at; measure your own before you plan around them.
+
+The hook shape is the part worth copying, not the tool. A collector that pulls dumps writes the
+frame beside each one in the same pass, so the bytes are on disk before any model is asked to
+look, and no model token is spent producing them:
+
+```sh
+# set these two: the python that runs the kit, and the directory the kit was installed in
+PY=${PY:-python3}
+KIT=${KIT:-$HOME/.claude}
+
+frame() {                                    # <base>.frame.txt and <base>.frame.json
+  xml=$1; base=${xml%.xml}
+  F=$KIT/tools/xmlframe.py; E=$base.frame.err
+  if "$PY" "$F" --format text "$xml" >"$base.frame.txt" 2>"$E" &&
+     "$PY" "$F" --format json "$xml" >"$base.frame.json" 2>>"$E"; then
+    rm -f "$E" "$base.frame.ERROR.txt"; return 0   # a good run clears the older run's mark
+  fi
+  mv "$E" "$base.frame.ERROR.txt"; rm -f "$base.frame.txt" "$base.frame.json"
+  echo "FRAME_FAILED: $xml"; return 0
+}
+```
+
+The two settings at the top are the whole configuration, and the block runs as it stands under
+`set -euo pipefail`, which is where a collector that leans on names defined somewhere off the
+page fails first. The `return 0` is deliberate and so is the error file. A frame that fails must not take the
+collector down with it, and must not pass in silence either: the tool exits 2 with one line on
+stderr when a dump is missing or will not parse, the line lands in a named file, and the run says
+`FRAME_FAILED` where a reader will see it. A later run that succeeds over the same base removes
+that file, so a directory never shows two valid frames beside the mark of a failure that is no
+longer true.
+
+One limit is worth stating, because no XML filter can fix it. A drawing surface reaches the frame
+as a node with an id, a tap centre and a `~draw` mark, and that is everything any filter can say
+about it: the interior of a canvas is not in the hierarchy at all, so what has been drawn on it is
+invisible to the frame and to the raw dump alike. A screen whose content is a canvas is the case
+where the screenshot is still the only answer, and the frame is what tells you the screen is that
+case.
+
 ## 6. The right moment: an optimum band, and why the level is second order
 
 Let `F` be the floor, `g` the average context growth per turn, `O` the weighted overhead of one
