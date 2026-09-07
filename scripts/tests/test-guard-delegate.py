@@ -3,14 +3,16 @@
 
     python scripts/tests/test-guard-delegate.py
 
-The reviewer and the analyst are read-only by construction: they return a verdict or an analysis
-and never change a file. Letting them reach the bulk reader means putting the Agent tool on the
+Neither definition is meant to change a file; this hook closes the one path this branch opens,
+delegation. Bash and PowerShell in the reviewer's allowlist and the analyst's inherited tools are
+a separate open item. Letting them reach the bulk reader means putting the Agent tool on the
 reviewer's allowlist, and an allowlist has no shape: with Agent on it the reviewer can launch an
 implementer, which writes. A sentence in the definition asking it not to is prose, and prose is not
 a boundary. This hook is the boundary, and these tests are what say so.
 
-The rule is narrow on purpose. It fires only when the caller is one of the read-only agents, which
-the harness names in the payload as agent_type, and it allows exactly one target. A main session
+The rule is narrow on purpose, and closed on the field it reads. It fires only when the caller is
+one of the read-only agents, which the harness names in the payload as agent_type, and it allows
+exactly one target, named. A main session
 carries no agent_type and is never touched, because a person driving a session is not a read-only
 agent and stopping them from delegating would break the kit for everyone. Any other tool is ignored
 outright, and a payload the hook cannot parse leaves the call alone: a guard that blocks work when

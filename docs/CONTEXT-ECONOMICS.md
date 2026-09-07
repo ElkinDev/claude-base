@@ -181,8 +181,10 @@ the calling discipline lives. The 48 KB guard below exempts this one agent from 
 the `agent_type` the harness puts in the payload, and nothing else: the image rule and the shell
 matcher treat it like any other caller. Reaching the reader costs the reviewer the Agent tool on
 its allowlist, which is a general licence to fan out, so `claude/hooks/guard-delegate.py` denies
-any target but the reader to a read-only agent: the guard, not the sentence in the definition, is
-what holds that line.
+any target but the reader to a read-only agent, an unnamed target included: the guard, not the
+sentence in the definition, is what holds that line. Neither definition is meant to change a file;
+this hook closes the one path this branch opens, delegation. Bash and PowerShell in the reviewer's
+allowlist and the analyst's inherited tools are a separate open item.
 
 ### A compact frame instead of a screenshot
 
