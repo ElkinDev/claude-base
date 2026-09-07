@@ -261,5 +261,35 @@ class ClosingNoticeTest(unittest.TestCase):
         self.assertIn("carry on with the lane", read(self.log))
 
 
+SETTINGS = os.path.join(ROOT, "claude", "settings.json")
+
+
+class SeatSettingsTest(unittest.TestCase):
+    """The two settings the seat needs in the user template the installer copies."""
+
+    def setUp(self):
+        self.settings = json.loads(read(SETTINGS))
+
+    def session_start(self):
+        return self.settings.get("hooks", {}).get("SessionStart", [])
+
+    def test_the_rulings_hook_runs_on_every_source_that_opens_a_window(self):
+        """Startup, resume and clear open a window with no seat block in it, and `/exit` with
+        tasks still running forks a session, which opens another. All four are wired to the
+        same hook, so a forked session is told its chair the way a fresh one is."""
+        entries = [entry for entry in self.session_start()
+                   if any("--rulings" in hook.get("command", "")
+                          for hook in entry.get("hooks", []))]
+        self.assertEqual(len(entries), 1, "the rulings hook is not wired once")
+        matcher = entries[0].get("matcher", "")
+        for source in ("startup", "resume", "clear", "fork"):
+            self.assertIn(source, matcher.split("|"), "the matcher misses " + source)
+
+    def test_the_session_link_trailer_is_off(self):
+        """A commit made from a web or remote session carries a session link unless this is
+        false, and the rule is no attribution of any kind in a commit message."""
+        self.assertIs(self.settings.get("attribution", {}).get("sessionUrl"), False)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
