@@ -106,7 +106,11 @@ def trim(path):
 
 
 SEATS = ("orchestrator", "analyst")
+MINUTES_IN_DAY = 24 * 60
 CLOSING_WINDOW = 45
+# The round does not shut at the hour, because a session still typing past it is what the line
+# exists for, but it does end: without a tail, a window that wraps midnight would cover the day.
+CLOSING_TAIL = 120
 NOTICE = ("Closing round: the day ends at %s. Write the resume brief, land or stop every agent, "
           "nothing running at the hour.")
 
@@ -125,15 +129,22 @@ def clock(value):
 def closing_notice(data):
     """The one line a seated session is told once the closing round has opened.
 
-    The round opens CLOSING_WINDOW minutes before CLAUDE_CLOSING_HOUR and does not shut: a
-    session still typing after the hour is the case the line exists for. A lane has no day to
-    close and a subagent holds no chair, so neither is told anything, and a session without the
-    variable is a session on a machine that never set a closing hour.
+    The round opens CLOSING_WINDOW minutes before CLAUDE_CLOSING_HOUR and stays open CLOSING_TAIL
+    minutes past it, because a session still typing after the hour is the case the line exists
+    for. The arithmetic wraps the day, so a closing hour after midnight gets the same window as
+    any other instead of a round that opens at 23:45 and never closes.
+
+    A lane has no day to close and a subagent holds no chair, so neither is told anything, and a
+    session without the variable is a session on a machine that never set a closing hour. A
+    prompt the log itself refuses, a slash command or a harness tag, is not a person asking for
+    something either, and the notice is an answer to a person.
 
     CLAUDE_TEST_NOW replaces the clock, so the cases around the edge of the window are exact
     rather than a suite that has to be run at nine in the evening.
     """
     if data.get("agent_id") or data.get("agent_type"):
+        return ""
+    if not entry_text(data.get("prompt")):
         return ""
     if (os.environ.get("CLAUDE_ROLE") or "").strip().lower() not in SEATS:
         return ""
@@ -144,7 +155,10 @@ def closing_notice(data):
     now = clock(os.environ.get("CLAUDE_TEST_NOW"))
     if now is None:
         now = clock(datetime.now().strftime("%H:%M"))
-    return "" if now < end - CLOSING_WINDOW else NOTICE % hour
+    since = (now - end) % MINUTES_IN_DAY
+    if CLOSING_TAIL < since < MINUTES_IN_DAY - CLOSING_WINDOW:
+        return ""
+    return NOTICE % hour
 
 
 def append(data):
