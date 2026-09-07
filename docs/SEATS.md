@@ -17,17 +17,9 @@ The installer copies them to `<kit home>\seats\`, beside `agents\` and `skills\`
 
 The seat reaches a session two ways at once. The text is appended to the default system prompt with `--append-system-prompt-file`, and `CLAUDE_ROLE` names the chair in the environment for the hooks to read. Appended, not substituted: `--agent` replaces the default prompt and takes the environment block, the model identity and the memory instructions with it, which is a high price for one paragraph of text.
 
-## The line that works today
+## The launch lines
 
-This landing ships the seat files, the hooks that read `CLAUDE_ROLE` and the installer that copies both. Any shell, any platform, no launcher involved:
-
-```sh
-CLAUDE_ROLE=orchestrator claude --append-system-prompt-file ~/.claude/seats/orchestrator.md
-```
-
-The launcher wiring is not in this landing. `claude-account.ps1` on this branch takes `orchestrator`, `lane` and `research`, passes no append flag and refuses nothing: the `analyst` role, the seat append, the refusal of the continue flag, and the session name and the start line on a fresh launch only all ship with the launcher item. Until that lands, the line above is the seat, typed or aliased, and a pane opened any other way is a lane whose first block line says so.
-
-## The launch lines, once the launcher wiring lands
+`claude-account.ps1` knows `orchestrator` and `analyst` as seated roles. It appends the seat file, refuses the continue flag (the line it prints, and why, are two sections down), names a fresh session and hands it a start line, so a chair costs one flag and nothing typed:
 
 ```powershell
 cc work -Role orchestrator          a fresh seated session
@@ -38,11 +30,51 @@ cc work                             no role, no seat: a lane
 
 Write `-Role` in full. A wrapper that forwards flags it does not know straight to `claude` can swallow the short `-o` alias, and then the role is gone with no error to read.
 
-A seat will be appended only when `<kit home>\seats\<role>.md` exists, so a role with no seat file, `lane` and `research`, keeps launching exactly as it does today.
+The seat file is `<seats dir>\<role>.md`, where the seats directory is `CLAUDE_SEATS_DIR` when that variable is set and `%USERPROFILE%\.claude\seats` otherwise. The launcher tests the file before it adds the flag, because claude refuses to start when an append file is missing; when it is absent the launch costs one line, never the session:
+
+```
+Seat file missing: <seats dir>\<role>.md; the session opens without a seat.
+```
+
+A role with no seat file, `lane` and `research`, keeps launching exactly as it did before the seats existed.
+
+On a fresh launch only, the session is named `<role>-MMdd-HHmm`, so the resume picker separates today's chair from yesterday's, and the start line goes last in the command, where claude reads a positional argument as the first prompt:
+
+```
+Session start: read the newest resume brief of your seat, then the state sheet, then continue with its first actions.
+```
+
+A launch that reopens a conversation is neither renamed nor handed a start line: the chair it reopens already carries both. A name of your own, `-- --name x`, wins over the generated one, and a prompt of your own wins over the start line: a last token without a leading dash is read as the prompt the owner typed, a trailing option value such as `--model opus` included, since a launcher cannot know which options take a value. The start line then stands aside and says so.
+
+`--no-chrome` joins the argument array before the seat block, for every role but `research` and unless a chrome flag was passed by hand, so the command that runs reads `claude --name <role>-MMdd-HHmm --append-system-prompt-file <seat> --no-chrome '<start line>'`, the start line stays the last token, and the in-window path receives `--no-chrome` as well.
+
+A seated session also carries `CLAUDE_BRIEFS_DIR`, default `%USERPROFILE%\.claude\briefs`, and `CLAUDE_CLOSING_HOUR`, default `22:00`. That is where the hooks below read the resume brief and the closing round from.
+
+`cc work -Role orchestrator -ShowEnv` prints the plan and exits without opening a session, which is how a pane is checked against this page. Beside the context variables it prints `COMMAND=`, the whole command line; `SEAT=`, the seat file or `none`; `FRESH=`, `true` or `false`; `START=`, the start line, `none`, or `none (positional given)` when a prompt was typed; and `CLAUDE_BRIEFS_DIR=` and `CLAUDE_CLOSING_HOUR=`, both `(unset)` on a role with no chair.
+
+## The line without the launcher
+
+The launcher is PowerShell and it is not the mechanism, only the convenience. On a machine without it, or in any other shell, a seat is two things typed by hand, the variable and the append flag:
+
+```sh
+CLAUDE_ROLE=orchestrator claude --append-system-prompt-file ~/.claude/seats/orchestrator.md
+```
+
+```powershell
+$env:CLAUDE_ROLE='orchestrator'; claude --append-system-prompt-file "$env:USERPROFILE\.claude\seats\orchestrator.md"
+```
+
+Neither line names the session or hands it a start line, so a pane opened this way reads its brief because a person said so. A pane opened with neither the launcher nor these lines is a lane, and the first block line says so.
 
 ## Why the continue flag is refused on a seat
 
-Profiles share the projects directory, so `-c` and `--continue` load the most recent conversation of that folder, which may belong to the other seat. Appending the right seat text to the wrong conversation does not save it: the loaded session keeps answering as the chair it already held, with the new seat text sitting unread above it. That is why the launcher item refuses `-c` and `--continue` on a seated role and prints one line saying so, and why, until it lands, a seat is resumed by hand with `-r` and the picker or `-r <session id>`, never with the continue flag.
+Profiles share the projects directory, so `-c` and `--continue` load the most recent conversation of that folder, which may belong to the other seat. Appending the right seat text to the wrong conversation does not save it: the loaded session keeps answering as the chair it already held, with the new seat text sitting unread above it. That is why the launcher refuses `-c`, `--continue` and `--continue=<id>` on a seated role, printing one line and exiting without opening a session:
+
+```
+A seated role never continues the most recent conversation of a folder (the profiles share it); resume with -r and the picker, or -r <id>.
+```
+
+A resume is allowed and is what a chair wants: `-r` and the picker, `-r <session id>` or `--resume=<session id>`, never the continue flag.
 
 ## What the hooks print
 
@@ -60,6 +92,7 @@ A pane with no seat says `Seat: none (lane)`. A pane launched by nothing at all,
 | Variable | What it does |
 |---|---|
 | `CLAUDE_ROLE` | names the chair: `orchestrator`, `analyst`, anything else is a lane |
+| `CLAUDE_SEATS_DIR` | where the launcher looks for `<role>.md`; default `%USERPROFILE%\.claude\seats` |
 | `CLAUDE_BRIEFS_DIR` | where `<seat>-resume-<date>.md` lives; default `~/.claude/briefs`, absent means nothing is printed |
 | `CLAUDE_CLOSING_HOUR` | `HH:MM`, local; unset means no closing round and no line |
 | `CLAUDE_TEST_NOW` | `HH:MM`, replaces the clock for the tests of the closing round |
