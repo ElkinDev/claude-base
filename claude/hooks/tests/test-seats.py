@@ -207,6 +207,45 @@ class SeatBlockTest(unittest.TestCase):
         self.assertEqual(text.splitlines()[0], "Seat: orchestrator")
         self.assertIn("Rulings (last 30", text)
 
+    def spawn_with_open_stdin(self, env, payload, args=("--rulings",)):
+        """The hook with its payload written and the pipe left open, which is the shape of a
+        caller that has more to say. Nothing closes stdin here: closing it is what the case is
+        about."""
+        process = subprocess.Popen(
+            [sys.executable, RECOVER] + list(args),
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        self.addCleanup(process.kill)
+        process.stdin.write(json.dumps(payload).encode("utf-8"))
+        process.stdin.flush()
+        try:
+            process.wait(timeout=6)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            self.fail("the hook was still waiting on an open stdin after 6 seconds")
+        text = process.stdout.read().decode("utf-8", "replace")
+        self.assertEqual(process.returncode, 0,
+                         process.stderr.read().decode("utf-8", "replace"))
+        return text
+
+    def test_a_payload_on_a_pipe_still_open_is_read_and_not_discarded(self):
+        """The bound answers a pipe that says nothing. It must not throw away a pipe that
+        already said everything and stayed open: the payload arrived, so the subagent it
+        describes gets no seat block, exactly as it does when the caller closes the pipe."""
+        out = self.spawn_with_open_stdin(
+            self.env(CLAUDE_ROLE="orchestrator"), {"session_id": "zz", "agent_id": "a1"})
+        self.assertNotIn("Seat:", out)
+        self.assertIn("Rulings (last 30", out)
+
+    def test_the_compact_mode_keeps_the_payload_of_a_pipe_still_open(self):
+        """Compact mode reads cwd, session_id and transcript_path out of the same payload, so
+        discarding it at the bound would point the block at the folder the hook happens to run
+        in. The cwd of the payload is what the block must name."""
+        out = self.spawn_with_open_stdin(
+            self.env(CLAUDE_ROLE="orchestrator"),
+            {"session_id": "zz", "agent_id": "a1", "cwd": self.tmp}, args=())
+        self.assertNotIn("Seat:", out)
+        self.assertIn("No NOTES.md in %s" % self.tmp, out)
+
     # --- the subagent exclusion -------------------------------------------
 
     def test_a_subagent_payload_prints_no_seat_block(self):
