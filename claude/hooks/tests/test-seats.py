@@ -181,6 +181,32 @@ class SeatBlockTest(unittest.TestCase):
         out = self.run_hook(self.env(CLAUDE_ROLE="lane", CLAUDE_BRIEFS_DIR=self.briefs))
         self.assertNotIn("Resume brief", out)
 
+    # --- stdin that never closes ------------------------------------------
+
+    def test_an_open_and_silent_stdin_costs_the_bound_and_not_the_session(self):
+        """A caller that opens the pipe and sends nothing is not a caller with nothing to say:
+        it is a caller still deciding. The hook read that pipe to end of file, so it waited for
+        a close that never came and the session start hung until the harness killed it. The read
+        is bounded now, and a payload that never arrives is an empty payload: the block prints
+        exactly as it does for a session, since a session is what an absent agent_id means."""
+        env = self.env(CLAUDE_ROLE="orchestrator")
+        process = subprocess.Popen(
+            [sys.executable, RECOVER, "--rulings"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        self.addCleanup(process.kill)
+        # stdin is never closed here: communicate() would close it, which is the one thing the
+        # caller in the report does not do.
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            self.fail("the hook was still waiting on an open stdin after 5 seconds")
+        text = process.stdout.read().decode("utf-8", "replace")
+        self.assertEqual(process.returncode, 0,
+                         process.stderr.read().decode("utf-8", "replace"))
+        self.assertEqual(text.splitlines()[0], "Seat: orchestrator")
+        self.assertIn("Rulings (last 30", text)
+
     # --- the subagent exclusion -------------------------------------------
 
     def test_a_subagent_payload_prints_no_seat_block(self):
