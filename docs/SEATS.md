@@ -93,6 +93,8 @@ Seat: orchestrator
 Resume brief: <briefs dir>\orchestrator-resume-2026-09-07.md (read it first)
 ```
 
+A brief is named `<seat>-resume-<YYYY-MM-DD>.md`, with `-HHMM` appended when a seat writes a second brief of the same day, and the newest by name wins, which is why the hook sorts the stem and not the whole filename: over filenames the dash of the hour would sort before the dot of `.md` and the morning brief would win.
+
 A pane with no seat says `Seat: none (lane)`. A pane launched by nothing at all, a bare restore after a logon or a session started by hand, adds the loud line `Not launched through the account launcher: no seat, no window, no --no-chrome. Relaunch through it before working.`, which is the standing rule made visible instead of silently lost. A subagent prints none of this: it inherits the environment of the session that launched it, so the payload, not the variable, is what tells them apart, and an agent holds no chair.
 
 `prompt-log.py` adds one line to a seated session once the closing round has opened: the day ends, write the resume brief, land or stop every agent. The round runs from 45 minutes before the closing hour to two hours after it, wrapped around midnight so a closing hour after it behaves like any other, and the line is added only to a prompt a person typed, never to a slash command or a harness tag.

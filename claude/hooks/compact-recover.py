@@ -236,11 +236,18 @@ def resume_brief(name):
     Newest by name, not by modification time: the name carries the day the brief is for, and a
     brief corrected after it was written is still the brief of its own day. A directory that is
     not there is not a fault, it is a project without a board, so nothing is said about it.
+
+    The stem is sorted, never the whole filename. A second brief of the same day is
+    `<seat>-resume-<YYYY-MM-DD>-<HHMM>.md`, and over whole filenames the dash of its hour sorts
+    before the dot of `.md`, which hands a seat that wrote a brief at midday the morning one.
+    Over stems the hour is a longer string with the same prefix, so it sorts last, where it
+    belongs.
     """
     folder = os.environ.get("CLAUDE_BRIEFS_DIR") or BRIEFS_DIR
     if not os.path.isdir(folder):
         return ""
-    files = sorted(glob.glob(os.path.join(folder, f"{name}-resume-*.md")))
+    files = sorted(glob.glob(os.path.join(folder, f"{name}-resume-*.md")),
+                   key=lambda f: os.path.splitext(os.path.basename(f))[0])
     if not files:
         return f"Resume brief: none found in {folder}"
     return f"Resume brief: {files[-1]} (read it first)"

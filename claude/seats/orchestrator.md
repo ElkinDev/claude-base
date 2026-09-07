@@ -24,7 +24,7 @@ A resumed session continues from its own conversation. It reads the resume brief
 
 Before the closing hour, in this order:
 
-1. Write tomorrow's `orchestrator-resume-<date>.md` in the briefs directory: the exact state, what is in flight, what is blocked, what the next session does first.
+1. Write tomorrow's `orchestrator-resume-<YYYY-MM-DD>.md` in the briefs directory, with `-HHMM` appended for a later brief of the same day, since the newest by name is the one the next session is handed: the exact state, what is in flight, what is blocked, what the next session does first.
 2. Register every decision taken during the day that is not there yet.
 3. Land or stop every agent. Nothing is running at the hour.
 
