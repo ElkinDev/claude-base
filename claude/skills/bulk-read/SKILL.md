@@ -24,6 +24,9 @@ Call the Agent tool with `subagent_type: bulk-reader`. Give it exactly two thing
 and the absolute paths of the files. No other instructions, no method, no format notes; the agent
 definition already carries them, and anything you add is paid for on a model that will not use it.
 
+Up to four files per call; more files, more calls. The reader has a small turn budget, and a long
+list spends it on reading instead of answering. Splitting also lets the calls run in parallel.
+
 ## What comes back
 
 Structured bullets, each naming a file and a symbol, closed by the reader's orientation line. About

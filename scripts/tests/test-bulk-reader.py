@@ -201,9 +201,12 @@ class Documentation(unittest.TestCase):
         self.assertIn(DOCS_HEADING, self.text)
 
     def section(self):
+        """The subsection with its whitespace collapsed: the page is hard wrapped, so a sentence
+        that must be present is asserted as words, not as the line breaks of the day it was
+        written."""
         start = self.text.index(DOCS_HEADING)
         end = self.text.find("\n### ", start + 1)
-        return self.text[start:end if end > 0 else len(self.text)]
+        return " ".join(self.text[start:end if end > 0 else len(self.text)].split())
 
     def test_the_measured_figures_are_in_the_subsection(self):
         section = self.section()

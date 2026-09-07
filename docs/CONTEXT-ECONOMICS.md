@@ -164,18 +164,22 @@ whether a pipe, a redirect or a substitution keeps those bytes out of the window
 
 ### A cheap reader for a whole file
 
-The other move on that same line is to send the read away. Whole reads of files over 350 lines are
-made almost entirely by subagents, and on a measured day they were about 1 percent of the bill, so
-there is no money in them. There is context. A `bulk-reader` subagent, Haiku, tools limited to
-Read, Grep and Glob, six turns, was given an 841-line file and one orientation question: it
-answered exactly in 37 seconds for about 34k Haiku tokens, and left about 400 tokens in the
-caller's window instead of the file. That is roughly 0.1 percent of the day's bill spent to keep a
-reviewer's window clean, which is the honest way to state the prize: hygiene, not savings. The
+The other move on that same line is to send the read away. Both percentages below come from one
+measured day of the reference project, 297 transcripts, and they are that day's shape, not a
+constant. Whole reads of files over 350 lines are made almost entirely by subagents, and on that
+day they were about 1 percent of the bill, so there is no money in them. There is context. A
+`bulk-reader` subagent, Haiku, tools limited to Read, Grep and Glob, ten turns and four files per
+call, was given an 841-line file and one orientation question: it answered exactly in 37 seconds
+for about 34k Haiku tokens, and left about 400 tokens in the caller's window instead of the file.
+That is roughly 0.1 percent of the day's bill spent to keep a reviewer's window clean, which is
+the honest way to state the prize: hygiene, not savings. The
 exception to running work agents on the strong model holds only inside two limits. Never for a file
 the caller will edit, because an edit needs the line numbers a summary does not carry. And never a
 verdict on a summary alone: any claim that reaches a finding, a verdict or an edit is verified with
 a direct ranged read. Reviewer and analyst carry that sentence in their definitions, and
-`claude/skills/bulk-read/SKILL.md` is where the calling discipline lives.
+`claude/skills/bulk-read/SKILL.md` is where the calling discipline lives. The 48 KB guard below
+exempts this one agent from its size rule, by the `agent_type` the harness puts in the payload, and
+nothing else: the image rule and the shell matcher treat it like any other caller.
 
 ### A compact frame instead of a screenshot
 
