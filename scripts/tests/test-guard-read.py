@@ -36,6 +36,8 @@ def load(name, path):
 shell_read = load("shell_read", os.path.join(HOOKS, "shell_read.py"))
 SIZE_LIMIT_BYTES = shell_read.SIZE_LIMIT_BYTES
 ALLOWED_LIMIT_LINES = shell_read.ALLOWED_LIMIT_LINES
+# The name of the one agent exempt from the size rule comes from the hook too, for the same reason.
+guard = load("guard_read", GUARD)
 
 
 def run_guard(payload, role="orchestrator"):
@@ -331,6 +333,45 @@ class GuardTest(unittest.TestCase):
         self.allowed(self.read(self.big, limit=200))
 
     def test_the_read_matcher_still_denies_an_image_to_the_orchestrator(self):
+        self.assertIn("orchestrator", self.denial(self.read(self.image)))
+
+    # ------------------------------------------------------------- the one exempt reader
+    # The bulk reader exists to read whole files above the ceiling on a cheap model, so the size
+    # rule would deny it exactly the calls it was built for. The exemption is keyed on the
+    # agent_type the harness puts in the payload of a subagent's Read, and it lifts the size rule
+    # alone: the image rule and the shell matcher are untouched, and no other agent gains anything.
+    def bulk_read(self, path, limit=None, agent_type=None):
+        payload = self.read(path, limit)
+        payload["agent_id"] = "a1b2c3d4"
+        payload["agent_type"] = guard.BULK_READER_AGENT if agent_type is None else agent_type
+        return payload
+
+    def test_the_exempt_agent_name_is_the_one_the_definition_carries(self):
+        self.assertEqual(guard.BULK_READER_AGENT, "bulk-reader")
+
+    def test_the_bulk_reader_reads_a_file_over_the_limit_whole(self):
+        self.allowed(self.bulk_read(self.sixty), role=None)
+        self.allowed(self.bulk_read(self.sixty))
+        self.allowed(self.bulk_read(self.big))
+
+    def test_any_other_subagent_is_still_denied_the_same_file(self):
+        self.denial(self.bulk_read(self.sixty, agent_type="reviewer"), role=None)
+        self.denial(self.bulk_read(self.sixty, agent_type="implementer"))
+
+    def test_a_main_session_read_over_the_limit_is_still_denied(self):
+        reason = self.denial(self.read(self.sixty), role=None)
+        self.assertIn("offset and limit", reason)
+        self.denial(self.read(self.sixty))
+
+    def test_the_exemption_does_not_reach_the_shell_matcher(self):
+        payload = self.bash('cat "%s"' % self.sixty)
+        payload["agent_id"] = "a1b2c3d4"
+        payload["agent_type"] = guard.BULK_READER_AGENT
+        self.denial(payload, role=None)
+
+    def test_the_image_rule_is_unchanged_by_the_exemption(self):
+        # A subagent has always been allowed pixels, and a pane that is not one has not.
+        self.allowed(self.bulk_read(self.image))
         self.assertIn("orchestrator", self.denial(self.read(self.image)))
 
     def test_an_unknown_tool_is_never_touched(self):
