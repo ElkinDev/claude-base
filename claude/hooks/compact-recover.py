@@ -285,6 +285,14 @@ def read_stdin(seconds=STDIN_WAIT):
     runs in a daemon thread that the process does not wait for: past the bound the payload is
     simply absent, which is what an empty payload already means everywhere below.
 
+    Each chunk is published as it arrives, never held until end of file: a caller that writes
+    the payload and keeps the pipe open has said everything it had to say, and discarding that
+    at the bound would give a subagent a seat block and cost compact mode its cwd, session id
+    and transcript path. What the bound decides is how long to wait, not what to keep.
+
+    The harness closes stdin after the payload, so the bound is defence in depth for a hand run
+    rather than the normal path, and the other hooks keep their plain read as a separate item.
+
     The raw descriptor, never `sys.stdin.buffer`: a daemon thread parked inside the buffered
     reader still owns its lock when the interpreter shuts down, and closing it there kills the
     process instead of printing the block.
@@ -295,10 +303,9 @@ def read_stdin(seconds=STDIN_WAIT):
         fd = sys.stdin.fileno()
     except Exception:
         return ""
-    box = []
+    chunks = []
 
     def pull():
-        chunks = []
         try:
             while True:
                 chunk = os.read(fd, 65536)
@@ -307,15 +314,14 @@ def read_stdin(seconds=STDIN_WAIT):
                 chunks.append(chunk)
         except Exception:
             pass
-        box.append(b"".join(chunks))
 
     worker = threading.Thread(target=pull)
     worker.daemon = True
     worker.start()
     worker.join(seconds)
-    if not box:
-        return ""
-    return box[0].decode("utf-8-sig", "replace")
+    # list.append is atomic under the GIL, so a slice of what has arrived is a consistent
+    # prefix even while the thread is still reading past the bound.
+    return b"".join(chunks[:]).decode("utf-8-sig", "replace")
 
 
 def payload():
