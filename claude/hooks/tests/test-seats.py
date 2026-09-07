@@ -332,36 +332,66 @@ class SeatDocsTest(unittest.TestCase):
                        "seats/analyst.md", "--append-system-prompt-file", "CLAUDE_ROLE"):
             self.assertIn(phrase, text, "the page never says " + phrase)
 
-    def test_the_seats_page_states_the_refusal_the_loud_line_and_both_deferrals(self):
+    def test_the_seats_page_carries_both_manual_twins_the_refusal_and_the_loud_line(self):
         """Each sentence is asserted by a phrase only that sentence carries, so deleting the
-        paragraph reddens the case. A page that says `deferred` somewhere proves nothing: the
-        POSIX deferral alone satisfies that, while the reader still reads the launcher lines as
-        behaviour they have today."""
+        paragraph reddens the case. The kit is Windows first, so the line for a machine without
+        the launcher is two lines, one per shell: a POSIX-only manual line leaves the reader on
+        the platform the launcher already covers."""
         text = read(os.path.join(DOCS, "SEATS.md"))
         for phrase in (
-                # the line that works on any shell today, the whole point of the deferral
+                # the manual twins, one per shell, for a machine without the launcher
                 "CLAUDE_ROLE=orchestrator claude --append-system-prompt-file "
                 "~/.claude/seats/orchestrator.md",
-                # the launcher wiring, named as not in this landing
-                "The launcher wiring is not in this landing.",
-                "ship with the launcher item",
+                "$env:CLAUDE_ROLE='orchestrator'; claude --append-system-prompt-file",
                 # why the continue flag is refused, not just that it is
                 "keeps answering as the chair it already held",
                 # the loud line, verbatim, because the reader matches it against a pane
                 "Not launched through the account launcher: no seat, no window, no --no-chrome. "
                 "Relaunch through it before working.",
-                # the POSIX deferral, which is a different deferral from the one above
+                # the POSIX installer deferral, which outlives the launcher landing
                 "The POSIX installer and the launcher twin are deferred"):
             self.assertIn(phrase, text, "the page never says: " + phrase)
 
-    def test_the_seats_page_never_claims_the_shipped_launcher_appends_a_seat(self):
-        """The role list of `claude-account.ps1` on this branch is the proof: no `analyst`, no
-        append flag, no refusal. A page that reads as a manual for a launcher that does none of
-        it sends the reader to a flag that is not there."""
+    def test_the_seats_page_reads_as_a_manual_for_the_launcher_the_kit_ships(self):
+        """`claude-account.ps1` is the proof: it knows `analyst`, appends the seat and refuses
+        the continue flag. A page still calling that a later landing sends the reader to type by
+        hand what the launcher already does, and hides the refusal until they hit it."""
         launcher = read(os.path.join(ROOT, "claude", "claude-account.ps1"))
-        self.assertNotIn("--append-system-prompt-file", launcher)
+        refusal = ("A seated role never continues the most recent conversation of a folder "
+                   "(the profiles share it); resume with -r and the picker, or -r <id>.")
+        self.assertIn("--append-system-prompt-file", launcher)
+        self.assertIn("analyst", launcher)
+        self.assertIn(refusal, launcher)
         page = read(os.path.join(DOCS, "SEATS.md"))
-        self.assertIn("once the launcher wiring lands", page)
+        self.assertIn(refusal, page)
+        for stale in ("The launcher wiring is not in this landing.",
+                      "ship with the launcher item",
+                      "once the launcher wiring lands"):
+            self.assertNotIn(stale, page, "the page still says: " + stale)
+
+    def test_the_seats_page_states_what_the_launcher_does_to_the_command(self):
+        """The five things the launcher adds are what a reader checks a pane against with
+        -ShowEnv, so each is asserted by a phrase only it carries."""
+        text = read(os.path.join(DOCS, "SEATS.md"))
+        for phrase in (
+                # the launch lines, present tense
+                "cc work -Role orchestrator", "cc work -Role orchestrator -- -r",
+                "cc work -Role analyst",
+                # the seat file and where it is looked for
+                "CLAUDE_SEATS_DIR",
+                "Seat file missing: ", "the session opens without a seat.",
+                # the name, on a fresh launch only, and the start line it carries
+                "<role>-MMdd-HHmm",
+                "Session start: read the newest resume brief of your seat, then the state "
+                "sheet, then continue with its first actions.",
+                "none (positional given)",
+                # --no-chrome joins before the seat block, so the start line stays last
+                "--no-chrome",
+                # the two variables a seated session reads, with their defaults
+                "CLAUDE_BRIEFS_DIR", "CLAUDE_CLOSING_HOUR", "22:00",
+                # the -ShowEnv lines
+                "COMMAND=", "SEAT=", "FRESH=", "START="):
+            self.assertIn(phrase, text, "the page never says: " + phrase)
 
     def test_the_context_economics_page_describes_the_rulings_mode_as_it_runs(self):
         text = read(os.path.join(DOCS, "CONTEXT-ECONOMICS.md"))
@@ -371,8 +401,10 @@ class SeatDocsTest(unittest.TestCase):
                        "the settings template wires that entry"):
             self.assertIn(phrase, text, "the page never says: " + phrase)
 
-    def test_the_readme_points_at_the_seats_page(self):
-        self.assertIn("docs/SEATS.md", read(os.path.join(ROOT, "README.md")))
+    def test_the_readme_points_at_the_seats_page_as_shipped(self):
+        text = read(os.path.join(ROOT, "README.md"))
+        self.assertIn("docs/SEATS.md", text)
+        self.assertIn("appended to its system prompt by the launcher", text)
 
     def test_the_roles_section_of_the_accounts_page_names_the_seat(self):
         roles = section(read(os.path.join(DOCS, "ACCOUNTS.md")), "## Roles")
@@ -380,6 +412,16 @@ class SeatDocsTest(unittest.TestCase):
         self.assertIn("docs/SEATS.md", roles)
         self.assertIn("four things", roles)
         self.assertIn("seat", roles.lower())
+        # the launcher does all four now, and the section says so sentence by sentence
+        self.assertIn("the launcher does all four", roles.lower())
+        self.assertIn("-o analyst", roles)
+        self.assertIn("Every role but `research`", roles)
+        self.assertIn("fresh launch only", roles)
+        self.assertIn("$env:CLAUDE_ROLE='orchestrator'", roles)
+        for line in ("COMMAND=", "SEAT=", "FRESH=", "START=",
+                     "CLAUDE_BRIEFS_DIR=", "CLAUDE_CLOSING_HOUR="):
+            self.assertIn(line, roles, "the roles section never names " + line)
+        self.assertNotIn("does not do yet", roles)
 
 
 if __name__ == "__main__":
