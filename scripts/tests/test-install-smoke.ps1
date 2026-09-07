@@ -34,6 +34,12 @@ try {
     Assert-True ($manifest.installed -match '^\d{4}-\d{2}-\d{2}T') 'the manifest carries an iso stamp'
     Assert-True ($managed.Count -gt 20) ('the manifest records every file, ' + $managed.Count + ' of them')
     Assert-True (Test-Path -LiteralPath $skill) 'the skills landed'
+    # The seats are prompt, not agent definitions, and they travel with the kit so a profile
+    # switch keeps them: every profile the installer touches gets both files.
+    foreach ($seat in @('orchestrator', 'analyst')) {
+        Assert-True (Test-Path -LiteralPath (Join-Path $kitHome "seats\$seat.md")) `
+            "the $seat seat landed"
+    }
     # The plugin skills reach an installer machine under their bare names, as before the move.
     Assert-True (Test-Path -LiteralPath (Join-Path $kitHome 'skills\story\SKILL.md')) `
         'a delivery plugin skill landed under its bare name'

@@ -126,8 +126,7 @@ clone:
 ```
 python scripts\sanitize-check.py --install-hook
 ```
-Add `--pre-commit` to check what a commit is about to record as well. Everything runs locally;
-nothing is sent anywhere.
+The same command installs the `commit-msg` hook that strips every AI attribution line from a commit message, since the rule is no attribution anywhere and a harness may still add one. Add `--pre-commit` to check what a commit is about to record as well. Everything runs locally; nothing is sent anywhere.
 
 On a push the hook scans every commit the push would publish: each commit message, every path those
 commits add or modify, the contents behind those paths, and the names of the refs being pushed. A

@@ -31,6 +31,8 @@ claude/                     -> installs into ~/.claude
   agents/                   five agent definitions on Opus with their skills preloaded (analyst,
                             designer, implementer, implementer-light, reviewer); -Sdd copies them
                             into a project as well
+  seats/                    two seat files, orchestrator and analyst: the chair a long-lived session
+                            holds, appended to its system prompt by the launcher (docs/SEATS.md)
   tools/                    record.py: append, amend or swap a record in any file from a payload on
                             stdin, line ending and BOM kept, one call per round instead of a script;
                             wait-marker.sh and its .ps1 twin: block until a marker file appears, at
@@ -96,7 +98,8 @@ install/                    what the installer runs on: lib.ps1 the ownership ru
 # check the machine has what the kit needs (git, python, claude, Git Bash, optionally Herdr)
 python scripts\doctor.py
 
-# install the guard that blocks a push carrying a personal path, an address or a secret
+# install the guard that blocks a push carrying a personal path, an address or a secret,
+# and the commit-msg hook that strips AI attribution from a message
 # (add --pre-commit to check what a commit is about to record as well)
 python scripts\sanitize-check.py --install-hook
 
@@ -167,6 +170,7 @@ an account out.
 | `docs/ADOPTION.md` | adopting the kit in a repository that already has rules: what it writes, what it never touches, how to keep it local, how to roll it back |
 | `docs/EVIDENCE.md` | where evidence lives (beside the repo, not in it), the spec grammar, and the resolver |
 | `docs/ACCOUNTS.md` | several Claude Code accounts, shortcuts, and the traps |
+| `docs/SEATS.md` | seats: the chair a long-lived session holds, how it is launched and resumed, and what the hooks print |
 | `docs/PERMISSIONS.md` | what bypass mode trades, and how to change it |
 | `docs/STATUSLINE.md` | status line segments, wiring, and customization |
 | `docs/MEMORY.md` | conventions for the agent's persistent memory |

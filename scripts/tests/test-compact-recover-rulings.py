@@ -43,6 +43,8 @@ RULINGS_ROWS = hook.RULINGS_ROWS
 RULINGS_CAP = hook.RULINGS_CAP
 CUT_MARKER = hook.RULINGS_MARKER.strip()
 HEADING_START = "Rulings (last %d, register " % RULINGS_ROWS
+# What the hook prints before the rulings for a pane that holds no seat.
+LANE_BLOCK = "Seat: none (lane)" + "\n\n"
 
 HEADER = """# Rulings register
 
@@ -80,8 +82,13 @@ class RulingsBlockCase(unittest.TestCase):
         # and no run of this suite can render a sheet a live session reads.
         env["CLAUDE_LANE_STATE_SCRIPT"] = self.renderer
         env["CLAUDE_LANE_STATE_SHEET"] = self.sheet
-        for name in ("CLAUDE_BRIEFS_DIR", "CLAUDE_LANDINGS_FILE"):
+        for name in ("CLAUDE_BRIEFS_DIR", "CLAUDE_LANDINGS_FILE", "CLAUDE_ROLE",
+                     "CLAUDE_CODE_AUTO_COMPACT_WINDOW"):
             env.pop(name, None)
+        # The hook opens with the seat block, so the pane that runs the suite would otherwise
+        # decide what the first line says. No role is a lane, and one launcher variable set is
+        # what keeps the loud line of an unlaunched session out of these cases.
+        env["CLAUDE_CODE_DISABLE_1M_CONTEXT"] = "1"
         process = subprocess.run(
             [sys.executable, HOOK] + list(args),
             input=stdin,
@@ -160,12 +167,12 @@ class RulingsBlockCase(unittest.TestCase):
     def test_a_missing_register_is_one_line_and_not_a_dropped_paragraph(self):
         missing = self.tmp + "/gone.md"
         out = self.run_hook(missing, args=("--rulings",))
-        self.assertEqual(out, "No rulings register at %s." % missing)
+        self.assertEqual(out, LANE_BLOCK + "No rulings register at %s." % missing)
 
     def test_an_empty_register_says_so_instead(self):
         path = self.write_register([], header="# Rulings register\n")
         out = self.run_hook(path, args=("--rulings",))
-        self.assertEqual(out, "No rulings yet in %s." % path)
+        self.assertEqual(out, LANE_BLOCK + "No rulings yet in %s." % path)
 
     # --- the defaults of a public hook ------------------------------------
     def test_the_hook_carries_no_path_of_one_machine(self):
@@ -186,14 +193,14 @@ class RulingsBlockCase(unittest.TestCase):
                             "%s is not under the home dir: %s" % (name, value))
 
     # --- the --rulings mode -----------------------------------------------
-    def test_rulings_alone_prints_the_block_and_nothing_else(self):
+    def test_rulings_alone_prints_the_seat_block_and_the_rulings_and_nothing_else(self):
         rows = [row(i) for i in range(1, 4)]
         out = self.run_hook(self.write_register(rows), args=("--rulings",),
                             stdin=b"")
-        self.assertTrue(out.startswith(HEADING_START), out[:80])
+        self.assertTrue(out.startswith(LANE_BLOCK + HEADING_START), out[:80])
         self.assertNotIn("[compaction recovery", out)
         self.assertNotIn("NOTES.md", out)
-        self.assertEqual(out.splitlines()[1:], rows)
+        self.assertEqual(out[len(LANE_BLOCK):].splitlines()[1:], rows)
 
 
 if __name__ == "__main__":
