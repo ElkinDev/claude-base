@@ -195,5 +195,71 @@ class SeatBlockTest(unittest.TestCase):
         self.assertLess(out.index("Seat: orchestrator"), out.index("[compaction recovery"))
 
 
+PROMPT_LOG = os.path.join(HOOKS, "prompt-log.py")
+NOTICE = ("Closing round: the day ends at 22:00. Write the resume brief, land or stop every "
+          "agent, nothing running at the hour.")
+
+
+class ClosingNoticeTest(unittest.TestCase):
+    """The one line prompt-log.py adds to a seated session once the closing round has opened.
+
+    The hook writes the prompt log on every prompt and prints nothing the rest of the day, so
+    the notice is the only thing it ever costs the window, and it costs it only in the chair
+    that has a day to close.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="closing-notice-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.checkpoints = os.path.join(self.tmp, "ckpt")
+        self.log = os.path.join(self.checkpoints, "abcdef12-prompts.md")
+
+    def run_hook(self, role="orchestrator", now="21:30", hour="22:00", **payload):
+        env = dict(os.environ)
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["CLAUDE_CHECKPOINT_DIR"] = self.checkpoints
+        for name in ("CLAUDE_ROLE", "CLAUDE_CLOSING_HOUR", "CLAUDE_TEST_NOW"):
+            env.pop(name, None)
+        for name, value in (("CLAUDE_ROLE", role), ("CLAUDE_CLOSING_HOUR", hour),
+                            ("CLAUDE_TEST_NOW", now)):
+            if value is not None:
+                env[name] = value
+        data = {"session_id": "abcdef12-3456-7890-abcd-ef1234567890",
+                "cwd": self.tmp, "prompt": "carry on with the lane"}
+        data.update(payload)
+        process = subprocess.run(
+            [sys.executable, PROMPT_LOG],
+            input=json.dumps(data).encode("utf-8"),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+        )
+        self.assertEqual(process.returncode, 0, process.stderr.decode("utf-8", "replace"))
+        return process.stdout.decode("utf-8", "replace")
+
+    def test_without_the_closing_hour_the_hook_prints_nothing(self):
+        self.assertEqual(self.run_hook(hour=None), "")
+
+    def test_a_minute_before_the_round_opens_prints_nothing(self):
+        """The round opens 45 minutes before the hour, so 21:14 is still the working day."""
+        self.assertEqual(self.run_hook(now="21:14"), "")
+
+    def test_the_round_opens_forty_five_minutes_before_the_hour(self):
+        self.assertEqual(self.run_hook(now="21:15"), NOTICE)
+
+    def test_after_the_hour_the_notice_is_still_printed(self):
+        self.assertEqual(self.run_hook(now="22:30"), NOTICE)
+
+    def test_a_lane_has_no_day_to_close_and_is_told_nothing(self):
+        self.assertEqual(self.run_hook(role="lane"), "")
+
+    def test_a_subagent_of_a_seated_session_is_told_nothing(self):
+        for field in ("agent_id", "agent_type"):
+            self.assertEqual(self.run_hook(**{field: "abc123"}), "", field)
+
+    def test_the_prompt_is_still_logged_while_the_notice_prints(self):
+        """The notice is added to what the hook does, not put in its place."""
+        self.assertEqual(self.run_hook(), NOTICE)
+        self.assertIn("carry on with the lane", read(self.log))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
