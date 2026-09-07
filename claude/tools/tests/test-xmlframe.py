@@ -23,6 +23,7 @@ The cases:
   8  failure is loud: a broken dump and a missing dump exit non-zero and say why
   9  the collector hook shape, lifted out of docs/CONTEXT-ECONOMICS.md and run, so the
      snippet a reader copies is the snippet the suite proves
+ 10  the frame is line feed only, asserted on the bytes on every platform
 """
 import json
 import os
@@ -302,6 +303,18 @@ class PackagePrefix(unittest.TestCase):
         self.assertIn("1 Settings #com.example.app:btn_settings @1010,155", lines)
         self.assertIn("2 Groceries #com.example.app:list_items ~scroll(9) @540,1110", lines)
 
+    def test_an_empty_package_strips_nothing(self):
+        """The escape hatch: no shortening at all, ids exactly as the dump carries them."""
+        lines = rows(frame("home", "--package", ""))
+        self.assertIn("1 Settings #com.example.app:id/btn_settings @1010,155", lines)
+        self.assertIn("6 Zoom in #com.example.plugin:id/zoom_in @1010,945", lines)
+        doc = json.loads(frame("home", "--format", "json", "--package", ""))
+        self.assertIn("com.example.app:id/list_items", [i.get("id") for i in doc["actions"]])
+        raw = set(n.get("resource-id") for n in nodes("home") if n.get("resource-id"))
+        for item in doc["actions"] + doc["state"]:
+            if item.get("id"):
+                self.assertIn(item["id"], raw)
+
     def test_naming_the_resolved_prefix_changes_nothing(self):
         self.assertEqual(frame("home"), frame("home", "--package", MAJORITY_PREFIX))
 
@@ -424,31 +437,46 @@ class TheDocumentedHook(unittest.TestCase):
             body = fh.read()
         blocks = [b for b in body.split("```sh")[1:] if "xmlframe.py" in b.split("```")[0]]
         self.assertEqual(1, len(blocks), "one shell snippet in the page calls the tool")
-        return blocks[0].split("```")[0].strip("\n")
+        block = blocks[0].split("```")[0].strip("\n")
+        head = block.split("frame()")[0]
+        for name in ("PY", "KIT"):
+            self.assertIn(name + "=", head,
+                          "the fence sets " + name + " itself, above the function that reads it")
+        return block
 
     def driver(self, tmp):
+        """The fenced block as published, plus the one line that calls it.
+
+        Nothing is prepended. The two settings the hook needs are inside the fence, so the
+        block a reader copies is a block that runs, and the suite proves that by running
+        this one with no help: the values arrive through the environment, the way a
+        collector would export them, and the shell is strict enough to name what is missing.
+        """
         bash = shutil.which("bash")
         if not bash:
             raise unittest.SkipTest("no bash on PATH")
-        kit = os.path.dirname(HERE).replace(os.sep, "/")
         path = os.path.join(tmp, "hook.sh")
         with open(path, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write('PY=%s\nKIT=%s\n%s\nframe "$1"\n' % (
-                sys.executable.replace(os.sep, "/"), os.path.dirname(kit), self.snippet()))
-        return bash, path
+            fh.write(self.snippet() + '\nframe "$1"\n')
+        env = dict(os.environ)
+        env["PY"] = sys.executable.replace(os.sep, "/")
+        env["KIT"] = os.path.dirname(os.path.dirname(HERE)).replace(os.sep, "/")
+        return bash, path, env
 
     def test_the_snippet_writes_both_frames_beside_the_dump(self):
         with tempfile.TemporaryDirectory(prefix="xmlframe-hook-") as tmp:
             xml = os.path.join(tmp, "ui.xml")
             shutil.copyfile(dump("form"), xml)
-            bash, path = self.driver(tmp)
-            done = subprocess.run([bash, path, xml.replace(os.sep, "/")],
-                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+            bash, path, env = self.driver(tmp)
+            argv = [bash, "-e", "-u", "-o", "pipefail", path, xml.replace(os.sep, "/")]
+            done = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  env=env, timeout=60)
             self.assertEqual(0, done.returncode, done.stdout.decode("utf-8", "replace"))
             for suffix, fmt in (("frame.txt", "text"), ("frame.json", "json")):
                 with open(os.path.join(tmp, "ui." + suffix), "rb") as fh:
                     written = fh.read()
                 self.assertEqual(run("form", "--format", fmt).stdout, written)
+                self.assertNotIn(b"\r", written)
             self.assertFalse(os.path.exists(os.path.join(tmp, "ui.frame.err")))
             self.assertFalse(os.path.exists(os.path.join(tmp, "ui.frame.ERROR.txt")))
 
@@ -457,15 +485,44 @@ class TheDocumentedHook(unittest.TestCase):
             xml = os.path.join(tmp, "ui.xml")
             with open(xml, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write("<hierarchy><node truncated")
-            bash, path = self.driver(tmp)
-            done = subprocess.run([bash, path, xml.replace(os.sep, "/")],
-                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+            bash, path, env = self.driver(tmp)
+            argv = [bash, "-e", "-u", "-o", "pipefail", path, xml.replace(os.sep, "/")]
+            done = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  env=env, timeout=60)
             self.assertEqual(0, done.returncode)
             self.assertIn("FRAME_FAILED", done.stdout.decode("utf-8", "replace"))
             with open(os.path.join(tmp, "ui.frame.ERROR.txt"), encoding="utf-8") as fh:
                 self.assertIn("xmlframe:", fh.read())
             self.assertFalse(os.path.exists(os.path.join(tmp, "ui.frame.txt")))
             self.assertFalse(os.path.exists(os.path.join(tmp, "ui.frame.json")))
+
+
+class TheFrameIsLineFeedOnly(unittest.TestCase):
+    """Case 10. One newline on every platform, asserted on the bytes before any decode.
+
+    The frame is written to disk beside the dump and read back by whatever runs next, often
+    on another machine. A carriage return would change the bytes a grep is written against
+    and show up as a whole-file change in any diff, so the tool pins the newline itself
+    instead of leaving it to the platform. Nothing here normalises before asserting.
+    """
+
+    def test_neither_format_carries_a_carriage_return(self):
+        for screen in SCREENS:
+            for fmt in ("text", "json"):
+                with self.subTest(screen=screen, fmt=fmt):
+                    body = run(screen, "--format", fmt).stdout
+                    self.assertNotIn(b"\r", body)
+                    self.assertTrue(body.endswith(b"\n"))
+
+    def test_the_frame_written_to_a_file_carries_none_either(self):
+        with tempfile.TemporaryDirectory(prefix="xmlframe-lf-") as tmp:
+            for fmt in ("text", "json"):
+                with self.subTest(fmt=fmt):
+                    path = os.path.join(tmp, "frame." + fmt)
+                    with open(path, "wb") as fh:
+                        fh.write(run("home", "--format", fmt).stdout)
+                    with open(path, "rb") as fh:
+                        self.assertNotIn(b"\r", fh.read())
 
 
 class FixturesStaySmall(unittest.TestCase):
