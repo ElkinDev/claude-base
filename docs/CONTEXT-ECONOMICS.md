@@ -194,7 +194,9 @@ frame() {                                    # <base>.frame.txt and <base>.frame
   xml=$1; base=${xml%.xml}
   F=$KIT/tools/xmlframe.py; E=$base.frame.err
   if "$PY" "$F" --format text "$xml" >"$base.frame.txt" 2>"$E" &&
-     "$PY" "$F" --format json "$xml" >"$base.frame.json" 2>>"$E"; then rm -f "$E"; return 0; fi
+     "$PY" "$F" --format json "$xml" >"$base.frame.json" 2>>"$E"; then
+    rm -f "$E" "$base.frame.ERROR.txt"; return 0   # a good run clears the older run's mark
+  fi
   mv "$E" "$base.frame.ERROR.txt"; rm -f "$base.frame.txt" "$base.frame.json"
   echo "FRAME_FAILED: $xml"; return 0
 }
@@ -205,7 +207,9 @@ The two settings at the top are the whole configuration, and the block runs as i
 page fails first. The `return 0` is deliberate and so is the error file. A frame that fails must not take the
 collector down with it, and must not pass in silence either: the tool exits 2 with one line on
 stderr when a dump is missing or will not parse, the line lands in a named file, and the run says
-`FRAME_FAILED` where a reader will see it.
+`FRAME_FAILED` where a reader will see it. A later run that succeeds over the same base removes
+that file, so a directory never shows two valid frames beside the mark of a failure that is no
+longer true.
 
 One limit is worth stating, because no XML filter can fix it. A drawing surface reaches the frame
 as a node with an id, a tap centre and a `~draw` mark, and that is everything any filter can say

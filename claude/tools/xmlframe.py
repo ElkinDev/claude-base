@@ -540,8 +540,12 @@ def json_frame(rows, size, package, reads):
 
 
 def main(argv=None):
+    # Both streams are redirected into files beside the dump by any collector worth the
+    # name, so both carry the same newline on every platform instead of the one the
+    # platform would translate to.
     try:
         sys.stdout.reconfigure(encoding="utf-8", newline=NEWLINE)
+        sys.stderr.reconfigure(encoding="utf-8", newline=NEWLINE)
     except AttributeError:
         pass
     ap = argparse.ArgumentParser(description="compact frame from a uiautomator XML dump")
