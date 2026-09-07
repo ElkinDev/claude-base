@@ -22,7 +22,8 @@ The cases:
   7  the row grammar: the label trim, the row width, the frame against the dump it replaces
   8  failure is loud: a broken dump and a missing dump exit non-zero and say why
   9  the collector hook shape, lifted out of docs/CONTEXT-ECONOMICS.md and run, so the
-     snippet a reader copies is the snippet the suite proves
+     snippet a reader copies is the snippet the suite proves: the first run, the retry
+     over a base an earlier failure marked, and the run that sets neither name it needs
  10  the frame is line feed only, asserted on the bytes on every platform
 """
 import json
@@ -419,12 +420,11 @@ class FailureIsLoud(unittest.TestCase):
                              done.stdout.decode("utf-8").replace("\r\n", "\n"))
 
 
-class TheDocumentedHook(unittest.TestCase):
-    """Case 9. The shell snippet in the documentation, lifted out of the page and run.
+class HookSnippet(unittest.TestCase):
+    """The fenced block from the page, and the one way every case below runs it.
 
-    The hook shape is what the section is for, so it is the shape that has to work. Reading
-    it out of the markdown rather than restating it here is the whole point: a snippet
-    nobody runs rots, and the next person copies the rotted one.
+    No case of its own: the block is read, written and called here, so the cases that
+    follow all exercise the published lines rather than a restatement of them.
     """
 
     DOC = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(HERE))),
@@ -448,9 +448,10 @@ class TheDocumentedHook(unittest.TestCase):
         """The fenced block as published, plus the one line that calls it.
 
         Nothing is prepended. The two settings the hook needs are inside the fence, so the
-        block a reader copies is a block that runs, and the suite proves that by running
-        this one with no help: the values arrive through the environment, the way a
-        collector would export them, and the shell is strict enough to name what is missing.
+        block a reader copies is a block that runs. The cases that need a real python and a
+        real kit export both through the environment, the way a collector would; the control
+        further down removes them and leans on the defaults the fence carries, which is the
+        run that would fire `set -u` if the page ever stopped defining them.
         """
         bash = shutil.which("bash")
         if not bash:
@@ -463,14 +464,27 @@ class TheDocumentedHook(unittest.TestCase):
         env["KIT"] = os.path.dirname(os.path.dirname(HERE)).replace(os.sep, "/")
         return bash, path, env
 
+    def call(self, bash, path, env, xml):
+        """The hook as a collector calls it, under the flags a careful collector sets."""
+        argv = [bash, "-e", "-u", "-o", "pipefail", path, xml.replace(os.sep, "/")]
+        return subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              env=env, timeout=60)
+
+
+class TheDocumentedHook(HookSnippet):
+    """Case 9. The shell snippet in the documentation, lifted out of the page and run.
+
+    The hook shape is what the section is for, so it is the shape that has to work. Reading
+    it out of the markdown rather than restating it here is the whole point: a snippet
+    nobody runs rots, and the next person copies the rotted one.
+    """
+
     def test_the_snippet_writes_both_frames_beside_the_dump(self):
         with tempfile.TemporaryDirectory(prefix="xmlframe-hook-") as tmp:
             xml = os.path.join(tmp, "ui.xml")
             shutil.copyfile(dump("form"), xml)
             bash, path, env = self.driver(tmp)
-            argv = [bash, "-e", "-u", "-o", "pipefail", path, xml.replace(os.sep, "/")]
-            done = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                  env=env, timeout=60)
+            done = self.call(bash, path, env, xml)
             self.assertEqual(0, done.returncode, done.stdout.decode("utf-8", "replace"))
             for suffix, fmt in (("frame.txt", "text"), ("frame.json", "json")):
                 with open(os.path.join(tmp, "ui." + suffix), "rb") as fh:
@@ -486,15 +500,67 @@ class TheDocumentedHook(unittest.TestCase):
             with open(xml, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write("<hierarchy><node truncated")
             bash, path, env = self.driver(tmp)
-            argv = [bash, "-e", "-u", "-o", "pipefail", path, xml.replace(os.sep, "/")]
-            done = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                  env=env, timeout=60)
+            done = self.call(bash, path, env, xml)
             self.assertEqual(0, done.returncode)
             self.assertIn("FRAME_FAILED", done.stdout.decode("utf-8", "replace"))
-            with open(os.path.join(tmp, "ui.frame.ERROR.txt"), encoding="utf-8") as fh:
-                self.assertIn("xmlframe:", fh.read())
+            with open(os.path.join(tmp, "ui.frame.ERROR.txt"), "rb") as fh:
+                said = fh.read()
+            self.assertIn(b"xmlframe:", said)
+            self.assertNotIn(b"\r", said)
             self.assertFalse(os.path.exists(os.path.join(tmp, "ui.frame.txt")))
             self.assertFalse(os.path.exists(os.path.join(tmp, "ui.frame.json")))
+
+
+class TheDocumentedHookRunTwice(HookSnippet):
+    """Case 9, continued. The second run over a base whose first run failed.
+
+    A bench retries, and a retry that succeeds must leave the directory saying one thing.
+    An error file the earlier failure wrote, sitting beside two valid frames, says the
+    opposite of what happened and is the version a reader believes.
+    """
+
+    def test_a_good_run_clears_the_error_file_an_earlier_failure_left(self):
+        with tempfile.TemporaryDirectory(prefix="xmlframe-stale-") as tmp:
+            xml = os.path.join(tmp, "ui.xml")
+            shutil.copyfile(dump("form"), xml)
+            stale = os.path.join(tmp, "ui.frame.ERROR.txt")
+            with open(stale, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write("xmlframe: the dump of an earlier run would not parse\n")
+            bash, path, env = self.driver(tmp)
+            done = self.call(bash, path, env, xml)
+            out = done.stdout.decode("utf-8", "replace")
+            self.assertEqual(0, done.returncode, out)
+            self.assertNotIn("FRAME_FAILED", out)
+            self.assertFalse(os.path.exists(stale), "the stale error file survived a good run")
+            for suffix, fmt in (("frame.txt", "text"), ("frame.json", "json")):
+                with open(os.path.join(tmp, "ui." + suffix), "rb") as fh:
+                    self.assertEqual(run("form", "--format", fmt).stdout, fh.read())
+            self.assertFalse(os.path.exists(os.path.join(tmp, "ui.frame.err")))
+
+    def test_the_block_runs_with_neither_name_in_the_environment(self):
+        """The control the strict flags are for: nothing outside the fence defines the names.
+
+        The defaults in the fence may point at a python or a kit this machine does not have,
+        and that is the point: the block must reach its own error path and let the collector
+        continue, never die at the first expansion. Both outcomes are asserted, so the case
+        cannot pass on a run that did nothing at all.
+        """
+        with tempfile.TemporaryDirectory(prefix="xmlframe-bare-") as tmp:
+            xml = os.path.join(tmp, "ui.xml")
+            shutil.copyfile(dump("form"), xml)
+            bash, path, env = self.driver(tmp)
+            for name in ("PY", "KIT"):
+                env.pop(name, None)
+            done = self.call(bash, path, env, xml)
+            out = done.stdout.decode("utf-8", "replace")
+            self.assertEqual(0, done.returncode, out)
+            self.assertNotIn("unbound variable", out)
+            if os.path.exists(os.path.join(tmp, "ui.frame.txt")):
+                self.assertTrue(os.path.exists(os.path.join(tmp, "ui.frame.json")), out)
+                self.assertNotIn("FRAME_FAILED", out)
+            else:
+                self.assertIn("FRAME_FAILED: ", out)
+                self.assertTrue(os.path.exists(os.path.join(tmp, "ui.frame.ERROR.txt")), out)
 
 
 class TheFrameIsLineFeedOnly(unittest.TestCase):
