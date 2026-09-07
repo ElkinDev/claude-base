@@ -23,6 +23,16 @@
         ]
       },
       {
+        "matcher": "startup|resume|clear|fork",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/compact-recover.py\" --rulings",
+            "timeout": 15
+          }
+        ]
+      },
+      {
         "matcher": "compact",
         "hooks": [
           {
@@ -181,6 +191,7 @@
   "includeCoAuthoredBy": false,
   "attribution": {
     "commit": "",
-    "pr": ""
+    "pr": "",
+    "sessionUrl": false
   }
 }
