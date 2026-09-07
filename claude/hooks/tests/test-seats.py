@@ -196,7 +196,7 @@ class SeatBlockTest(unittest.TestCase):
 
 
 PROMPT_LOG = os.path.join(HOOKS, "prompt-log.py")
-NOTICE = ("Closing round: the day ends at 22:00. Write the resume brief, land or stop every "
+NOTICE = ("Closing round: the day ends at %s. Write the resume brief, land or stop every "
           "agent, nothing running at the hour.")
 
 
@@ -243,10 +243,10 @@ class ClosingNoticeTest(unittest.TestCase):
         self.assertEqual(self.run_hook(now="21:14"), "")
 
     def test_the_round_opens_forty_five_minutes_before_the_hour(self):
-        self.assertEqual(self.run_hook(now="21:15"), NOTICE)
+        self.assertEqual(self.run_hook(now="21:15"), NOTICE % "22:00")
 
     def test_after_the_hour_the_notice_is_still_printed(self):
-        self.assertEqual(self.run_hook(now="22:30"), NOTICE)
+        self.assertEqual(self.run_hook(now="22:30"), NOTICE % "22:00")
 
     def test_a_lane_has_no_day_to_close_and_is_told_nothing(self):
         self.assertEqual(self.run_hook(role="lane"), "")
@@ -255,9 +255,29 @@ class ClosingNoticeTest(unittest.TestCase):
         for field in ("agent_id", "agent_type"):
             self.assertEqual(self.run_hook(**{field: "abc123"}), "", field)
 
+    def test_the_round_closes_two_hours_after_the_hour(self):
+        """The round does not shut at the hour, because a session still typing past it is what
+        the line exists for, but it does end: the next day is not a closing round."""
+        self.assertEqual(self.run_hook(now="23:59"), NOTICE % "22:00")
+        self.assertEqual(self.run_hook(now="00:01"), "")
+
+    def test_a_closing_hour_after_midnight_wraps_instead_of_running_all_day(self):
+        """A window computed as `now >= hour - 45` with no wrap makes every minute of a day
+        later than 23:45 part of the round for a 00:30 hour, so a session was told the day was
+        ending at nine in the morning."""
+        self.assertEqual(self.run_hook(now="23:50", hour="00:30"), NOTICE % "00:30")
+        self.assertEqual(self.run_hook(now="00:10", hour="00:30"), NOTICE % "00:30")
+        self.assertEqual(self.run_hook(now="09:00", hour="00:30"), "")
+
+    def test_a_prompt_the_log_refuses_gets_no_notice_either(self):
+        """A slash command and a harness tag are not a person asking for something, and the
+        notice is an answer to a person. The log skips them; so does the line."""
+        for prompt in ("/clear", "<task-notification>agent done</task-notification>"):
+            self.assertEqual(self.run_hook(now="22:30", prompt=prompt), "", prompt)
+
     def test_the_prompt_is_still_logged_while_the_notice_prints(self):
         """The notice is added to what the hook does, not put in its place."""
-        self.assertEqual(self.run_hook(), NOTICE)
+        self.assertEqual(self.run_hook(), NOTICE % "22:00")
         self.assertIn("carry on with the lane", read(self.log))
 
 
