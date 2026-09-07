@@ -12,10 +12,16 @@ Two rules, and nothing else is ever denied:
    limit of 400 lines or fewer. The reason names the size and the line count and offers the
    slice commands. Images and PDFs are exempt from this rule: they are read as pixels and
    pages, a slice of them means nothing, and a device screenshot is over the ceiling every
-   time. 48 KB is the ceiling for one whole tool result, chosen on the token flow measurement
-   of 2026-09-03, where text results of 60 to 150 KB were the expensive class. The separate
-   measurement, that whole results stop being re-attached above about 12 KB, is in
-   docs/CONTEXT-ECONOMICS.md lines 150 to 152 and is not the reason for this limit.
+   time. One agent is exempt too, the bulk reader: it exists to read a large file whole on a
+   cheap model and hand back bullets, so this rule would deny it exactly the calls it was
+   built for. The exemption is keyed on the agent_type the harness puts in the payload of a
+   subagent's Read, it lifts the size rule alone, and it does not reach the shell matcher
+   below or the image rule above. Which agents may launch that reader in the first place is
+   guard-delegate.py beside this file. 48 KB is the ceiling for one whole tool result, chosen
+   on the token flow measurement of 2026-09-03, where text results of 60 to 150 KB were the
+   expensive class. The separate measurement, that whole results stop being re-attached
+   above about 12 KB, is in docs/CONTEXT-ECONOMICS.md lines 150 to 152 and is not the
+   reason for this limit.
 
 The same two rules run on a shell command, because the Read tool is not the only way a file reaches
 the window: `cat`, `sed`, `head`, `tail`, `type` and `Get-Content` put the same bytes there. An
@@ -38,6 +44,9 @@ from shell_read import ALLOWED_LIMIT_LINES, SIZE_LIMIT_BYTES, reads  # noqa: E40
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
 SIZE_EXEMPT_EXTENSIONS = IMAGE_EXTENSIONS + (".pdf",)
 SHELL_TOOLS = ("Bash", "PowerShell")
+# The single agent the size rule does not apply to, by the name its definition carries in
+# claude/agents/. Matched against the payload's agent_type, so no other agent inherits it.
+BULK_READER_AGENT = "bulk-reader"
 
 
 def deny(reason):
@@ -99,12 +108,18 @@ def verdict(path, limit, role, is_subagent, check_size=True):
     return None
 
 
+def is_bulk_reader(data):
+    """True when this Read comes from the one agent the size rule does not apply to."""
+    return str(data.get("agent_type") or "").strip().lower() == BULK_READER_AGENT
+
+
 def guard_read(data, role, is_subagent):
     tool_input = data.get("tool_input") or {}
     path = tool_input.get("file_path") or ""
     if not path or not os.path.isfile(path):
         return None
-    return verdict(path, call_limit(tool_input), role, is_subagent)
+    check_size = not is_bulk_reader(data)
+    return verdict(path, call_limit(tool_input), role, is_subagent, check_size=check_size)
 
 
 def guard_shell(data, role, is_subagent):
