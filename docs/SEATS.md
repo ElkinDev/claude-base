@@ -17,7 +17,17 @@ The installer copies them to `<kit home>\seats\`, beside `agents\` and `skills\`
 
 The seat reaches a session two ways at once. The text is appended to the default system prompt with `--append-system-prompt-file`, and `CLAUDE_ROLE` names the chair in the environment for the hooks to read. Appended, not substituted: `--agent` replaces the default prompt and takes the environment block, the model identity and the memory instructions with it, which is a high price for one paragraph of text.
 
-## The launch lines
+## The line that works today
+
+This landing ships the seat files, the hooks that read `CLAUDE_ROLE` and the installer that copies both. Any shell, any platform, no launcher involved:
+
+```sh
+CLAUDE_ROLE=orchestrator claude --append-system-prompt-file ~/.claude/seats/orchestrator.md
+```
+
+The launcher wiring is not in this landing. `claude-account.ps1` on this branch takes `orchestrator`, `lane` and `research`, passes no append flag and refuses nothing: the `analyst` role, the seat append, the refusal of the continue flag, and the session name and the start line on a fresh launch only all ship with the launcher item. Until that lands, the line above is the seat, typed or aliased, and a pane opened any other way is a lane whose first block line says so.
+
+## The launch lines, once the launcher wiring lands
 
 ```powershell
 cc work -Role orchestrator          a fresh seated session
@@ -28,11 +38,11 @@ cc work                             no role, no seat: a lane
 
 Write `-Role` in full. A wrapper that forwards flags it does not know straight to `claude` can swallow the short `-o` alias, and then the role is gone with no error to read.
 
-A seat is appended only when `<kit home>\seats\<role>.md` exists, so a role without a seat file, `lane` and `research` today, launches exactly as it did before.
+A seat will be appended only when `<kit home>\seats\<role>.md` exists, so a role with no seat file, `lane` and `research`, keeps launching exactly as it does today.
 
 ## Why the continue flag is refused on a seat
 
-Profiles share the projects directory, so `-c` and `--continue` load the most recent conversation of that folder, which may belong to the other seat. Appending the right seat text to the wrong conversation does not save it: the loaded session keeps answering as the chair it already held, with the new seat text sitting unread above it. A launcher that knows about seats refuses `-c` and `--continue` on a seated role and prints one line saying so. Resume a seat with `-- -r` and the picker, or `-- -r <session id>`.
+Profiles share the projects directory, so `-c` and `--continue` load the most recent conversation of that folder, which may belong to the other seat. Appending the right seat text to the wrong conversation does not save it: the loaded session keeps answering as the chair it already held, with the new seat text sitting unread above it. That is why the launcher item refuses `-c` and `--continue` on a seated role and prints one line saying so, and why, until it lands, a seat is resumed by hand with `-r` and the picker or `-r <session id>`, never with the continue flag.
 
 ## What the hooks print
 
