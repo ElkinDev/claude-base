@@ -35,7 +35,7 @@ param(
     [Alias("a")][string]$Alias,
     [Alias("i")][string]$Icon,
     [Alias("h")][switch]$Help,
-    [Alias("o")][ValidateSet("orchestrator", "lane", "research")][string]$Role = "lane",
+    [Alias("o")][ValidateSet("orchestrator", "analyst", "lane", "research")][string]$Role = "lane",
     # Both names are chosen so that neither claims a prefix claude still needs. claude's own
     # single-dash flags are single letters (-c -d -h -n -p -r -v -w, from `claude --help`), the
     # launcher forwards an unbound flag to claude in $Extra, and PowerShell binds a parameter by
@@ -62,14 +62,60 @@ $NamesFile  = "$Base\.names.json"
 function Fail($m) { Write-Host "  FAILED: $m" -ForegroundColor Red; exit 1 }
 function Ok($m)   { Write-Host "  $m" -ForegroundColor DarkGray }
 
+# --- the seat ---------------------------------------------------------------------
+# A seat is a plain markdown file that says who the session is for its whole life. It is
+# appended (--append-system-prompt-file) and never substituted, so the default prompt keeps
+# its environment block, its model identity and its memory instructions, and the seat text
+# sits after them. Only orchestrator and analyst have a chair; lane and research are handed
+# nothing. CLAUDE_SEATS_DIR moves the directory for a test or a second install.
+$isSeat = @("orchestrator", "analyst") -contains $Role
+$seatsDir = if ($env:CLAUDE_SEATS_DIR) { $env:CLAUDE_SEATS_DIR } else { Join-Path $env:USERPROFILE ".claude\seats" }
+$seatFile = Join-Path $seatsDir "$Role.md"
+$briefsDir = if ($env:CLAUDE_BRIEFS_DIR) { $env:CLAUDE_BRIEFS_DIR } else { Join-Path $env:USERPROFILE ".claude\briefs" }
+$closingHour = if ($env:CLAUDE_CLOSING_HOUR) { $env:CLAUDE_CLOSING_HOUR } else { "22:00" }
+$startLine = "Session start: read the newest resume brief of your seat, then the state sheet, then continue with its first actions."
+# Fresh is read off the argument array as exact tokens, before anything is added to it and
+# before $extraStr exists: a substring search over the joined string finds -c inside
+# --no-chrome and calls every launch a resume.
+$fresh = -not (@($Extra) | Where-Object { $_ -in @("-r", "--resume", "-c", "--continue") })
+$named = (@($Extra) -contains "--name") -or (@($Extra) -contains "-n")
+$seatPlan = "none"
+$startPlan = "none"
+if ($isSeat) {
+    # Two seated panes in one folder share the projects junction, so -c can load the other
+    # seat's conversation. That was proven live, so the flag is refused here, not documented.
+    if (@($Extra) | Where-Object { $_ -in @("-c", "--continue") }) {
+        Write-Host "A seated role never continues the most recent conversation of a folder (the profiles share it); resume with -r and the picker, or -r <id>." -ForegroundColor Red
+        exit 1
+    }
+    # claude refuses to start when the file named by the flag is missing, so the file is
+    # checked first: its absence costs one line, never the session.
+    if (Test-Path -LiteralPath $seatFile) {
+        $seatPlan = $seatFile
+        $Extra = @("--append-system-prompt-file", $seatFile) + @($Extra | Where-Object { $_ -ne $null })
+    }
+    else { Write-Host "Seat file missing: $seatFile; the session opens without a seat." -ForegroundColor Yellow }
+}
+
 # Every session is named after its role (`claude --name`). The name shows in the prompt box,
 # the /resume picker and the terminal title, and it is written to the session transcript, so
 # a person or a script finds "orchestrator" on any machine and in any terminal, whatever
 # pane or workspace number the multiplexer gives it. Only when -Role was given: `--name` also
 # renames a session reopened with -c or -r, and a plain `cc work -- -c` must not turn the
-# orchestrator it resumes into "lane". Pass `-- --name x` to choose another name.
+# orchestrator it resumes into "lane". A seated role is the exception: it is named on a fresh
+# launch only, since a resumed chair already carries the name it was given. Pass
+# `-- --name x` to choose another name.
 $roleGiven = $PSBoundParameters.ContainsKey("Role")
-if ($roleGiven -and -not (@($Extra) -contains "--name" -or @($Extra) -contains "-n")) { $Extra = @("--name", $Role) + @($Extra | Where-Object { $_ -ne $null }) }
+if ($isSeat) {
+    # The minute is in the name, so the picker separates today's chair from yesterday's, and
+    # the start line goes last, where claude reads a positional argument as the first prompt.
+    if ($fresh -and -not $named) { $Extra = @("--name", ($Role + "-" + (Get-Date -Format "MMdd-HHmm"))) + @($Extra | Where-Object { $_ -ne $null }) }
+    if ($fresh) {
+        $startPlan = $startLine
+        $Extra = @($Extra | Where-Object { $_ -ne $null }) + @($startLine)
+    }
+}
+elseif ($roleGiven -and -not $named) { $Extra = @("--name", $Role) + @($Extra | Where-Object { $_ -ne $null }) }
 
 # Extra arguments travel inside a string when launching in a new tab or window, so
 # quote the ones carrying spaces.
@@ -103,6 +149,9 @@ $capContext = ($Role -ne "research") -and ($Window -le 0)
 $capEnvPs = "`$env:CLAUDE_CODE_DISABLE_1M_CONTEXT = '1'; Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue"
 $roleEnvPs = "`$env:CLAUDE_ROLE = '$Role'; " + $(if ($capContext) { $capEnvPs } else { "Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT -ErrorAction SilentlyContinue" })
 if ($Window -gt 0) { $roleEnvPs += "; `$env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = '$Window'" }
+# A seated role also carries where its briefs live and when its day closes, so the hooks and
+# the session read them from the environment instead of guessing at them.
+if ($isSeat) { $roleEnvPs += "; `$env:CLAUDE_BRIEFS_DIR = '$briefsDir'; `$env:CLAUDE_CLOSING_HOUR = '$closingHour'" }
 function Apply-Role {
     $env:CLAUDE_ROLE = $Role
     if ($capContext) {
@@ -111,6 +160,10 @@ function Apply-Role {
     }
     else { Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT -ErrorAction SilentlyContinue }
     if ($Window -gt 0) { $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "$Window" }
+    if ($isSeat) {
+        $env:CLAUDE_BRIEFS_DIR = $briefsDir
+        $env:CLAUDE_CLOSING_HOUR = $closingHour
+    }
 }
 # -ShowEnv prints that plan and exits, so the wiring can be asserted without opening a session.
 if ($ShowEnv) {
@@ -127,6 +180,13 @@ if ($ShowEnv) {
     # What the launcher hands to claude untouched, so a test can see that an unbound flag was
     # forwarded and not swallowed by a parameter of this script.
     Write-Output ("EXTRA=" + ($Extra -join " "))
+    # The seat, whether this launch is fresh, the start line it would carry, and the two
+    # variables a seated session reads. A role with no chair prints none and (unset).
+    Write-Output "SEAT=$seatPlan"
+    Write-Output ("FRESH=" + $(if ($fresh) { "true" } else { "false" }))
+    Write-Output "START=$startPlan"
+    Write-Output ("CLAUDE_BRIEFS_DIR=" + $(if ($isSeat) { $briefsDir } else { "(unset)" }))
+    Write-Output ("CLAUDE_CLOSING_HOUR=" + $(if ($isSeat) { $closingHour } else { "(unset)" }))
     exit 0
 }
 $roleTag = if ($Role -eq "lane") { "" } else { "-$Role" }
@@ -294,9 +354,12 @@ function Show-Help {
     Write-Host "  -Icon <emoji>    -i      icon shown in the list and the status line"
     Write-Host "  -Delete          -d      delete the profile, removing junctions first"
     Write-Host "  -NoShare         -n      create it without linking skills or memory"
-    Write-Host "  -Role <role>     -o      orchestrator | lane (default) | research; the first two cap"
-    Write-Host "                           the context at 200k, research runs uncapped; when given, the role"
-    Write-Host "                           also names the session (claude --name), even one reopened with -c"
+    Write-Host "  -Role <role>     -o      orchestrator | analyst | lane (default) | research; every role"
+    Write-Host "                           but research caps the context at 200k; when given, the role also"
+    Write-Host "                           names the session (claude --name), even one reopened with -c"
+    Write-Host "                           orchestrator and analyst are seated: the launcher appends"
+    Write-Host "                           <seats>\<role>.md, refuses -c, and on a fresh launch names the"
+    Write-Host "                           session with the minute and hands it a start line"
     Write-Host "  -Window <n>              opt in to a larger auto-compact window: drops the 200k cap and"
     Write-Host "                           sets CLAUDE_CODE_AUTO_COMPACT_WINDOW=<n>. Fewer compactions, a"
     Write-Host "                           larger floor on every turn. Off unless you pass it"

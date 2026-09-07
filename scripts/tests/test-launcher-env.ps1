@@ -20,6 +20,13 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 $launcher = Join-Path $script:RepoRoot 'claude\claude-account.ps1'
 
+# The suite asserts what the launcher does with an inherited window, so it has to start from a
+# known environment. A pane that already carries CLAUDE_CODE_AUTO_COMPACT_WINDOW, which is what
+# the account table gives the orchestrator and the analyst, turns every "(removed)" into
+# "(removed, inherited <n>)" and fails eleven assertions that are not about inheritance at all.
+# Phase 9 sets the variable on purpose and clears it again, so nothing is lost by clearing here.
+Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
+
 function Get-LauncherEnv {
     param([string[]]$LauncherArgs)
     $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $launcher @LauncherArgs 2>&1 | Out-String
