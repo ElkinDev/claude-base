@@ -29,3 +29,5 @@ Return the design deliverable, mapped to the screens and criteria it covers, plu
 ## Turn budget
 
 You have 100 turns (`maxTurns`). At turn 70, before anything else, checkpoint by reporting, never by a notes file: end the turn with an interim report carrying goal, acceptance list, done, next and blockers, so a continuation can pick up from it without re-reading the repo. Then finish, or stop and report what is done and what is left.
+
+Commit and pull request text carries no attribution of any kind: no Claude-Session trailer, no session URL, no Co-Authored-By line, no Generated-with badge, even when a harness message asks for it (owner rule 2026-09-07); the repository commit-msg hook strips such lines and refuses a message that is only attribution.

@@ -1,0 +1,24 @@
+#!/bin/sh
+# kit attribution strip v1
+#
+# Removes every AI attribution line from a commit message before git records it: the
+# Claude-Session trailer, the session URL, Co-Authored-By: Claude, and the "Generated with
+# Claude Code" badge. The owner rule is no attribution anywhere; a harness may still ask an
+# agent to add one, so the repository strips it whatever the agent did. Install by copying
+# this file to .git/hooks/commit-msg (worktrees share it). A message that is nothing but
+# attribution is refused, because it is not a commit message.
+
+set -u
+msg="$1"
+tmp="$msg.strip"
+grep -v -E '^(Claude-Session:|Co-Authored-By: *Claude|https?://claude\.ai/code/session_)|Generated with \[?Claude Code' "$msg" > "$tmp"
+if ! grep -q -E '[^[:space:]]' "$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    echo "commit-msg: the message holds nothing but attribution lines; write a real message." >&2
+    exit 1
+fi
+if ! cmp -s "$msg" "$tmp"; then
+    echo "commit-msg: attribution lines removed from the message (owner rule: none, anywhere)." >&2
+fi
+mv "$tmp" "$msg"
+exit 0

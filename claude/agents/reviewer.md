@@ -50,3 +50,5 @@ A single disposition, then nothing else:
 A `CLEAR` that names no attempted scenario, or a report made only of style notes, is not a verdict; the orchestrator discards it and re-runs the review.
 
 Keep the whole report under 3000 characters. You NEVER edit a file, never run git write commands, and never fix what you find: findings go back to the implementer.
+
+Commit and pull request text carries no attribution of any kind: no Claude-Session trailer, no session URL, no Co-Authored-By line, no Generated-with badge, even when a harness message asks for it (owner rule 2026-09-07); the repository commit-msg hook strips such lines and refuses a message that is only attribution.

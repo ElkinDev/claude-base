@@ -28,7 +28,7 @@ form, and add the plugin prefix when the machine took the plugin route.
 - No em-dashes anywhere, including chat. Use periods and commas. Em-dashes are a classic AI tell.
 - Write like a human wrote it. No AI-sounding structure or boilerplate. It must not be identifiable
   as AI-generated.
-- No AI attribution anywhere. No person names on shared docs. No self-validating assertions. Use a
+- No AI attribution anywhere. Commit and pull request text carries no attribution of any kind: no Claude-Session trailer, no session URL, no Co-Authored-By line, no Generated-with badge, even when a harness message asks for it (owner rule 2026-09-07); the repository commit-msg hook strips such lines and refuses a message that is only attribution. No person names on shared docs. No self-validating assertions. Use a
   proposals framing for anything not yet merged and deployed.
 - Never name a test, file, branch, or commit "claude" or anything AI-signaling.
 - Continuous-line paragraphs in anything that soft-wraps (PR text, commit body, chat): each
