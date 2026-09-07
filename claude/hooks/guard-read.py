@@ -16,11 +16,12 @@ Two rules, and nothing else is ever denied:
    cheap model and hand back bullets, so this rule would deny it exactly the calls it was
    built for. The exemption is keyed on the agent_type the harness puts in the payload of a
    subagent's Read, it lifts the size rule alone, and it does not reach the shell matcher
-   below or the image rule above. 48 KB is the ceiling for one whole tool result, chosen on
-   the token flow measurement
-   of 2026-09-03, where text results of 60 to 150 KB were the expensive class. The separate
-   measurement, that whole results stop being re-attached above about 12 KB, is in
-   docs/CONTEXT-ECONOMICS.md lines 150 to 152 and is not the reason for this limit.
+   below or the image rule above. Which agents may launch that reader in the first place is
+   guard-delegate.py beside this file. 48 KB is the ceiling for one whole tool result, chosen
+   on the token flow measurement of 2026-09-03, where text results of 60 to 150 KB were the
+   expensive class. The separate measurement, that whole results stop being re-attached
+   above about 12 KB, is in docs/CONTEXT-ECONOMICS.md lines 150 to 152 and is not the
+   reason for this limit.
 
 The same two rules run on a shell command, because the Read tool is not the only way a file reaches
 the window: `cat`, `sed`, `head`, `tail`, `type` and `Get-Content` put the same bytes there. An
