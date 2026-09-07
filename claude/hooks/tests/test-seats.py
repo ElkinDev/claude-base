@@ -312,10 +312,44 @@ class SeatDocsTest(unittest.TestCase):
                        "seats/analyst.md", "--append-system-prompt-file", "CLAUDE_ROLE"):
             self.assertIn(phrase, text, "the page never says " + phrase)
 
-    def test_the_seats_page_states_the_refusal_the_loud_line_and_the_deferral(self):
-        text = read(os.path.join(DOCS, "SEATS.md")).lower()
-        for phrase in ("refuse", "not launched through the account launcher", "deferred"):
-            self.assertIn(phrase, text, "the page never says " + phrase)
+    def test_the_seats_page_states_the_refusal_the_loud_line_and_both_deferrals(self):
+        """Each sentence is asserted by a phrase only that sentence carries, so deleting the
+        paragraph reddens the case. A page that says `deferred` somewhere proves nothing: the
+        POSIX deferral alone satisfies that, while the reader still reads the launcher lines as
+        behaviour they have today."""
+        text = read(os.path.join(DOCS, "SEATS.md"))
+        for phrase in (
+                # the line that works on any shell today, the whole point of the deferral
+                "CLAUDE_ROLE=orchestrator claude --append-system-prompt-file "
+                "~/.claude/seats/orchestrator.md",
+                # the launcher wiring, named as not in this landing
+                "The launcher wiring is not in this landing.",
+                "ship with the launcher item",
+                # why the continue flag is refused, not just that it is
+                "keeps answering as the chair it already held",
+                # the loud line, verbatim, because the reader matches it against a pane
+                "Not launched through the account launcher: no seat, no window, no --no-chrome. "
+                "Relaunch through it before working.",
+                # the POSIX deferral, which is a different deferral from the one above
+                "The POSIX installer and the launcher twin are deferred"):
+            self.assertIn(phrase, text, "the page never says: " + phrase)
+
+    def test_the_seats_page_never_claims_the_shipped_launcher_appends_a_seat(self):
+        """The role list of `claude-account.ps1` on this branch is the proof: no `analyst`, no
+        append flag, no refusal. A page that reads as a manual for a launcher that does none of
+        it sends the reader to a flag that is not there."""
+        launcher = read(os.path.join(ROOT, "claude", "claude-account.ps1"))
+        self.assertNotIn("--append-system-prompt-file", launcher)
+        page = read(os.path.join(DOCS, "SEATS.md"))
+        self.assertIn("once the launcher wiring lands", page)
+
+    def test_the_context_economics_page_describes_the_rulings_mode_as_it_runs(self):
+        text = read(os.path.join(DOCS, "CONTEXT-ECONOMICS.md"))
+        self.assertNotIn("prints that block alone and reads no stdin", text)
+        for phrase in ("the seat block", "a tty is never read",
+                       "startup, resume, clear and fork",
+                       "the settings template wires that entry"):
+            self.assertIn(phrase, text, "the page never says: " + phrase)
 
     def test_the_readme_points_at_the_seats_page(self):
         self.assertIn("docs/SEATS.md", read(os.path.join(ROOT, "README.md")))
