@@ -217,6 +217,9 @@ $pairs += Get-KitPairs (Join-Path $root 'claude\skills') (Join-Path $kitHome 'sk
 $pairs += Get-KitPairs (Join-Path $root 'claude\hooks')  (Join-Path $kitHome 'hooks')
 $pairs += Get-KitPairs (Join-Path $root 'claude\tools')  (Join-Path $kitHome 'tools')
 $pairs += Get-KitPairs (Join-Path $root 'claude\agents') (Join-Path $kitHome 'agents')
+# The seats are prompt, not agent definitions: they live in their own folder so nothing can
+# delegate to a seat, and the launcher appends the file of the role it was given.
+$pairs += Get-KitPairs (Join-Path $root 'claude\seats')  (Join-Path $kitHome 'seats')
 # The skills that ship as a plugin land here too, under their bare names, so an installer machine
 # sees no difference. A machine takes them through the installer or through the marketplace, never
 # both at once (README, "Plugin marketplace" in INSTALL.md). Read from the folder, so adding a
