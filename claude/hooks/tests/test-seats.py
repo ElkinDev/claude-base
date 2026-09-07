@@ -153,6 +153,17 @@ class SeatBlockTest(unittest.TestCase):
         out = self.run_hook(self.env(CLAUDE_ROLE="analyst", CLAUDE_BRIEFS_DIR=self.briefs))
         self.assertIn("Resume brief: %s (read it first)" % newest, out)
 
+    def test_a_second_brief_of_the_same_day_wins_over_the_morning_one(self):
+        """A seat that writes a brief at midday names it with the hour, and that file has to
+        win. Sorting the whole filename puts it second: the dash of `-1300` sorts before the dot
+        of `.md`, so the morning brief comes last and the pane reads a stale board. The stem is
+        what carries the day and the hour, so the stem is what is sorted."""
+        self.brief("orchestrator-resume-2026-09-06.md")
+        self.brief("orchestrator-resume-2026-09-07.md")
+        newest = self.brief("orchestrator-resume-2026-09-07-1300.md")
+        out = self.run_hook(self.env(CLAUDE_ROLE="orchestrator", CLAUDE_BRIEFS_DIR=self.briefs))
+        self.assertIn("Resume brief: %s (read it first)" % newest, out)
+
     def test_a_briefs_directory_with_no_brief_of_that_seat_says_so(self):
         os.makedirs(self.briefs, exist_ok=True)
         out = self.run_hook(self.env(CLAUDE_ROLE="orchestrator", CLAUDE_BRIEFS_DIR=self.briefs))
