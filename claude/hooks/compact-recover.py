@@ -23,6 +23,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 from datetime import datetime
 
 # Both caps are ceilings on what is printed, so the marker that says the text was cut is
@@ -273,18 +274,63 @@ def seat_block(data):
     return "\n".join(lines)
 
 
+STDIN_WAIT = 2.0
+
+
+def read_stdin(seconds=STDIN_WAIT):
+    """What is on stdin within `seconds`, or "" when nothing arrives in that time.
+
+    A read to end of file waits for a close, and a caller that opens the pipe and then sends
+    nothing never closes it, so the session start hangs until the harness kills it. The read
+    runs in a daemon thread that the process does not wait for: past the bound the payload is
+    simply absent, which is what an empty payload already means everywhere below.
+
+    The raw descriptor, never `sys.stdin.buffer`: a daemon thread parked inside the buffered
+    reader still owns its lock when the interpreter shuts down, and closing it there kills the
+    process instead of printing the block.
+    """
+    if sys.stdin is None:
+        return ""
+    try:
+        fd = sys.stdin.fileno()
+    except Exception:
+        return ""
+    box = []
+
+    def pull():
+        chunks = []
+        try:
+            while True:
+                chunk = os.read(fd, 65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        except Exception:
+            pass
+        box.append(b"".join(chunks))
+
+    worker = threading.Thread(target=pull)
+    worker.daemon = True
+    worker.start()
+    worker.join(seconds)
+    if not box:
+        return ""
+    return box[0].decode("utf-8-sig", "replace")
+
+
 def payload():
     """The hook JSON on stdin, as a dict, whatever arrives.
 
     Read in both modes, because the subagent exclusion of the seat block lives in the payload.
     A terminal on stdin is nobody piping anything, so it is never read: a hook run by hand must
-    not hang on a read that will not return. utf-8-sig, not utf-8, because PowerShell puts a BOM
-    in front of what it pipes to a native command.
+    not hang on a read that will not return. Every other stdin is read with a bounded wait, so
+    an open pipe that stays silent costs the bound and never the session. utf-8-sig, not utf-8,
+    because PowerShell puts a BOM in front of what it pipes to a native command.
     """
     try:
-        if sys.stdin is None or sys.stdin.isatty():
+        if sys.stdin.isatty():
             return {}
-        data = json.loads(sys.stdin.buffer.read().decode("utf-8-sig", "replace") or "{}")
+        data = json.loads(read_stdin() or "{}")
     except Exception:
         return {}
     return data if isinstance(data, dict) else {}

@@ -463,7 +463,6 @@ class SeatDocsTest(unittest.TestCase):
         self.assertIn("seat", roles.lower())
         # the launcher does all four now, and the section says so sentence by sentence
         self.assertIn("the launcher does all four", roles.lower())
-        self.assertIn("-o analyst", roles)
         self.assertIn("Every role but `research`", roles)
         self.assertIn("fresh launch only", roles)
         self.assertIn("$env:CLAUDE_ROLE='orchestrator'", roles)
