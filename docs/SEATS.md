@@ -44,7 +44,15 @@ On a fresh launch only, the session is named `<role>-MMdd-HHmm`, so the resume p
 Session start: read the newest resume brief of your seat, then the state sheet, then continue with its first actions.
 ```
 
-A launch that reopens a conversation is neither renamed nor handed a start line: the chair it reopens already carries both. A name of your own, `-- --name x`, wins over the generated one, and a prompt of your own wins over the start line: a last token without a leading dash is read as the prompt the owner typed, a trailing option value such as `--model opus` included, since a launcher cannot know which options take a value. The start line then stands aside and says so.
+A launch that reopens a conversation is neither renamed nor handed a start line: the chair it reopens already carries both. `-r`, `--resume`, `--resume=<id>` and the attached `-r<id>`, which claude parses the same way, all read as a resume.
+
+A name of your own, `-- --name x`, wins over the generated one, and a prompt of your own wins over the start line. When the last argument of a seated launch does not begin with a dash, the launcher reads it as the prompt you typed, adds no start line, and says so on one line:
+
+```
+Start line not added: the last argument reads as your prompt; type the start of day yourself.
+```
+
+A trailing option value, `--model opus` or `--add-dir <path>`, is that last argument by the same rule, since a launcher cannot know which options take a value, so the line appears there too and the start of day is yours to type.
 
 `--no-chrome` joins the argument array before the seat block, for every role but `research` and unless a chrome flag was passed by hand, so the command that runs reads `claude --name <role>-MMdd-HHmm --append-system-prompt-file <seat> --no-chrome '<start line>'`, the start line stays the last token, and the in-window path receives `--no-chrome` as well.
 
@@ -74,7 +82,7 @@ Profiles share the projects directory, so `-c` and `--continue` load the most re
 A seated role never continues the most recent conversation of a folder (the profiles share it); resume with -r and the picker, or -r <id>.
 ```
 
-A resume is allowed and is what a chair wants: `-r` and the picker, `-r <session id>` or `--resume=<session id>`, never the continue flag.
+A resume is allowed and is what a chair wants: `-r` and the picker, `-r <session id>`, `-r<session id>` attached or `--resume=<session id>`, never the continue flag.
 
 ## What the hooks print
 
