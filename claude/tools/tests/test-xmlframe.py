@@ -21,11 +21,15 @@ The cases:
   6  text and json carry the same content
   7  the row grammar: the label trim, the row width, the frame against the dump it replaces
   8  failure is loud: a broken dump and a missing dump exit non-zero and say why
+  9  the collector hook shape, lifted out of docs/CONTEXT-ECONOMICS.md and run, so the
+     snippet a reader copies is the snippet the suite proves
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -377,8 +381,6 @@ class FailureIsLoud(unittest.TestCase):
         return path
 
     def test_a_truncated_dump_exits_two_and_says_why(self):
-        import tempfile
-
         with tempfile.TemporaryDirectory(prefix="xmlframe-") as tmp:
             path = self.broken(tmp, "<hierarchy><node truncated")
             done = subprocess.run([sys.executable, XMLFRAME, path],
@@ -395,8 +397,6 @@ class FailureIsLoud(unittest.TestCase):
         self.assertIn("absent.xml", done.stderr.decode("utf-8", "replace"))
 
     def test_an_empty_hierarchy_is_an_empty_frame_not_a_crash(self):
-        import tempfile
-
         with tempfile.TemporaryDirectory(prefix="xmlframe-") as tmp:
             path = self.broken(tmp, '<?xml version="1.0"?><hierarchy rotation="0"></hierarchy>')
             done = subprocess.run([sys.executable, XMLFRAME, path],
@@ -404,6 +404,68 @@ class FailureIsLoud(unittest.TestCase):
             self.assertEqual(0, done.returncode)
             self.assertEqual("frame  0x0 0 actions\n",
                              done.stdout.decode("utf-8").replace("\r\n", "\n"))
+
+
+class TheDocumentedHook(unittest.TestCase):
+    """Case 9. The shell snippet in the documentation, lifted out of the page and run.
+
+    The hook shape is what the section is for, so it is the shape that has to work. Reading
+    it out of the markdown rather than restating it here is the whole point: a snippet
+    nobody runs rots, and the next person copies the rotted one.
+    """
+
+    DOC = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(HERE))),
+                       "docs", "CONTEXT-ECONOMICS.md")
+
+    def snippet(self):
+        if not os.path.isfile(self.DOC):
+            raise unittest.SkipTest("the page lives in the repository, not in an installed kit")
+        with open(self.DOC, encoding="utf-8") as fh:
+            body = fh.read()
+        blocks = [b for b in body.split("```sh")[1:] if "xmlframe.py" in b.split("```")[0]]
+        self.assertEqual(1, len(blocks), "one shell snippet in the page calls the tool")
+        return blocks[0].split("```")[0].strip("\n")
+
+    def driver(self, tmp):
+        bash = shutil.which("bash")
+        if not bash:
+            raise unittest.SkipTest("no bash on PATH")
+        kit = os.path.dirname(HERE).replace(os.sep, "/")
+        path = os.path.join(tmp, "hook.sh")
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write('PY=%s\nKIT=%s\n%s\nframe "$1"\n' % (
+                sys.executable.replace(os.sep, "/"), os.path.dirname(kit), self.snippet()))
+        return bash, path
+
+    def test_the_snippet_writes_both_frames_beside_the_dump(self):
+        with tempfile.TemporaryDirectory(prefix="xmlframe-hook-") as tmp:
+            xml = os.path.join(tmp, "ui.xml")
+            shutil.copyfile(dump("form"), xml)
+            bash, path = self.driver(tmp)
+            done = subprocess.run([bash, path, xml.replace(os.sep, "/")],
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+            self.assertEqual(0, done.returncode, done.stdout.decode("utf-8", "replace"))
+            for suffix, fmt in (("frame.txt", "text"), ("frame.json", "json")):
+                with open(os.path.join(tmp, "ui." + suffix), "rb") as fh:
+                    written = fh.read()
+                self.assertEqual(run("form", "--format", fmt).stdout, written)
+            self.assertFalse(os.path.exists(os.path.join(tmp, "ui.frame.err")))
+            self.assertFalse(os.path.exists(os.path.join(tmp, "ui.frame.ERROR.txt")))
+
+    def test_a_broken_dump_leaves_a_named_error_and_does_not_stop_the_caller(self):
+        with tempfile.TemporaryDirectory(prefix="xmlframe-hook-") as tmp:
+            xml = os.path.join(tmp, "ui.xml")
+            with open(xml, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write("<hierarchy><node truncated")
+            bash, path = self.driver(tmp)
+            done = subprocess.run([bash, path, xml.replace(os.sep, "/")],
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+            self.assertEqual(0, done.returncode)
+            self.assertIn("FRAME_FAILED", done.stdout.decode("utf-8", "replace"))
+            with open(os.path.join(tmp, "ui.frame.ERROR.txt"), encoding="utf-8") as fh:
+                self.assertIn("xmlframe:", fh.read())
+            self.assertFalse(os.path.exists(os.path.join(tmp, "ui.frame.txt")))
+            self.assertFalse(os.path.exists(os.path.join(tmp, "ui.frame.json")))
 
 
 class FixturesStaySmall(unittest.TestCase):

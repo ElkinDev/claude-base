@@ -186,8 +186,10 @@ look, and no model token is spent producing them:
 ```sh
 frame() {                                    # <base>.frame.txt and <base>.frame.json
   xml=$1; base=${xml%.xml}
-  "$PY" "$KIT/tools/xmlframe.py" --format text "$xml" > "$base.frame.txt" 2> "$base.frame.err"     && "$PY" "$KIT/tools/xmlframe.py" --format json "$xml" > "$base.frame.json" 2>> "$base.frame.err"     && { rm -f "$base.frame.err"; return 0; }
-  mv "$base.frame.err" "$base.frame.ERROR.txt"; rm -f "$base.frame.txt" "$base.frame.json"
+  F=$KIT/tools/xmlframe.py; E=$base.frame.err
+  if "$PY" "$F" --format text "$xml" >"$base.frame.txt" 2>"$E" &&
+     "$PY" "$F" --format json "$xml" >"$base.frame.json" 2>>"$E"; then rm -f "$E"; return 0; fi
+  mv "$E" "$base.frame.ERROR.txt"; rm -f "$base.frame.txt" "$base.frame.json"
   echo "FRAME_FAILED: $xml"; return 0
 }
 ```
