@@ -40,7 +40,13 @@ claude/                     -> installs into ~/.claude
                             the hours the planning model is rationed; shell-output-by-family.py: the
                             transcripts' shell output by command family, main sessions against
                             lanes, so a filter or wrapper is judged against the families that
-                            dominate here and not against its own benchmark
+                            dominate here and not against its own benchmark;
+                            xmlframe.py: one compact frame from one raw uiautomator XML dump,
+                            the actionable elements with their state and a tap centre in the
+                            region of a twentieth of the dump, for an agent driving a device
+                            without paying for a screenshot; tests and three synthetic dumps
+                            under tools/tests/, run with
+                            python claude/tools/tests/test-xmlframe.py
 project-template/           -> copy into each project
   CLAUDE.md                 portable working rules (voice, persona, git, TDD, evidence, pipeline)
   CLAUDE.project.md         the active profile to fill per project
