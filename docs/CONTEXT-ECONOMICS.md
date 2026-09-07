@@ -172,18 +172,24 @@ and worse: five to sixteen thousand tokens of nested attributes, almost all of t
 `claude/tools/xmlframe.py` is the filter in between. It reads one dump already on disk and writes
 one line per element an agent can act on, carrying the label, the resource id, the enabled,
 checked and selected state and a tap centre, plus a last line with the screen text that belongs
-to no row. Measured over one pilot of five screens, the frames came in between five hundred and
-nine hundred tokens: a twentieth of the same screens' raw dumps at the median, a ninth on the
-sparsest of them, and in the region of a quarter of what a screenshot of the same screen cost.
-The ratio widens as the screen gets busier, which is the opposite of a screenshot. Those are one
-pilot's numbers on one application, quoted as the band they came in at; measure your own before
-you plan around them.
+to no row. The frame is not a redaction: its labels and its read line are the screen's own text
+copied verbatim, so a frame carries the same sensitivity as the dump and the screenshot it
+replaces and belongs exactly where those two belong. Measured over one pilot of five screens,
+the frames came in between five hundred and nine hundred tokens: a twentieth of the same
+screens' raw dumps at the median, a ninth on the sparsest of them, and in the region of a
+quarter of what a screenshot of the same screen cost. The ratio widens as the screen gets
+busier, which is the opposite of a screenshot. Those are one pilot's numbers on one application,
+quoted as the band they came in at; measure your own before you plan around them.
 
 The hook shape is the part worth copying, not the tool. A collector that pulls dumps writes the
 frame beside each one in the same pass, so the bytes are on disk before any model is asked to
 look, and no model token is spent producing them:
 
 ```sh
+# set these two: the python that runs the kit, and the directory the kit was installed in
+PY=${PY:-python3}
+KIT=${KIT:-$HOME/.claude}
+
 frame() {                                    # <base>.frame.txt and <base>.frame.json
   xml=$1; base=${xml%.xml}
   F=$KIT/tools/xmlframe.py; E=$base.frame.err
@@ -194,7 +200,9 @@ frame() {                                    # <base>.frame.txt and <base>.frame
 }
 ```
 
-The `return 0` is deliberate and so is the error file. A frame that fails must not take the
+The two settings at the top are the whole configuration, and the block runs as it stands under
+`set -euo pipefail`, which is where a collector that leans on names defined somewhere off the
+page fails first. The `return 0` is deliberate and so is the error file. A frame that fails must not take the
 collector down with it, and must not pass in silence either: the tool exits 2 with one line on
 stderr when a dump is missing or will not parse, the line lands in a named file, and the run says
 `FRAME_FAILED` where a reader will see it.

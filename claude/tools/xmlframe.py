@@ -27,7 +27,8 @@ numbers on the screen are not lost with the containers.
 Resource ids are shortened against one package prefix, `--package`. With no option the
 prefix is read from the dump itself, as the most frequent prefix before the colon, so
 nothing about any application is baked in here. An id from another package keeps its
-package, so a host id and an embedded library id are never confused.
+package, so a host id and an embedded library id are never confused, and an empty
+`--package` shortens nothing at all, leaving every id as the dump wrote it.
 
 Exit codes: 0 and the frame on stdout; 2 and one line on stderr when the dump is missing
 or will not parse, or when the arguments are wrong. Nothing here fails in silence.
@@ -114,11 +115,13 @@ def short_id(raw, prefix=""):
 
     `com.example.app:id/btn_save` with that prefix is `btn_save`. An id from any other
     package keeps its package, `com.example.plugin:zoom_in`, because two libraries in one
-    screen can each publish a `list` and a bare name would address the wrong one.
+    screen can each publish a `list` and a bare name would address the wrong one. An empty
+    prefix is the escape hatch: nothing is shortened and the id stays as the dump wrote it,
+    which is also the honest answer when no prefix could be resolved at all.
     """
-    if not raw:
-        return ""
-    if prefix and raw.startswith(prefix + ":"):
+    if not raw or not prefix:
+        return raw
+    if raw.startswith(prefix + ":"):
         rest = raw[len(prefix) + 1:]
         return rest[3:] if rest.startswith("id/") else rest
     if ":id/" in raw:
@@ -352,7 +355,7 @@ def collect(xml_path, prefix=None):
     """Rows, screen size, package and read line for one dump.
 
     `prefix` is the package whose resource ids are shortened; None resolves it from the
-    dump, and "" shortens nothing.
+    dump, and "" shortens nothing, leaving every id as the dump wrote it.
     """
     hierarchy = ET.parse(xml_path).getroot()
     roots = [c for c in list(hierarchy) if c.tag == "node"]
@@ -548,7 +551,7 @@ def main(argv=None):
         "--package",
         default=None,
         help="package prefix stripped from resource ids; the default is the most frequent"
-        " prefix in the dump, and an empty value strips nothing",
+        " prefix in the dump, and an empty value leaves every id whole",
     )
     args = ap.parse_args(argv)
     if not os.path.isfile(args.xml):
