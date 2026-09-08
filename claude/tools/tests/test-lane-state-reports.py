@@ -1,0 +1,186 @@
+"""Tests for the owner-reports section of lane-state.py. Temporary directories only.
+
+Every case writes a config, a ledger, a landings file and a lanes folder into a fresh
+temporary directory, renders the sheet with `law --out` into that directory, and reads
+the rendered section back. HOME and USERPROFILE point at the temporary directory and the
+gates folder is passed explicitly, so no source of this machine is scanned and neither
+the real ledger nor the real law.md is read or written.
+
+The file under test is named by LANE_STATE_PATH, so the lane runs this suite against
+`lane-state.py.new` and the landing re-runs it against `lane-state.py` in place.
+
+    python test-lane-state-reports.py
+"""
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timedelta
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+LANE_STATE = os.path.abspath(os.environ.get("LANE_STATE_PATH")
+                             or os.path.join(os.path.dirname(HERE), "lane-state.py"))
+
+HEADING = "## Owner reports not VERIFIED (ledger/owner-reports.md)"
+HEADER = ("| id | reported | words | lane and commit | landed | validation | status |\n"
+          "|---|---|---|---|---|---|---|\n")
+
+FAILURES = []
+
+
+def put(path, text):
+    folder = os.path.dirname(path)
+    if folder and not os.path.isdir(folder):
+        os.makedirs(folder)
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+    return path
+
+
+def render(tmp, ledger_text, landings_text="", lane_text="", reports_key=True,
+           reports_path=None):
+    """Renders the sheet in `tmp` and gives back the lines of the reports section."""
+    lanes = os.path.join(tmp, "lanes")
+    gates = os.path.join(tmp, "gates")
+    os.makedirs(gates, exist_ok=True)
+    put(os.path.join(lanes, "session.md"), lane_text or "no report id here\n")
+    put(os.path.join(tmp, "briefs", "brief.md"), "brief\n")
+    ledger = reports_path or os.path.join(tmp, "ledger", "owner-reports.md")
+    if ledger_text is not None:
+        put(ledger, ledger_text)
+    config = {
+        "fixed_lines": [],
+        "gates_dirs": [gates],
+        "landings_file": put(os.path.join(tmp, "landings.md"), landings_text),
+        "rulings_file": os.path.join(tmp, "rulings.md"),
+        "project_repo": "",
+        "lanes_glob": os.path.join(lanes, "*.md"),
+        "briefs_glob": os.path.join(tmp, "briefs", "*.md"),
+    }
+    if reports_key:
+        config["reports_file"] = ledger
+    config_path = put(os.path.join(tmp, "law-config.json"),
+                      json.dumps(config, indent=2) + "\n")
+    out = os.path.join(tmp, "law-out.md")
+    env = os.environ.copy()
+    env["HOME"] = tmp
+    env["USERPROFILE"] = tmp
+    done = subprocess.run(
+        [sys.executable, LANE_STATE, "--config", config_path, "law",
+         "--out", out, "--gates-dir", gates],
+        capture_output=True, env=env, cwd=tmp, timeout=120)
+    if done.returncode != 0:
+        return ["renderer exited %d: %s" % (done.returncode,
+                                            done.stderr.decode("utf-8", "replace"))]
+    with open(out, encoding="utf-8") as handle:
+        lines = handle.read().splitlines()
+    if HEADING not in lines:
+        return ["section missing, headings: %s"
+                % ",".join(ln for ln in lines if ln.startswith("## "))]
+    start = lines.index(HEADING) + 1
+    section = []
+    for line in lines[start:]:
+        if line.startswith("## "):
+            break
+        section.append(line)
+    return section
+
+
+def case(name, got, want):
+    case.count = getattr(case, "count", 0) + 1
+    if got == want:
+        print("ok   %s" % name)
+        return
+    FAILURES.append(name)
+    print("FAIL %s\n  want %r\n  got  %r" % (name, want, got))
+
+
+def row(rid, reported, words, lane, landed, validation, status):
+    return "| %s | %s | %s | %s | %s | %s | %s |\n" % (
+        rid, reported, words, lane, landed, validation, status)
+
+
+def main():
+    now = datetime.now()
+    fresh = (now - timedelta(hours=3)).strftime("%Y-%m-%d")
+    stale = (now - timedelta(days=10)).strftime("%Y-%m-%d")
+    landing_stamp = (now - timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # 1. an empty ledger says so with the section's own empty line
+        case("an empty ledger prints the empty text",
+             render(tmp, ""), ["no open owner report"])
+        case("a ledger of headers only prints the empty text",
+             render(tmp, HEADER), ["no open owner report"])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # 2. an OPEN row is rendered whole, six fields, and the count line follows
+        ledger = HEADER + row("R1", fresh, "la captura no toma el comercio",
+                              "F33.13 ae1e40249", "not landed", "none", "OPEN")
+        case("one open row renders whole",
+             render(tmp, ledger),
+             ["R1 | OPEN | la captura no toma el comercio | F33.13 ae1e40249 | "
+              "not landed | none",
+              "VERIFIED in the last 48 h: 0"])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # 3. the check lines ride the section, prefixed, so a compaction cannot lose them
+        ledger = HEADER + row("R1", fresh, "la captura no toma el comercio",
+                              "F33.13 ae1e40249", "not landed", "none", "OPEN")
+        landings = "%s TRAIN 1 LANDED. main aaaaaaa to bbbbbbb, F33.13 ae1e40249\n" % landing_stamp
+        case("the check flags ride the section",
+             render(tmp, ledger, landings_text=landings),
+             ["R1 | OPEN | la captura no toma el comercio | F33.13 ae1e40249 | "
+              "not landed | none",
+              "VERIFIED in the last 48 h: 0",
+              "check: OPEN with a landing row: R1 F33.13 %s" % landing_stamp])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # 4. a VERIFIED row leaves the sheet and is counted when it is recent
+        ledger = (HEADER
+                  + row("R3", fresh, "merchant", "F33.13 ae1e40249", "TRAIN 1",
+                        "0906e cell 2", "VERIFIED")
+                  + row("R4", stale, "old one", "F33.15 aaaaaaa1", "TRAIN 2",
+                        "0906e cell 2", "VERIFIED")
+                  + row("R5", fresh, "still open", "none", "not landed", "none", "OPEN"))
+        case("a verified row is hidden and only the recent one is counted",
+             render(tmp, ledger, lane_text="cells R3 and R4 read PASS\n"),
+             ["R5 | OPEN | still open | none | not landed | none",
+              "VERIFIED in the last 48 h: 1"])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # 5. a malformed row is one line, and the good rows around it still render
+        ledger = (HEADER
+                  + row("R1", fresh, "words", "none", "not landed", "none", "OPEN")
+                  + "| R2 | too | few |\n")
+        case("a malformed row is one line",
+             render(tmp, ledger),
+             ["R1 | OPEN | words | none | not landed | none",
+              "VERIFIED in the last 48 h: 0",
+              "check: malformed row 4"])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # 6. a long row is clipped twice, so one report can never take the sheet: the
+        # words at 120 and then the whole line at 320
+        ledger = HEADER + row("R1", fresh, "x" * 400, "y9 " * 100, "not landed",
+                              "none", "OPEN")
+        lines = render(tmp, ledger)
+        case("a long row is clipped to 320", len(lines[0]), 320)
+        case("a long row ends in an ellipsis", lines[0][-3:], "...")
+        case("the words are clipped to 120 first", lines[0].count("x"), 117)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # 7. no key and a key pointing nowhere are the same line, and never a traceback
+        case("an absent reports_file prints the configured-absent line",
+             render(tmp, "", reports_key=False), ["no reports file configured"])
+        case("a reports_file that is not there prints the same line",
+             render(tmp, None, reports_path=os.path.join(tmp, "ledger", "gone.md")),
+             ["no reports file configured"])
+
+    print("\n%d cases, %d failed" % (case.count, len(FAILURES)))
+    return 1 if FAILURES else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
