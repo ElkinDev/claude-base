@@ -106,6 +106,7 @@ def main():
     fresh = (now - timedelta(hours=3)).strftime("%Y-%m-%d")
     stale = (now - timedelta(days=10)).strftime("%Y-%m-%d")
     landing_stamp = (now - timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
+    train_stamp = (now - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M")
 
     with tempfile.TemporaryDirectory() as tmp:
         # 1. an empty ledger says so with the section's own empty line
@@ -116,54 +117,64 @@ def main():
 
     with tempfile.TemporaryDirectory() as tmp:
         # 2. an OPEN row is rendered whole, six fields, and the count line follows
-        ledger = HEADER + row("R1", fresh, "la captura no toma el comercio",
+        ledger = HEADER + row("OR-1", fresh, "la captura no toma el comercio",
                               "F33.13 ae1e40249", "not landed", "none", "OPEN")
         case("one open row renders whole",
              render(tmp, ledger),
-             ["R1 | OPEN | la captura no toma el comercio | F33.13 ae1e40249 | "
+             ["OR-1 | OPEN | la captura no toma el comercio | F33.13 ae1e40249 | "
               "not landed | none",
               "VERIFIED in the last 48 h: 0"])
 
     with tempfile.TemporaryDirectory() as tmp:
         # 3. the check lines ride the section, prefixed, so a compaction cannot lose them
-        ledger = HEADER + row("R1", fresh, "la captura no toma el comercio",
+        ledger = HEADER + row("OR-1", fresh, "la captura no toma el comercio",
                               "F33.13 ae1e40249", "not landed", "none", "OPEN")
         landings = "%s TRAIN 1 LANDED. main aaaaaaa to bbbbbbb, F33.13 ae1e40249\n" % landing_stamp
         case("the check flags ride the section",
              render(tmp, ledger, landings_text=landings),
-             ["R1 | OPEN | la captura no toma el comercio | F33.13 ae1e40249 | "
+             ["OR-1 | OPEN | la captura no toma el comercio | F33.13 ae1e40249 | "
               "not landed | none",
               "VERIFIED in the last 48 h: 0",
-              "check: OPEN with a landing row: R1 F33.13 %s" % landing_stamp])
+              "check: OPEN with a landing row: OR-1 F33.13 %s" % landing_stamp])
 
     with tempfile.TemporaryDirectory() as tmp:
-        # 4. a VERIFIED row leaves the sheet and is counted when it is recent
+        # 4. a train row with no LANDED in it is a landing row all the same
+        ledger = HEADER + row("OR-14", fresh, "las notas qr salen en blanco",
+                              "90.8b 5b598683d", "not landed", "none", "OPEN")
+        train = "%s train 17 (train-0908a) ce152e2fe: 90.8b 5b598683d, 91b d5d533817\n" % train_stamp
+        section = render(tmp, ledger, landings_text=train)
+        case("a lowercase train row is a landing row in the sheet too",
+             section[-1],
+             "check: OPEN with a landing row: OR-14 90.8b %s" % train_stamp)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # 5. a VERIFIED row leaves the sheet, and the count reads its status date
         ledger = (HEADER
-                  + row("R3", fresh, "merchant", "F33.13 ae1e40249", "TRAIN 1",
-                        "0906e cell 2", "VERIFIED")
-                  + row("R4", stale, "old one", "F33.15 aaaaaaa1", "TRAIN 2",
-                        "0906e cell 2", "VERIFIED")
-                  + row("R5", fresh, "still open", "none", "not landed", "none", "OPEN"))
-        case("a verified row is hidden and only the recent one is counted",
-             render(tmp, ledger, lane_text="cells R3 and R4 read PASS\n"),
-             ["R5 | OPEN | still open | none | not landed | none",
+                  + row("OR-3", stale, "merchant", "F33.13 ae1e40249", "TRAIN 1",
+                        "none", "VERIFIED %s (0906e cell 2)" % fresh)
+                  + row("OR-4", fresh, "old evidence", "F33.15 aaaaaaa1", "TRAIN 2",
+                        "none", "VERIFIED %s (0906e cell 2)" % stale)
+                  + row("OR-5", fresh, "still open", "none", "not landed", "none", "OPEN"))
+        case("a verified row is hidden and only the recent status date is counted",
+             render(tmp, ledger, lane_text="cells OR-3 and OR-4 read PASS\n"),
+             ["OR-5 | OPEN | still open | none | not landed | none",
               "VERIFIED in the last 48 h: 1"])
 
     with tempfile.TemporaryDirectory() as tmp:
-        # 5. a malformed row is one line, and the good rows around it still render
+        # 6. a malformed row is one line, and the good rows around it still render
         ledger = (HEADER
-                  + row("R1", fresh, "words", "none", "not landed", "none", "OPEN")
-                  + "| R2 | too | few |\n")
+                  + row("OR-1", fresh, "words", "none", "not landed", "none", "OPEN")
+                  + "| OR-2 | too | few |\n")
         case("a malformed row is one line",
              render(tmp, ledger),
-             ["R1 | OPEN | words | none | not landed | none",
+             ["OR-1 | OPEN | words | none | not landed | none",
               "VERIFIED in the last 48 h: 0",
               "check: malformed row 4"])
 
     with tempfile.TemporaryDirectory() as tmp:
-        # 6. a long row is clipped twice, so one report can never take the sheet: the
+        # 7. a long row is clipped twice, so one report can never take the sheet: the
         # words at 120 and then the whole line at 320
-        ledger = HEADER + row("R1", fresh, "x" * 400, "y9 " * 100, "not landed",
+        ledger = HEADER + row("OR-1", fresh, "x" * 400, "y9 " * 100, "not landed",
                               "none", "OPEN")
         lines = render(tmp, ledger)
         case("a long row is clipped to 320", len(lines[0]), 320)
@@ -171,7 +182,7 @@ def main():
         case("the words are clipped to 120 first", lines[0].count("x"), 117)
 
     with tempfile.TemporaryDirectory() as tmp:
-        # 7. no key and a key pointing nowhere are the same line, and never a traceback
+        # 8. no key and a key pointing nowhere are the same line, and never a traceback
         case("an absent reports_file prints the configured-absent line",
              render(tmp, "", reports_key=False), ["no reports file configured"])
         case("a reports_file that is not there prints the same line",
