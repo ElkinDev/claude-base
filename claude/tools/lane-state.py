@@ -427,8 +427,8 @@ def report_rows(text):
     return rows
 
 
-def reported_epoch(cell):
-    """The epoch of the reported cell, `YYYY-MM-DD` with an optional `HH:MM`."""
+def cell_epoch(cell):
+    """The epoch of the first date in a cell, `YYYY-MM-DD` with an optional `HH:MM`."""
     match = REPORT_DATE_RE.search(cell)
     if not match:
         return None
@@ -472,7 +472,9 @@ def owner_reports(config, now=None):
                 cells[0], status, clip_text(cells[2], REPORT_WORDS_CLIP),
                 cells[3], cells[4], cells[5]]), REPORTS_CLIP))
         elif upper.startswith("VERIFIED"):
-            when = reported_epoch(cells[1])
+            # the date of the status cell, which is when the evidence was taken, not the
+            # reported date, which is when the owner spoke
+            when = cell_epoch(status)
             if when is not None and when >= stamp - VERIFIED_WINDOW_SECS:
                 verified += 1
     if not lines:
