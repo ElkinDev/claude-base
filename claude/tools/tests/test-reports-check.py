@@ -1,9 +1,9 @@
 """Tests for reports-check.py. No network, nothing outside a temporary directory.
 
-Every case builds its ledger, its landings file and its lane files in a fresh temporary
-directory. The pure cases call `check()` directly, because the flags depend on a clock
-and a test that waits 24 hours is not a test; the exit codes and the two output modes
-are exercised through the CLI as a caller runs it, as a subprocess.
+Every case builds its ledger, its landings file and its session files in a fresh
+temporary directory. The pure cases call `check()` directly, because the flags depend on
+a clock and a test that waits 24 hours is not a test; the exit codes, the corpus and the
+two output modes are exercised through the CLI as a caller runs it, as a subprocess.
 
 The script under test sits beside the lane-state file named by LANE_STATE_PATH, so the
 lane runs this suite against `lane-state.py.new` and its `reports-check.py`, and the
@@ -25,6 +25,7 @@ CHECK = os.path.join(os.path.dirname(LANE_STATE), "reports-check.py")
 
 HEADER = ("| id | reported | words | lane and commit | landed | validation | status |\n"
           "|---|---|---|---|---|---|---|\n")
+SHAS = "0380ffc06 to 6225873ae"
 
 FAILURES = []
 
@@ -40,13 +41,9 @@ def stamp(when):
     return when.strftime("%Y-%m-%d %H:%M")
 
 
-def landing(when, body):
-    return "%s %s LANDED. main aaaaaaa to bbbbbbb, %s\n" % (stamp(when), body.upper(), body)
-
-
-def train_row(when, number, body):
-    """The shape the orchestrator's train rows drifted to: no LANDED, a lowercase train."""
-    return "%s train %d (train-0908a) ce152e2fe: members %s\n" % (stamp(when), number, body)
+def landed_row(when, body):
+    """The shape a landing has: LANDED in capitals and the main move spelled out."""
+    return "%s TRAIN 18 LANDED (tr18). main %s by fast-forward, %s\n" % (stamp(when), SHAS, body)
 
 
 def put(path, text):
@@ -90,80 +87,102 @@ def main():
     now = datetime(2026, 9, 8, 12, 0, 0)
     now_secs = now.timestamp()
     two_days = now - timedelta(days=2, hours=1)
+    open_row = HEADER + row("OR-14", "2026-09-07", "las notas qr salen en blanco",
+                            "90.8b 5b598683d", "not landed", "none", "OPEN")
 
-    # 1. an OPEN row whose lane has a landing row is the 19:16 error, caught mechanically
-    ledger = HEADER + row("OR-1", "2026-09-06", "la captura no toma el comercio",
-                          "F33.13 ae1e40249", "not landed", "none", "OPEN")
-    case("open row with a landing row flags",
-         check(ledger, landing(two_days, "train 1 F33.13 ae1e40249"), [], now_secs),
-         ["OPEN with a landing row: OR-1 F33.13 %s" % stamp(two_days)])
-    case("open row without a landing row is silent",
-         check(ledger, landing(now, "train 1 F99.9 ffffff0"), [], now_secs),
+    # 1. what a landing row is, and the four shapes that are not one
+    case("a LANDED row with the main move is a landing",
+         check(open_row, landed_row(two_days, "90.8b 5b598683d"), [], now_secs),
+         ["OPEN with a landing row: OR-14 90.8b %s" % stamp(two_days)])
+    case("main X to Y without the word LANDED is a landing",
+         check(open_row, "%s TRAIN 19 (tr19). main %s by fast-forward, 90.8b 5b598683d\n"
+               % (stamp(two_days), SHAS), [], now_secs),
+         ["OPEN with a landing row: OR-14 90.8b %s" % stamp(two_days)])
+    case("a CORRECTION row naming the token is not a landing",
+         check(open_row, "%s CORRECTION to the 15:13 row: train 1 carried 90.8b 5b598683d\n"
+               % stamp(two_days), [], now_secs),
+         [])
+    case("a REVIEW row naming a train and a commit is not a landing",
+         check(open_row, "%s REVIEW CLEAR of 5b598683d: the 90.8b lane is CLEAR for train 3\n"
+               % stamp(two_days), [], now_secs),
+         [])
+    case("the lowercase train row of the orchestrator is not a landing",
+         check(open_row, "%s train 17 (train-0908a) ce152e2fe: 90.8b 5b598683d, 91b d5d533817\n"
+               % stamp(two_days), [], now_secs),
+         [])
+    case("a row where landed is only lowercase prose is not a landing",
+         check(open_row, "%s 2026-09-07 18:1x train 16 e7a8f1b0f (90.8b 5b598683d) landed fine\n"
+               % stamp(two_days), [], now_secs),
          [])
 
-    # 2. a train row carries no LANDED since 09-07; a lowercase train number is a landing
-    train = train_row(now - timedelta(hours=2), 17, "F69 W4b.3 fc1ec2965, 90.8b 5b598683d")
-    open_qr = HEADER + row("OR-14", "2026-09-07", "las notas qr salen en blanco",
-                           "90.8b 5b598683d", "not landed", "none", "OPEN")
-    case("a lowercase train row lands a lane",
-         check(open_qr, train, [], now_secs),
-         ["OPEN with a landing row: OR-14 90.8b %s" % stamp(now - timedelta(hours=2))])
-    case("a timestamped row that is neither LANDED nor a train is not a landing",
-         check(open_qr, "%s gate tr17-g2 green on 90.8b 5b598683d\n"
-               % stamp(now - timedelta(hours=2)), [], now_secs),
-         [])
-
-    # 3. the id is matched whole, hyphen included, so OR-1 is not OR-10
+    # 2. the id is matched whole, hyphen included, so OR-1 is not OR-10
     verified = HEADER + row("OR-1", "2026-09-06", "merchant", "F33.13 ae1e40249", "TRAIN 1",
                             "none", "VERIFIED 2026-09-07")
     case("verified row without a cell flags",
-         check(verified, "", [], now_secs),
-         ["VERIFIED without a cell: OR-1"])
+         check(verified, "", [], now_secs), ["VERIFIED without a cell: OR-1"])
     case("a longer id is not the cell of a shorter one",
          check(verified, "", ["OR-10 and OR-11 measured PASS"], now_secs),
          ["VERIFIED without a cell: OR-1"])
-    case("the id cited by a lanes file is a cell, with no session token",
-         check(verified, "", ["cell 2 of OR-1 reads PASS"], now_secs),
-         [])
+    case("the id cited by a session file is a cell, with no session token",
+         check(verified, "", ["cell 2 of OR-1 reads PASS"], now_secs), [])
 
-    # 4. a session token in the validation cell resolves to a file under lanes/
+    # 3. a session token in the validation cell resolves to a session file
     with_token = HEADER + row("OR-3", "2026-09-06 11:44", "merchant", "F33.13 ae1e40249",
                               "TRAIN 1", "0906e cell 2 PASS", "VERIFIED 2026-09-07")
-    lanes_hit = [("lanes/s21u-session-2026-09-06e.md", "cell 2 | PASS")]
-    lanes_miss = [("lanes/pixel-session-2026-09-07v.md", "cell 2 | PASS")]
-    case("a session token that resolves to a lanes file is a cell",
-         check(with_token, "", lanes_hit, now_secs), [])
-    case("a session token with no file under lanes flags",
-         check(with_token, "", lanes_miss, now_secs),
-         ["VERIFIED without a cell: OR-3"])
-    case("the year of the token comes from the reported date",
-         check(HEADER + row("OR-3", "2025-09-06 11:44", "merchant", "F33.13 ae1e40249",
-                            "TRAIN 1", "0906e cell 2 PASS", "VERIFIED 2026-09-07"),
-               "", lanes_hit, now_secs),
-         ["VERIFIED without a cell: OR-3"])
+    hit = [("s21u-session-2026-09-06e.md", "cell 2 | PASS")]
+    miss = [("pixel-session-2026-09-07v.md", "cell 2 | PASS")]
+    case("a session token that resolves to a session file is a cell",
+         check(with_token, "", hit, now_secs), [])
+    case("a session token with no file flags",
+         check(with_token, "", miss, now_secs), ["VERIFIED without a cell: OR-3"])
     case("a two letter token resolves too",
          check(HEADER + row("OR-17", "2026-09-07", "share door", "91b d5d533817", "TRAIN 17",
                             "0907bb C1 REPRODUCED", "VERIFIED 2026-09-08"),
-               "", [("lanes/pixel-session-2026-09-07bb.md", "C1")], now_secs),
+               "", [("pixel-session-2026-09-07bb.md", "C1")], now_secs),
          [])
 
-    # 5. a LANDED row is given 24 hours to reach a phone, then it is a flag
+    # 4. the device named in the validation cell narrows the files the token may use
+    on_s21u = HEADER + row("OR-7", "2026-09-06", "dictation", "86.8.9 7f89a4bce", "TRAIN 7",
+                           "S21U 0907w 5 of 5", "VERIFIED 2026-09-07")
+    case("a validation naming the s21u does not resolve on a pixel file",
+         check(on_s21u, "", [("pixel-session-2026-09-07w.md", "cell 4")], now_secs),
+         ["VERIFIED without a cell: OR-7"])
+    case("a validation naming the s21u resolves on the s21u file",
+         check(on_s21u, "", [("s21u-session-2026-09-07w.md", "cell 4")], now_secs), [])
+    case("with no device named any file of that date resolves",
+         check(HEADER + row("OR-8", "2026-09-07", "packs", "86.8.7 c910458ad", "TRAIN 11",
+                            "0907w 5 of 5", "VERIFIED 2026-09-07"),
+               "", [("pixel-session-2026-09-07w.md", "cell 4")], now_secs),
+         [])
+
+    # 5. a token of January after a December report belongs to the following year
+    new_year = HEADER + row("OR-9", "2025-12-31 19:40", "late report", "86.8.7 c910458ad",
+                            "TRAIN 11", "0101a cell 1 PASS", "VERIFIED 2026-01-01")
+    case("the token tries the year after the reported one",
+         check(new_year, "", [("pixel-session-2026-01-01a.md", "cell 1")], now_secs), [])
+    case("the token still tries the reported year first",
+         check(HEADER + row("OR-9", "2025-12-31 19:40", "late report", "86.8.7 c910458ad",
+                            "TRAIN 11", "1231b cell 1 PASS", "VERIFIED 2026-01-01"),
+               "", [("pixel-session-2025-12-31b.md", "cell 1")], now_secs),
+         [])
+
+    # 6. a LANDED row is given 24 hours to reach a phone, then it is a flag
     landed = HEADER + row("OR-6", "2026-09-06", "botones que no existen en la app",
                           "90.8 547557281", "LANE 90.8", "none", "LANDED")
     old = now - timedelta(hours=30)
     young = now - timedelta(hours=2)
     case("landed over 24 h without a cell flags",
-         check(landed, landing(old, "lane 90.8 547557281"), [], now_secs),
+         check(landed, landed_row(old, "lane 90.8 547557281"), [], now_secs),
          ["LANDED over 24 h without a bench cell: OR-6 %s" % stamp(old)])
     case("landed under 24 h is silent",
-         check(landed, landing(young, "lane 90.8 547557281"), [], now_secs), [])
+         check(landed, landed_row(young, "lane 90.8 547557281"), [], now_secs), [])
     case("landed over 24 h with a resolving token is silent",
          check(HEADER + row("OR-6", "2026-09-06", "botones", "90.8 547557281", "LANE 90.8",
                             "0906e cell 5", "LANDED"),
-               landing(old, "lane 90.8 547557281"), lanes_hit, now_secs),
+               landed_row(old, "lane 90.8 547557281"), hit, now_secs),
          [])
 
-    # 6. the 48 h count reads the date of the status cell, not the reported date
+    # 7. the 48 h count reads the date of the status cell, not the reported date
     counted = (HEADER
                + row("OR-3", "2026-09-06 11:44", "old report", "F33.13 ae1e40249", "TRAIN 1",
                      "0906e cell 2", "VERIFIED 2026-09-07 (0906e cell 2)")
@@ -174,49 +193,48 @@ def main():
     case("the count takes the status date, one inside and one outside the window",
          module.verified_recently(counted, now_secs), 1)
     case("a verified row with no date is not counted and is not a flag",
-         check(counted, "", lanes_hit, now_secs), [])
+         check(counted, "", hit, now_secs), [])
 
-    # 7. a malformed row is one line and never raises
-    broken = HEADER + "| OR-7 | too | few |\n"
-    case("malformed row is one line", check(broken, "", [], now_secs), ["malformed row 3"])
+    # 8. a malformed row is one line and never raises
+    case("malformed row is one line",
+         check(HEADER + "| OR-7 | too | few |\n", "", [], now_secs), ["malformed row 3"])
     case("the header row is not a report row", check(HEADER, "", [], now_secs), [])
 
     with tempfile.TemporaryDirectory() as tmp:
-        ledger_path = put(os.path.join(tmp, "owner-reports.md"), ledger)
+        # 9. the corpus is the session files, never every file under lanes/
+        lanes = os.path.join(tmp, "lanes")
+        sessions_glob = os.path.join(lanes, "*-session-*.md")
+        ledger_path = put(os.path.join(tmp, "owner-reports.md"), landed)
         landings_path = put(os.path.join(tmp, "landings.md"),
-                            landing(now - timedelta(days=2), "train 1 F33.13 ae1e40249"))
-        lanes_dir = os.path.join(tmp, "lanes")
-        put(os.path.join(lanes_dir, "session.md"), "nothing about any report here\n")
-        args = ["--ledger", ledger_path, "--landings", landings_path, "--lanes-dir", lanes_dir]
+                            landed_row(old, "lane 90.8 547557281"))
+        put(os.path.join(lanes, "owner-reports-ledger-2026-09-08.md"),
+            "the flag reads LANDED over 24 h without a bench cell: OR-6\n")
+        args = ["--ledger", ledger_path, "--landings", landings_path,
+                "--sessions-glob", sessions_glob]
 
-        # 8. the default mode is stderr and a non-zero exit, so a caller can gate on it
         done = run_cli(args, tmp)
-        case("a flagged sheet exits 1", done.returncode, 1)
-        case("a flagged sheet writes the flag to stderr",
+        case("a lane report quoting the id is not a cell", done.returncode, 1)
+        case("the flag survives a lane report that quotes it",
              text_of(done.stderr).splitlines(),
-             ["OPEN with a landing row: OR-1 F33.13 %s" % stamp(now - timedelta(days=2))])
+             ["LANDED over 24 h without a bench cell: OR-6 %s" % stamp(old)])
         case("a flagged sheet writes nothing to stdout", text_of(done.stdout), "")
 
-        # 9. --lines is what the state sheet prints, on stdout, always exit 0
+        put(os.path.join(lanes, "s21u-session-2026-09-08a.md"), "cell 1 of OR-6 reads PASS\n")
+        done = run_cli(args, tmp)
+        case("a session file naming the id is a cell", done.returncode, 0)
+        case("a clean sheet is silent", text_of(done.stderr) + text_of(done.stdout), "")
+
+        # 10. --lines is what the state sheet prints, on stdout, always exit 0
+        os.remove(os.path.join(lanes, "s21u-session-2026-09-08a.md"))
         done = run_cli(args + ["--lines"], tmp)
         case("--lines exits 0", done.returncode, 0)
         case("--lines prints the sheet lines",
              text_of(done.stdout).splitlines(),
-             ["check: OPEN with a landing row: OR-1 F33.13 %s"
-              % stamp(now - timedelta(days=2))])
-
-        # 10. a clean sheet is silent and exits 0, and the token resolves on real files
-        put(ledger_path, HEADER + row("OR-3", "2026-09-06 11:44", "merchant",
-                                      "F33.13 ae1e40249", "TRAIN 1", "0906e cell 2",
-                                      "VERIFIED 2026-09-06 (0906e cell 2)"))
-        put(os.path.join(lanes_dir, "s21u-session-2026-09-06e.md"), "cell 2 PASS\n")
-        done = run_cli(args, tmp)
-        case("a clean sheet exits 0", done.returncode, 0)
-        case("a clean sheet is silent", text_of(done.stderr) + text_of(done.stdout), "")
+             ["check: LANDED over 24 h without a bench cell: OR-6 %s" % stamp(old)])
 
         # 11. a ledger that is not there is one line, not a traceback
         done = run_cli(["--ledger", os.path.join(tmp, "gone.md"),
-                        "--landings", landings_path, "--lanes-dir", lanes_dir], tmp)
+                        "--landings", landings_path, "--sessions-glob", sessions_glob], tmp)
         case("a missing ledger exits 1", done.returncode, 1)
         case("a missing ledger names itself once",
              len(text_of(done.stderr).strip().splitlines()), 1)
