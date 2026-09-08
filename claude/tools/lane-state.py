@@ -20,7 +20,10 @@ fallbacks sit under `~/.claude`, and nothing is scanned that was never configure
 Keys: fixed_lines (list of lines printed first), gates_dirs (list of folders holding the
 gate exit files, empty means no gate is scanned), landings_file, rulings_file,
 project_repo (the repository whose worktrees are listed, empty means none),
-lanes_glob, briefs_glob.
+lanes_glob, briefs_glob, reports_file (the owner reports ledger rendered by the
+section below, checked by reports-check.py beside this file), sessions_glob (the
+session files that count as evidence for that ledger), devices (the device words
+that bind a session token to one phone, empty for no narrowing).
 
 Env seams, each of which wins over the default and is what the recovery hook wires:
 CLAUDE_LANE_STATE_CONFIG (the config file), CLAUDE_LANE_STATE_SHEET (the sheet written
@@ -29,6 +32,7 @@ when no --out is given), CLAUDE_RULINGS_FILE (the register, over the configured 
 import argparse
 import concurrent.futures
 import glob
+import importlib.util
 import json
 import os
 import re
@@ -55,6 +59,8 @@ RECENT_HOURS = 24
 MAX_LINES = 170
 SUBJECT_CLIP = 90
 FIRST_LINE_CLIP = 100
+REPORTS_CLIP = 320
+REPORT_WORDS_CLIP = 120
 
 PHASE_RE = re.compile(r"^PHASE_(?P<name>.+?)_EXIT=(?P<code>-?\d+)(?:\s+secs=(?P<secs>\d+))?\s*$")
 LANDING_ROW_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2} ")
@@ -69,6 +75,9 @@ def defaults_for(base):
         "gates_dirs": [],
         "landings_file": os.path.join(base, "landings.md"),
         "rulings_file": os.path.join(base, "rulings.md"),
+        "reports_file": os.path.join(base, "owner-reports.md"),
+        "sessions_glob": os.path.join(base, "lanes", "*-session-*.md"),
+        "devices": [],
         "project_repo": "",
         "lanes_glob": os.path.join(base, "lanes", "*.md"),
         "briefs_glob": os.path.join(base, "briefs", "*.md"),
@@ -379,6 +388,87 @@ def recent_files(specs, hours=RECENT_HOURS, now=None):
     return [row for _, row in rows]
 
 
+# --- the owner reports ledger ------------------------------------------------------
+
+def load_reports_check():
+    """The reports-check module beside this file, or None and the reason it did not load.
+
+    It is imported by path, because the file name carries a hyphen, and imported rather
+    than run as a subprocess: the sheet is rendered on every compaction recovery and a
+    process start per render is a cost with no return. It owns the ledger parser, the
+    count and the flags; this file keeps none of its own, so the two can never drift.
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports-check.py")
+    try:
+        spec = importlib.util.spec_from_file_location("reports_check", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module, None
+    except Exception as error:
+        return None, "%s: %s" % (posix(path), error.__class__.__name__)
+
+
+def reports_heading(config):
+    """The heading names the file the config points at, not one board's file name."""
+    name = os.path.basename(config.get("reports_file") or "")
+    return "## Owner reports not VERIFIED (%s)" % (name or "no reports file")
+
+
+def owner_reports(config, now=None):
+    """Every report that is not VERIFIED yet, the recent VERIFIED count, then the flags.
+
+    This is the section that answers "where does my report stand" after a compaction, so
+    it fails loudly and never raises: no key and a file that is not there give the same
+    single line, and a checker that cannot be loaded gives one line naming why, rather
+    than half a section rendered by a second parser that nobody keeps in step.
+    """
+    path = config.get("reports_file")
+    if not path:
+        return ["no reports file configured"]
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            text = handle.read()
+    except OSError:
+        return ["no reports file configured"]
+
+    module, reason = load_reports_check()
+    if module is None:
+        return ["reports-check unavailable: " + reason]
+
+    rows = [cells for _, cells in module.ledger_rows(text) if cells]
+    if not rows:
+        return []
+
+    lines = []
+    for cells in rows:
+        status = cells[module.STATUS]
+        upper = status.upper()
+        if upper.startswith("OPEN") or upper.startswith("LANDED"):
+            lines.append(clip_text(" | ".join([
+                cells[module.ID], status,
+                clip_text(cells[module.WORDS], REPORT_WORDS_CLIP),
+                cells[module.LANE], cells[module.LANDED], cells[module.VALIDATION],
+            ]), REPORTS_CLIP))
+    if not lines:
+        lines.append("no open owner report")
+    lines.append("VERIFIED in the last 48 h: %d" % module.verified_recently(text, now))
+
+    try:
+        with open(config["landings_file"], encoding="utf-8", errors="replace") as handle:
+            landings_text = handle.read()
+    except (OSError, KeyError):
+        landings_text = ""
+    try:
+        sessions = module.session_files_of(config.get("sessions_glob") or "")
+        for flag in module.check(text, landings_text, sessions, now,
+                                 devices=config.get("devices")):
+            lines.append("check: " + flag)
+    except Exception as error:
+        lines.append("check: reports-check failed: "
+                     + posix(str(error).strip() or error.__class__.__name__))
+    return lines
+
+
 # --- the sheet --------------------------------------------------------------------
 
 def section(heading, builder, cuttable=True, empty="none"):
@@ -427,6 +517,9 @@ def build_sections(config, now=None):
                 "owner rules)" % (RULINGS_ROWS, posix(config["rulings_file"])),
                 lambda: rulings_rows(config["rulings_file"]),
                 cuttable=False, empty="no rulings yet"),
+        section(reports_heading(config),
+                lambda: owner_reports(config, now),
+                cuttable=False, empty="no open owner report"),
         section("## Gates (last 24 h)",
                 lambda: gates_lines(dirs, RECENT_HOURS, None, now),
                 cuttable=False, empty="no gate exit file in the last 24 h"),
