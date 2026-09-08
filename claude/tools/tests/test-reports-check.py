@@ -148,15 +148,19 @@ def main():
     # 4. the device named in the validation cell narrows the files the token may use
     on_s21u = HEADER + row("OR-7", "2026-09-06", "dictation", "86.8.9 7f89a4bce", "TRAIN 7",
                            "S21U 0907w 5 of 5", "VERIFIED 2026-09-07")
+    phones = ("pixel", "s21u")  # what a board configures; no default is assumed here
     case("a validation naming the s21u does not resolve on a pixel file",
-         check(on_s21u, "", [("pixel-session-2026-09-07w.md", "cell 4")], now_secs),
+         check(on_s21u, "", [("pixel-session-2026-09-07w.md", "cell 4")], now_secs,
+               devices=phones),
          ["VERIFIED without a cell: OR-7"])
     case("a validation naming the s21u resolves on the s21u file",
-         check(on_s21u, "", [("s21u-session-2026-09-07w.md", "cell 4")], now_secs), [])
+         check(on_s21u, "", [("s21u-session-2026-09-07w.md", "cell 4")], now_secs,
+               devices=phones),
+         [])
     case("with no device named any file of that date resolves",
          check(HEADER + row("OR-8", "2026-09-07", "packs", "86.8.7 c910458ad", "TRAIN 11",
                             "0907w 5 of 5", "VERIFIED 2026-09-07"),
-               "", [("pixel-session-2026-09-07w.md", "cell 4")], now_secs),
+               "", [("pixel-session-2026-09-07w.md", "cell 4")], now_secs, devices=phones),
          [])
     case("with no device list configured nothing is narrowed",
          check(on_s21u, "", [("pixel-session-2026-09-07w.md", "cell 4")], now_secs,
@@ -168,20 +172,22 @@ def main():
                               "S21U 0907w, Pixel 0907v", "VERIFIED 2026-09-07")
     case("a cell naming two devices resolves each token on its own phone",
          check(two_phones, "", [("s21u-session-2026-09-07w.md", "cell 4"),
-                                ("pixel-session-2026-09-07v.md", "cell 2")], now_secs),
+                                ("pixel-session-2026-09-07v.md", "cell 2")], now_secs,
+               devices=phones),
          [])
     case("a token is not resolved by the other phone's file of the same date",
-         check(two_phones, "", [("s21u-session-2026-09-07v.md", "cell 2")], now_secs),
+         check(two_phones, "", [("s21u-session-2026-09-07v.md", "cell 2")], now_secs,
+               devices=phones),
          ["VERIFIED without a cell: OR-7"])
     case("a token with no device word of its own keeps the one before it",
          check(HEADER + row("OR-7", "2026-09-06", "dictation", "86.8.9 7f89a4bce", "TRAIN 7",
                             "S21U 0907w 0907v", "VERIFIED 2026-09-07"),
-               "", [("pixel-session-2026-09-07v.md", "cell 2")], now_secs),
+               "", [("pixel-session-2026-09-07v.md", "cell 2")], now_secs, devices=phones),
          ["VERIFIED without a cell: OR-7"])
     case("a token before any device word resolves anywhere",
          check(HEADER + row("OR-7", "2026-09-06", "dictation", "86.8.9 7f89a4bce", "TRAIN 7",
                             "0907v then S21U 0907w", "VERIFIED 2026-09-07"),
-               "", [("pixel-session-2026-09-07v.md", "cell 2")], now_secs),
+               "", [("pixel-session-2026-09-07v.md", "cell 2")], now_secs, devices=phones),
          [])
 
     # 5. a token of January after a December report belongs to the following year

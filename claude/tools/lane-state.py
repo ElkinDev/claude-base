@@ -22,7 +22,8 @@ gate exit files, empty means no gate is scanned), landings_file, rulings_file,
 project_repo (the repository whose worktrees are listed, empty means none),
 lanes_glob, briefs_glob, reports_file (the owner reports ledger rendered by the
 section below, checked by reports-check.py beside this file), sessions_glob (the
-session files that count as evidence for that ledger).
+session files that count as evidence for that ledger), devices (the device words
+that bind a session token to one phone, empty for no narrowing).
 
 Env seams, each of which wins over the default and is what the recovery hook wires:
 CLAUDE_LANE_STATE_CONFIG (the config file), CLAUDE_LANE_STATE_SHEET (the sheet written
@@ -76,6 +77,7 @@ def defaults_for(base):
         "rulings_file": os.path.join(base, "rulings.md"),
         "reports_file": os.path.join(base, "owner-reports.md"),
         "sessions_glob": os.path.join(base, "lanes", "*-session-*.md"),
+        "devices": [],
         "project_repo": "",
         "lanes_glob": os.path.join(base, "lanes", "*.md"),
         "briefs_glob": os.path.join(base, "briefs", "*.md"),
@@ -403,7 +405,7 @@ def load_reports_check():
         spec.loader.exec_module(module)
         return module, None
     except Exception as error:
-        return None, (str(error).strip() or error.__class__.__name__)
+        return None, "%s: %s" % (posix(path), error.__class__.__name__)
 
 
 def reports_heading(config):
@@ -431,7 +433,7 @@ def owner_reports(config, now=None):
 
     module, reason = load_reports_check()
     if module is None:
-        return ["reports-check unavailable: " + posix(reason)]
+        return ["reports-check unavailable: " + reason]
 
     rows = [cells for _, cells in module.ledger_rows(text) if cells]
     if not rows:
@@ -458,7 +460,8 @@ def owner_reports(config, now=None):
         landings_text = ""
     try:
         sessions = module.session_files_of(config.get("sessions_glob") or "")
-        for flag in module.check(text, landings_text, sessions, now):
+        for flag in module.check(text, landings_text, sessions, now,
+                                 devices=config.get("devices")):
             lines.append("check: " + flag)
     except Exception as error:
         lines.append("check: reports-check failed: "

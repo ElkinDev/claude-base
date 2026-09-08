@@ -18,7 +18,8 @@ first word after the stamp is neither CORRECTION nor REVIEW, whose text carries 
 the word LANDED in capitals or the phrase `main <sha> to <sha>` (seven hex digits or
 more each), and which names one of the row's tokens. Nothing else counts: a build row
 that states a train and its tip says a train was built, not that the main branch moved,
-and a correction or a review narrative that quotes a commit is neither. A token is a word
+a correction or a review narrative that quotes a commit is neither, and a row that
+says NOT MERGED landed nothing however loudly it says LANDED. A token is a word
 of the lane-and-commit cell that is at least three characters long and carries a digit, so
 a lane id (F33.13, 86.8.11b, 7.1) and a commit are tokens and prose is not; it is matched
 with dots and alphanumerics as boundaries, so 7.1 does not match 86.7.1 and 90.8 does not
@@ -34,8 +35,10 @@ validation cell carries a session token that resolves to one. A session token is
 plus one or two lowercase letters (0906e, 0907bb); it resolves against a session file
 whose name ends in `<year>-MM-DD<letters>.md`, the year taken from the row's reported date
 and then the year after it, so a token of January under a December report still resolves.
-When the validation cell names a device (pixel, s21u) the token resolves only against
-files whose name starts with that word.
+A device word in the validation cell, taken from the `devices` list of the config
+(empty by default, which narrows nothing), binds the tokens that follow it until the
+next one, so a cell reading "S21U 0907w, Pixel 0907v" names one session on each phone
+and neither answers for the other; a token before any device word resolves anywhere.
 
 The status cell of a VERIFIED or OWNER-CLOSED row carries the date the evidence was taken
 (`VERIFIED 2026-09-06 (0906e cell 2)`), and that date, not the reported one, is what the
@@ -47,7 +50,8 @@ this runs inside the state sheet, which some setups print at every compaction re
 
 Paths come from the lane-state config (`--config`, then CLAUDE_LANE_STATE_CONFIG, then
 `~/.claude/lane-state.json`) with the keys `reports_file`, `landings_file` and
-`sessions_glob`; what a key does not set falls back to a path beside the config file.
+`sessions_glob`, plus `devices`; what a key does not set falls back to a path beside
+the config file.
 
     python reports-check.py                 flags to stderr, exit 1 if there are any
     python reports-check.py --lines         the state sheet lines to stdout, exit 0
@@ -63,18 +67,19 @@ from datetime import datetime
 
 HOME_CLAUDE = os.path.join(os.path.expanduser("~"), ".claude")
 DEFAULT_CONFIG = os.path.join(HOME_CLAUDE, "lane-state.json")
+DEFAULT_DEVICES = ()  # a setup that names no device narrows nothing
 
 STAMP_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\s+(\S*)")
 NOT_A_LANDING = ("CORRECTION", "REVIEW")
 LANDED_WORD_RE = re.compile(r"\bLANDED\b")  # capitals only: prose says landed, rows say LANDED
 MAIN_MOVE_RE = re.compile(r"\bmain\s+[0-9a-fA-F]{7,}\s+to\s+[0-9a-fA-F]{7,}\b", re.IGNORECASE)
+NOT_MERGED_RE = re.compile(r"NOT\s+MERGED", re.IGNORECASE)
 SEPARATOR_RE = re.compile(r":?-{2,}:?$")
 TOKEN_RE = re.compile(r"[0-9A-Za-z][0-9A-Za-z.]*")
 DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})(?: (\d{2}:\d{2}))?")
 YEAR_RE = re.compile(r"(\d{4})-\d{2}-\d{2}")
 SESSION_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])(\d{2})(\d{2})([a-z]{1,2})(?![0-9A-Za-z])")
 
-DEVICES = ("pixel", "s21u")
 LANDED_GRACE_SECS = 24 * 3600
 VERIFIED_WINDOW_SECS = 48 * 3600
 SESSION_FILE_BYTES = 256 * 1024  # a session report is prose; this is a guard, not a budget
@@ -93,6 +98,7 @@ def defaults_for(base):
         "reports_file": os.path.join(base, "owner-reports.md"),
         "landings_file": os.path.join(base, "landings.md"),
         "sessions_glob": os.path.join(base, "lanes", "*-session-*.md"),
+        "devices": [],
     }
 
 
@@ -173,6 +179,8 @@ def is_landing_line(line):
         return None
     if match.group(2).strip(".,:;()").upper() in NOT_A_LANDING:
         return None
+    if NOT_MERGED_RE.search(line):
+        return None
     if not (LANDED_WORD_RE.search(line) or MAIN_MOVE_RE.search(line)):
         return None
     return match.group(1)
@@ -239,21 +247,47 @@ def ids_with_cells(row_ids, texts):
     return found
 
 
-def token_resolves(reported, validation, names):
+def validation_tokens(validation, devices):
+    """(device, (month, day, letters)) per session token of the cell, left to right.
+
+    A device word binds the tokens that follow it until the next one, so a cell reading
+    "S21U 0907w, Pixel 0907v" names one session on each phone and neither answers for the
+    other. A token written before any device word is bound to no phone.
+    """
+    words = [device.lower() for device in devices or () if device]
+    events = []
+    if words:
+        device_re = re.compile(r"(?<![0-9A-Za-z])(%s)(?![0-9A-Za-z])"
+                               % "|".join(re.escape(word) for word in words), re.IGNORECASE)
+        events += [(found.start(), 0, found.group(1).lower())
+                   for found in device_re.finditer(validation or "")]
+    events += [(found.start(), 1, found.groups())
+               for found in SESSION_TOKEN_RE.finditer(validation or "")]
+    events.sort(key=lambda event: (event[0], event[1]))
+    found = []
+    current = None
+    for _, kind, value in events:
+        if kind == 0:
+            current = value
+        else:
+            found.append((current, value))
+    return found
+
+
+def token_resolves(reported, validation, names, devices=None):
     """True when a session token of the validation cell names a file of the corpus."""
     year = YEAR_RE.search(reported or "")
     if not year:
         return False
     years = (int(year.group(1)), int(year.group(1)) + 1)
     lowered = [name.lower() for name in names if name]
-    devices = [device for device in DEVICES if device in (validation or "").lower()]
-    if devices:
-        lowered = [name for name in lowered
-                   if any(name.startswith(device) for device in devices)]
-    for month, day, letters in SESSION_TOKEN_RE.findall(validation or ""):
+    devices = DEFAULT_DEVICES if devices is None else devices
+    for device, (month, day, letters) in validation_tokens(validation, devices):
+        allowed = ([name for name in lowered if name.startswith(device)]
+                   if device else lowered)
         for candidate in years:
             suffix = "%d-%s-%s%s.md" % (candidate, month, day, letters)
-            if any(name.endswith(suffix) for name in lowered):
+            if any(name.endswith(suffix) for name in allowed):
                 return True
     return False
 
@@ -262,7 +296,7 @@ def status_is(cells, word):
     return cells[STATUS].upper().startswith(word)
 
 
-def check(ledger_text, landings_text, session_files, now=None):
+def check(ledger_text, landings_text, session_files, now=None, devices=None):
     """The flag lines, in the order the ledger writes its rows. Never raises."""
     now = time.time() if now is None else now
     landings = landing_rows(landings_text)
@@ -278,7 +312,8 @@ def check(ledger_text, landings_text, session_files, now=None):
             continue
         row_id = cells[ID]
         has_cell = (row_id in named
-                    or token_resolves(cells[REPORTED], cells[VALIDATION], names))
+                    or token_resolves(cells[REPORTED], cells[VALIDATION], names,
+                                      devices))
         found = newest_landing(lane_tokens(cells[LANE]), landings)
         if status_is(cells, "OPEN") and found:
             flags.append("OPEN with a landing row: %s %s %s" % (row_id, found[0], found[1]))
@@ -327,7 +362,7 @@ def session_files_of(pattern):
     return files
 
 
-def flags_for(ledger_path, landings_path, sessions_glob, now=None):
+def flags_for(ledger_path, landings_path, sessions_glob, now=None, devices=None):
     """The flags of the files on disk. A source that is not there is a flag, not a crash."""
     try:
         ledger_text = read_text(ledger_path)
@@ -337,7 +372,8 @@ def flags_for(ledger_path, landings_path, sessions_glob, now=None):
         landings_text = read_text(landings_path)
     except OSError:
         return ["no landings file at %s" % posix(landings_path)]
-    return check(ledger_text, landings_text, session_files_of(sessions_glob), now)
+    return check(ledger_text, landings_text, session_files_of(sessions_glob), now,
+                 devices)
 
 
 def main(argv=None):
@@ -355,7 +391,8 @@ def main(argv=None):
     config = load_config(config_file(args.config))
     flags = flags_for(args.ledger or config["reports_file"],
                       args.landings or config["landings_file"],
-                      args.sessions_glob or config["sessions_glob"])
+                      args.sessions_glob or config["sessions_glob"],
+                      devices=config["devices"])
     if args.lines:
         for flag in flags:
             print("check: " + flag)
