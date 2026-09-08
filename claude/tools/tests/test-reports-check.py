@@ -114,6 +114,10 @@ def main():
          check(open_row, "%s 2026-09-07 18:1x train 16 e7a8f1b0f (90.8b 5b598683d) landed fine\n"
                % stamp(two_days), [], now_secs),
          [])
+    case("a row that says NOT MERGED is not a landing",
+         check(open_row, "%s BUILD 90.1 LANDED, NOT MERGED (agent abf4c3791): 90.8b 5b598683d\n"
+               % stamp(two_days), [], now_secs),
+         [])
 
     # 2. the id is matched whole, hyphen included, so OR-1 is not OR-10
     verified = HEADER + row("OR-1", "2026-09-06", "merchant", "F33.13 ae1e40249", "TRAIN 1",
@@ -153,6 +157,31 @@ def main():
          check(HEADER + row("OR-8", "2026-09-07", "packs", "86.8.7 c910458ad", "TRAIN 11",
                             "0907w 5 of 5", "VERIFIED 2026-09-07"),
                "", [("pixel-session-2026-09-07w.md", "cell 4")], now_secs),
+         [])
+    case("with no device list configured nothing is narrowed",
+         check(on_s21u, "", [("pixel-session-2026-09-07w.md", "cell 4")], now_secs,
+               devices=()),
+         [])
+
+    # the device word applies to the tokens that follow it, one phone at a time
+    two_phones = HEADER + row("OR-7", "2026-09-06", "dictation", "86.8.9 7f89a4bce", "TRAIN 7",
+                              "S21U 0907w, Pixel 0907v", "VERIFIED 2026-09-07")
+    case("a cell naming two devices resolves each token on its own phone",
+         check(two_phones, "", [("s21u-session-2026-09-07w.md", "cell 4"),
+                                ("pixel-session-2026-09-07v.md", "cell 2")], now_secs),
+         [])
+    case("a token is not resolved by the other phone's file of the same date",
+         check(two_phones, "", [("s21u-session-2026-09-07v.md", "cell 2")], now_secs),
+         ["VERIFIED without a cell: OR-7"])
+    case("a token with no device word of its own keeps the one before it",
+         check(HEADER + row("OR-7", "2026-09-06", "dictation", "86.8.9 7f89a4bce", "TRAIN 7",
+                            "S21U 0907w 0907v", "VERIFIED 2026-09-07"),
+               "", [("pixel-session-2026-09-07v.md", "cell 2")], now_secs),
+         ["VERIFIED without a cell: OR-7"])
+    case("a token before any device word resolves anywhere",
+         check(HEADER + row("OR-7", "2026-09-06", "dictation", "86.8.9 7f89a4bce", "TRAIN 7",
+                            "0907v then S21U 0907w", "VERIFIED 2026-09-07"),
+               "", [("pixel-session-2026-09-07v.md", "cell 2")], now_secs),
          [])
 
     # 5. a token of January after a December report belongs to the following year

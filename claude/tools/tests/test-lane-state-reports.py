@@ -61,6 +61,7 @@ def render(tmp, ledger_text, landings_text="", session_text="", reports_key=True
         "project_repo": "",
         "lanes_glob": os.path.join(lanes, "*.md"),
         "sessions_glob": os.path.join(lanes, "*-session-*.md"),
+        "devices": ["pixel", "s21u"],
         "briefs_glob": os.path.join(tmp, "briefs", "*.md"),
     }
     if reports_key:
@@ -217,6 +218,18 @@ def main():
         case("a renderer with no checker beside it says so in one line", len(lines), 1)
         case("and names the reason",
              lines[0].startswith("reports-check unavailable: "), True)
+        case("and the path in it is not doubled", "//" in lines[0], False)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # 11. the devices key reaches the checker: the session on disk is an s21u one,
+        # so a validation that says Pixel has no cell of its own
+        ledger = HEADER + row("OR-3", fresh, "merchant", "F33.13 ae1e40249", "TRAIN 1",
+                              "Pixel 0906e cell 2", "VERIFIED %s" % fresh)
+        case("the device words of the config narrow the token in the sheet",
+             render(tmp, ledger),
+             ["no open owner report",
+              "VERIFIED in the last 48 h: 1",
+              "check: VERIFIED without a cell: OR-3"])
 
     print("\n%d cases, %d failed" % (case.count, len(FAILURES)))
     return 1 if FAILURES else 0
