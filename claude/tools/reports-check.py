@@ -9,26 +9,33 @@ disagree. Three flags, and nothing else:
   OPEN with a landing row               the row says nobody shipped it and a landing row
                                         names its lane or its commit.
   VERIFIED without a cell               the row claims someone saw it work and no session
-                                        cell backs it.
+                                        file backs it.
   LANDED over 24 h without a bench cell  the fix has been on the main branch for a day
                                         and no session has measured it yet.
 
-A landing row is a line of the landings file that starts with `YYYY-MM-DD HH:MM`, carries
-either the word LANDED or the phrase `train <n>` (both case-insensitive, since a train
-row often names the train and not the word), and names one of the row's tokens. A token
-is a word of the lane-and-commit cell that is at least three characters long and carries
-a digit, so a lane id (F33.13, 86.8.11b, 7.1) and a commit are tokens and prose is not;
-it is matched with dots and alphanumerics as boundaries, so 7.1 does not match 86.7.1 and
-90.8 does not match 90.8b. Keep the lane-and-commit cell to lane ids and commits: a
-figure written there (an amount, a train number) would be read as a token.
+A landing row is a line of the landings file that starts with `YYYY-MM-DD HH:MM`, whose
+first word after the stamp is neither CORRECTION nor REVIEW, whose text carries either
+the word LANDED in capitals or the phrase `main <sha> to <sha>` (seven hex digits or
+more each), and which names one of the row's tokens. Nothing else counts: a build row
+that states a train and its tip says a train was built, not that the main branch moved,
+and a correction or a review narrative that quotes a commit is neither. A token is a word
+of the lane-and-commit cell that is at least three characters long and carries a digit, so
+a lane id (F33.13, 86.8.11b, 7.1) and a commit are tokens and prose is not; it is matched
+with dots and alphanumerics as boundaries, so 7.1 does not match 86.7.1 and 90.8 does not
+match 90.8b. Keep the lane-and-commit cell to lane ids and commits: a figure written
+there (an amount, a train number) would be read as a token.
 
-A row has a session cell when either a file under the lanes folder names the row id as a
+The cells live in the session files and nowhere else, which is the glob `sessions_glob`
+(`lanes/*-session-*.md`). A lane report that quotes a row id is not evidence that anyone
+ran it, and reading a whole folder let one such report silence two of the three flags for
+every row at once. A row has a cell when either a session file names the row id as a
 whole word (punctuation of the id included, so OR-1 is never read inside OR-10), or the
-validation cell carries a session token that resolves to such a file. A session token is
-`MMDD` followed by one or two lowercase letters (0906e, 0907bb); it resolves when a file
-under the lanes folder ends in `<year>-MM-DD<letters>.md`, the year taken from the row's
-reported date. The second road exists because the sessions written before a ledger like
-this one cite no row id and never will.
+validation cell carries a session token that resolves to one. A session token is `MMDD`
+plus one or two lowercase letters (0906e, 0907bb); it resolves against a session file
+whose name ends in `<year>-MM-DD<letters>.md`, the year taken from the row's reported date
+and then the year after it, so a token of January under a December report still resolves.
+When the validation cell names a device (pixel, s21u) the token resolves only against
+files whose name starts with that word.
 
 The status cell of a VERIFIED or OWNER-CLOSED row carries the date the evidence was taken
 (`VERIFIED 2026-09-06 (0906e cell 2)`), and that date, not the reported one, is what the
@@ -40,12 +47,13 @@ this runs inside the state sheet, which some setups print at every compaction re
 
 Paths come from the lane-state config (`--config`, then CLAUDE_LANE_STATE_CONFIG, then
 `~/.claude/lane-state.json`) with the keys `reports_file`, `landings_file` and
-`lanes_glob`; what a key does not set falls back to a path beside the config file itself.
+`sessions_glob`; what a key does not set falls back to a path beside the config file.
 
     python reports-check.py                 flags to stderr, exit 1 if there are any
     python reports-check.py --lines         the state sheet lines to stdout, exit 0
 """
 import argparse
+import glob
 import json
 import os
 import re
@@ -56,17 +64,20 @@ from datetime import datetime
 HOME_CLAUDE = os.path.join(os.path.expanduser("~"), ".claude")
 DEFAULT_CONFIG = os.path.join(HOME_CLAUDE, "lane-state.json")
 
-STAMP_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}) ")
-LANDING_MARK_RE = re.compile(r"\bLANDED\b|\btrain\s+\d+\b", re.IGNORECASE)
+STAMP_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\s+(\S*)")
+NOT_A_LANDING = ("CORRECTION", "REVIEW")
+LANDED_WORD_RE = re.compile(r"\bLANDED\b")  # capitals only: prose says landed, rows say LANDED
+MAIN_MOVE_RE = re.compile(r"\bmain\s+[0-9a-fA-F]{7,}\s+to\s+[0-9a-fA-F]{7,}\b", re.IGNORECASE)
 SEPARATOR_RE = re.compile(r":?-{2,}:?$")
 TOKEN_RE = re.compile(r"[0-9A-Za-z][0-9A-Za-z.]*")
 DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})(?: (\d{2}:\d{2}))?")
 YEAR_RE = re.compile(r"(\d{4})-\d{2}-\d{2}")
 SESSION_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])(\d{2})(\d{2})([a-z]{1,2})(?![0-9A-Za-z])")
 
+DEVICES = ("pixel", "s21u")
 LANDED_GRACE_SECS = 24 * 3600
 VERIFIED_WINDOW_SECS = 48 * 3600
-LANE_FILE_BYTES = 256 * 1024  # a lane report is prose; this is a guard, not a budget
+SESSION_FILE_BYTES = 256 * 1024  # a session report is prose; this is a guard, not a budget
 
 COLUMNS = 7
 ID, REPORTED, WORDS, LANE, LANDED, VALIDATION, STATUS = range(COLUMNS)
@@ -81,7 +92,7 @@ def defaults_for(base):
     return {
         "reports_file": os.path.join(base, "owner-reports.md"),
         "landings_file": os.path.join(base, "landings.md"),
-        "lanes_glob": os.path.join(base, "lanes", "*.md"),
+        "sessions_glob": os.path.join(base, "lanes", "*-session-*.md"),
     }
 
 
@@ -150,21 +161,33 @@ def lane_tokens(cell):
     return tokens
 
 
-def landing_rows(text):
-    """(epoch, stamp, line) per landing row of the landings file, oldest first.
+def is_landing_line(line):
+    """A landing row says main moved: LANDED in capitals, or the main move spelled out.
 
-    A landing row is timestamp-led and says either LANDED or `train <n>`. The second
-    shape is not a courtesy: a board whose train rows carry the train number and no
-    LANDED reads as a board where nothing has landed since the day the wording changed.
+    A build row that names a train and its tip says a train exists, not that it reached
+    main; a CORRECTION or a REVIEW line quotes commits by the dozen and lands nothing.
+    Reading those as landings is how a ledger answers "it is in" about work that is not.
     """
+    match = STAMP_RE.match(line)
+    if not match:
+        return None
+    if match.group(2).strip(".,:;()").upper() in NOT_A_LANDING:
+        return None
+    if not (LANDED_WORD_RE.search(line) or MAIN_MOVE_RE.search(line)):
+        return None
+    return match.group(1)
+
+
+def landing_rows(text):
+    """(epoch, stamp, line) per landing row of the landings file, oldest first."""
     rows = []
     for line in (text or "").splitlines():
-        match = STAMP_RE.match(line)
-        if not match or not LANDING_MARK_RE.search(line):
+        found = is_landing_line(line)
+        if not found:
             continue
-        when = epoch_of(match.group(1))
+        when = epoch_of(found)
         if when is not None:
-            rows.append((when, match.group(1), line))
+            rows.append((when, found, line))
     rows.sort(key=lambda row: row[0])
     return rows
 
@@ -183,26 +206,25 @@ def newest_landing(tokens, rows):
     return None
 
 
-def as_pairs(lane_files):
-    """(name, text) per lane file. A bare string is a text with no name, for the callers
-    that only exercise the row id road."""
+def as_pairs(session_files):
+    """(name, text) per session file. A bare string is a text with no name, for the
+    callers that only exercise the row id road."""
     pairs = []
-    for item in lane_files or []:
+    for item in session_files or []:
         if isinstance(item, (tuple, list)) and len(item) == 2:
-            pairs.append((str(item[0]), item[1] or ""))
+            pairs.append((os.path.basename(str(item[0])), item[1] or ""))
         else:
             pairs.append(("", item or ""))
     return pairs
 
 
-def ids_with_cells(row_ids, lane_texts):
-    """The row ids named as a whole word by at least one lane file.
+def ids_with_cells(row_ids, texts):
+    """The row ids named as a whole word by at least one session file.
 
-    One alternation over the whole folder instead of one search per row: this runs
-    inside the state sheet, the lanes folder is the largest thing the sheet reads, and
-    a pass per row made the render several seconds slower than the rest of it together.
-    The boundary is alphanumeric only, so the hyphen of OR-1 is part of the word and
-    OR-1 never matches inside OR-10.
+    One alternation over the corpus instead of one search per row: this runs inside the
+    state sheet, and a pass per row made the render several seconds slower than the rest
+    of it together. The boundary is alphanumeric only, so the hyphen of OR-1 is part of
+    the word and OR-1 never matches inside OR-10.
     """
     ids = [row_id for row_id in dict.fromkeys(row_ids) if row_id]
     if not ids:
@@ -210,22 +232,29 @@ def ids_with_cells(row_ids, lane_texts):
     pattern = re.compile(r"(?<![0-9A-Za-z])(%s)(?![0-9A-Za-z])"
                          % "|".join(re.escape(row_id) for row_id in ids))
     found = set()
-    for text in lane_texts:
+    for text in texts:
         found.update(pattern.findall(text or ""))
         if len(found) == len(ids):
             break
     return found
 
 
-def token_resolves(reported, validation, lane_names):
-    """True when a session token of the validation cell names a file under the lanes folder."""
+def token_resolves(reported, validation, names):
+    """True when a session token of the validation cell names a file of the corpus."""
     year = YEAR_RE.search(reported or "")
     if not year:
         return False
+    years = (int(year.group(1)), int(year.group(1)) + 1)
+    lowered = [name.lower() for name in names if name]
+    devices = [device for device in DEVICES if device in (validation or "").lower()]
+    if devices:
+        lowered = [name for name in lowered
+                   if any(name.startswith(device) for device in devices)]
     for month, day, letters in SESSION_TOKEN_RE.findall(validation or ""):
-        suffix = "%s-%s-%s%s.md" % (year.group(1), month, day, letters)
-        if any(name.lower().endswith(suffix) for name in lane_names):
-            return True
+        for candidate in years:
+            suffix = "%d-%s-%s%s.md" % (candidate, month, day, letters)
+            if any(name.endswith(suffix) for name in lowered):
+                return True
     return False
 
 
@@ -233,11 +262,11 @@ def status_is(cells, word):
     return cells[STATUS].upper().startswith(word)
 
 
-def check(ledger_text, landings_text, lane_files, now=None):
+def check(ledger_text, landings_text, session_files, now=None):
     """The flag lines, in the order the ledger writes its rows. Never raises."""
     now = time.time() if now is None else now
     landings = landing_rows(landings_text)
-    pairs = as_pairs(lane_files)
+    pairs = as_pairs(session_files)
     names = [name for name, _ in pairs]
     rows = ledger_rows(ledger_text)
     named = ids_with_cells([cells[ID] for _, cells in rows if cells],
@@ -264,9 +293,9 @@ def check(ledger_text, landings_text, lane_files, now=None):
 def verified_recently(ledger_text, now=None):
     """How many VERIFIED rows carry a status date inside the last 48 hours.
 
-    The date read is the one in the status cell, which is when the evidence was taken;
-    the reported date is when the owner spoke, and a report of last week verified this
-    morning belongs in this count.
+    The date read is the one in the status cell, which is when the phone evidence was
+    taken; the reported date is when the owner spoke, and a report of last week verified
+    this morning belongs in this count.
     """
     now = time.time() if now is None else now
     count = 0
@@ -284,26 +313,21 @@ def read_text(path):
         return handle.read()
 
 
-def lane_texts_of(folder):
-    """(name, text) of every file directly under the lanes folder, unreadable ones skipped."""
+def session_files_of(pattern):
+    """(name, text) of every bench session file the glob names, unreadable ones skipped."""
     files = []
-    try:
-        names = sorted(os.listdir(folder))
-    except OSError:
-        return files
-    for name in names:
-        path = os.path.join(folder, name)
+    for path in sorted(glob.glob(pattern or "")):
         if not os.path.isfile(path):
             continue
         try:
             with open(path, encoding="utf-8", errors="replace") as handle:
-                files.append((name, handle.read(LANE_FILE_BYTES)))
+                files.append((os.path.basename(path), handle.read(SESSION_FILE_BYTES)))
         except OSError:
             continue
     return files
 
 
-def flags_for(ledger_path, landings_path, lanes_dir, now=None):
+def flags_for(ledger_path, landings_path, sessions_glob, now=None):
     """The flags of the files on disk. A source that is not there is a flag, not a crash."""
     try:
         ledger_text = read_text(ledger_path)
@@ -313,7 +337,7 @@ def flags_for(ledger_path, landings_path, lanes_dir, now=None):
         landings_text = read_text(landings_path)
     except OSError:
         return ["no landings file at %s" % posix(landings_path)]
-    return check(ledger_text, landings_text, lane_texts_of(lanes_dir), now)
+    return check(ledger_text, landings_text, session_files_of(sessions_glob), now)
 
 
 def main(argv=None):
@@ -323,17 +347,15 @@ def main(argv=None):
                              "~/.claude/lane-state.json")
     parser.add_argument("--ledger", default=None)
     parser.add_argument("--landings", default=None)
-    parser.add_argument("--lanes-dir", default=None)
+    parser.add_argument("--sessions-glob", default=None)
     parser.add_argument("--lines", action="store_true",
                         help="print the state sheet lines to stdout and exit 0")
     args = parser.parse_args(argv)
 
     config = load_config(config_file(args.config))
-    ledger = args.ledger or config["reports_file"]
-    landings = args.landings or config["landings_file"]
-    lanes_dir = args.lanes_dir or os.path.dirname(config["lanes_glob"])
-
-    flags = flags_for(ledger, landings, lanes_dir)
+    flags = flags_for(args.ledger or config["reports_file"],
+                      args.landings or config["landings_file"],
+                      args.sessions_glob or config["sessions_glob"])
     if args.lines:
         for flag in flags:
             print("check: " + flag)

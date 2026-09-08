@@ -21,7 +21,8 @@ Keys: fixed_lines (list of lines printed first), gates_dirs (list of folders hol
 gate exit files, empty means no gate is scanned), landings_file, rulings_file,
 project_repo (the repository whose worktrees are listed, empty means none),
 lanes_glob, briefs_glob, reports_file (the owner reports ledger rendered by the
-section below, checked by reports-check.py beside this file).
+section below, checked by reports-check.py beside this file), sessions_glob (the
+session files that count as evidence for that ledger).
 
 Env seams, each of which wins over the default and is what the recovery hook wires:
 CLAUDE_LANE_STATE_CONFIG (the config file), CLAUDE_LANE_STATE_SHEET (the sheet written
@@ -59,15 +60,11 @@ SUBJECT_CLIP = 90
 FIRST_LINE_CLIP = 100
 REPORTS_CLIP = 320
 REPORT_WORDS_CLIP = 120
-REPORT_COLUMNS = 7
-VERIFIED_WINDOW_SECS = 48 * 3600
 
 PHASE_RE = re.compile(r"^PHASE_(?P<name>.+?)_EXIT=(?P<code>-?\d+)(?:\s+secs=(?P<secs>\d+))?\s*$")
 LANDING_ROW_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2} ")
 # A register row: the time is xx:xx when it is not on record, so both halves take x.
 RULING_ROW_RE = re.compile(r"^- \d{4}-\d{2}-\d{2} [0-9x]{2}:[0-9x]{2} \[")
-REPORT_SEPARATOR_RE = re.compile(r":?-{2,}:?$")
-REPORT_DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})(?: (\d{2}:\d{2}))?")
 
 
 def defaults_for(base):
@@ -78,6 +75,7 @@ def defaults_for(base):
         "landings_file": os.path.join(base, "landings.md"),
         "rulings_file": os.path.join(base, "rulings.md"),
         "reports_file": os.path.join(base, "owner-reports.md"),
+        "sessions_glob": os.path.join(base, "lanes", "*-session-*.md"),
         "project_repo": "",
         "lanes_glob": os.path.join(base, "lanes", "*.md"),
         "briefs_glob": os.path.join(base, "briefs", "*.md"),
@@ -393,9 +391,10 @@ def recent_files(specs, hours=RECENT_HOURS, now=None):
 def load_reports_check():
     """The reports-check module beside this file, or None and the reason it did not load.
 
-    It is imported, not run as a subprocess: the sheet is rendered on every compaction
-    recovery and a process start per render is a cost with no return. A checker that is
-    not there takes the flag lines away and nothing else, and says so on its own line.
+    It is imported by path, because the file name carries a hyphen, and imported rather
+    than run as a subprocess: the sheet is rendered on every compaction recovery and a
+    process start per render is a cost with no return. It owns the ledger parser, the
+    count and the flags; this file keeps none of its own, so the two can never drift.
     """
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports-check.py")
     try:
@@ -407,36 +406,10 @@ def load_reports_check():
         return None, (str(error).strip() or error.__class__.__name__)
 
 
-def report_rows(text):
-    """The report rows of the ledger, cells stripped. Header and separator are not rows.
-
-    A row that is not seven cells is kept as it is: the renderer skips it and the checker
-    is the one that names it, so the two never disagree about what a row is.
-    """
-    rows = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("|"):
-            continue
-        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-        if cells and all(REPORT_SEPARATOR_RE.match(cell) for cell in cells):
-            continue
-        if cells and cells[0].lower() == "id":
-            continue
-        rows.append(cells)
-    return rows
-
-
-def cell_epoch(cell):
-    """The epoch of the first date in a cell, `YYYY-MM-DD` with an optional `HH:MM`."""
-    match = REPORT_DATE_RE.search(cell)
-    if not match:
-        return None
-    try:
-        return datetime.strptime(match.group(1) + " " + (match.group(2) or "00:00"),
-                                 "%Y-%m-%d %H:%M").timestamp()
-    except ValueError:
-        return None
+def reports_heading(config):
+    """The heading names the file the config points at, not one board's file name."""
+    name = os.path.basename(config.get("reports_file") or "")
+    return "## Owner reports not VERIFIED (%s)" % (name or "no reports file")
 
 
 def owner_reports(config, now=None):
@@ -444,7 +417,8 @@ def owner_reports(config, now=None):
 
     This is the section that answers "where does my report stand" after a compaction, so
     it fails loudly and never raises: no key and a file that is not there give the same
-    single line, and a checker that cannot be loaded gives one line naming why.
+    single line, and a checker that cannot be loaded gives one line naming why, rather
+    than half a section rendered by a second parser that nobody keeps in step.
     """
     path = config.get("reports_file")
     if not path:
@@ -455,49 +429,42 @@ def owner_reports(config, now=None):
     except OSError:
         return ["no reports file configured"]
 
-    rows = report_rows(text)
+    module, reason = load_reports_check()
+    if module is None:
+        return ["reports-check unavailable: " + posix(reason)]
+
+    rows = [cells for _, cells in module.ledger_rows(text) if cells]
     if not rows:
         return []
 
-    stamp = time.time() if now is None else now
     lines = []
-    verified = 0
     for cells in rows:
-        if len(cells) != REPORT_COLUMNS:
-            continue
-        status = cells[6]
+        status = cells[module.STATUS]
         upper = status.upper()
         if upper.startswith("OPEN") or upper.startswith("LANDED"):
             lines.append(clip_text(" | ".join([
-                cells[0], status, clip_text(cells[2], REPORT_WORDS_CLIP),
-                cells[3], cells[4], cells[5]]), REPORTS_CLIP))
-        elif upper.startswith("VERIFIED"):
-            # the date of the status cell, which is when the evidence was taken, not the
-            # reported date, which is when the owner spoke
-            when = cell_epoch(status)
-            if when is not None and when >= stamp - VERIFIED_WINDOW_SECS:
-                verified += 1
+                cells[module.ID], status,
+                clip_text(cells[module.WORDS], REPORT_WORDS_CLIP),
+                cells[module.LANE], cells[module.LANDED], cells[module.VALIDATION],
+            ]), REPORTS_CLIP))
     if not lines:
         lines.append("no open owner report")
-    lines.append("VERIFIED in the last 48 h: %d" % verified)
+    lines.append("VERIFIED in the last 48 h: %d" % module.verified_recently(text, now))
 
-    module, reason = load_reports_check()
-    if module is None:
-        lines.append("check: reports-check.py not loaded: " + posix(reason))
-        return lines
     try:
         with open(config["landings_file"], encoding="utf-8", errors="replace") as handle:
             landings_text = handle.read()
     except (OSError, KeyError):
         landings_text = ""
     try:
-        lane_texts = module.lane_texts_of(os.path.dirname(config.get("lanes_glob") or ""))
-        for flag in module.check(text, landings_text, lane_texts, now):
+        sessions = module.session_files_of(config.get("sessions_glob") or "")
+        for flag in module.check(text, landings_text, sessions, now):
             lines.append("check: " + flag)
     except Exception as error:
         lines.append("check: reports-check failed: "
                      + posix(str(error).strip() or error.__class__.__name__))
     return lines
+
 
 # --- the sheet --------------------------------------------------------------------
 
@@ -547,7 +514,7 @@ def build_sections(config, now=None):
                 "owner rules)" % (RULINGS_ROWS, posix(config["rulings_file"])),
                 lambda: rulings_rows(config["rulings_file"]),
                 cuttable=False, empty="no rulings yet"),
-        section("## Owner reports not VERIFIED (ledger/owner-reports.md)",
+        section(reports_heading(config),
                 lambda: owner_reports(config, now),
                 cuttable=False, empty="no open owner report"),
         section("## Gates (last 24 h)",
