@@ -76,9 +76,10 @@ def put(tmp, name, text):
         handle.write(text)
 
 
-def shared_lines(first, last):
+def shared_lines(first, last, middle="line 15"):
     rows = ["line %d" % number for number in range(1, 31)]
     rows[0] = first
+    rows[14] = middle
     rows[29] = last
     return "\n".join(rows) + "\n"
 
@@ -163,7 +164,8 @@ def case_bad_base(tmp):
     assert done.returncode == 2, done.returncode
     assert out(done) == "", repr(out(done))
     assert err(done).count("\n") == 1, repr(err(done))
-    assert "no-such-ref" in err(done), repr(err(done))
+    assert err(done).startswith("train-overlap: cannot read --base no-such-ref in "), repr(err(done))
+    assert err(done).endswith(": unknown ref\n"), repr(err(done))
 
 
 def case_bad_repo(tmp):
@@ -196,11 +198,140 @@ def case_json(tmp):
     }, out(done)
 
 
+def build_fast_forward(tmp):
+    """A lane that landed by fast forward: each of its commits is a member of its own."""
+    git(tmp, "init", "-q")
+    put(tmp, "shared.txt", shared_lines("line 1", "line 30"))
+    put(tmp, "a.txt", "a base\n")
+    put(tmp, "b.txt", "b base\n")
+    git(tmp, "add", "-A")
+    git(tmp, "commit", "-q", "-m", "base")
+    base = git(tmp, "rev-parse", "HEAD")
+
+    put(tmp, "shared.txt", shared_lines("line 1 from first", "line 30"))
+    put(tmp, "a.txt", "a lane\n")
+    git(tmp, "add", "-A")
+    git(tmp, "commit", "-q", "-m", "first")
+    first = git(tmp, "rev-parse", "--short", "HEAD")
+
+    put(tmp, "shared.txt", shared_lines("line 1 from first", "line 30 from second"))
+    put(tmp, "b.txt", "b lane\n")
+    git(tmp, "add", "-A")
+    git(tmp, "commit", "-q", "-m", "second")
+    second = git(tmp, "rev-parse", "--short", "HEAD")
+    return base, first, second
+
+
+def case_non_merge_members(tmp):
+    """A fast-forward lane is not one member; the header has to say so."""
+    base, first, second = build_fast_forward(tmp)
+    done = run(tmp, ["--base", base])
+    assert done.returncode == 0, err(done)
+    expected = (
+        "files: 3 members: 2 shared: 1 non-merge members: 2\n"
+        "shared.txt  <- %s second, %s first\n"
+        "\n"
+        "%s x %s: 1 files\n" % (second, first, second, first)
+    )
+    assert out(done) == expected, repr(out(done))
+
+
+def case_rename_across_members(tmp):
+    """One member edits a file, another renames it: they still meet on the old path."""
+    git(tmp, "init", "-q")
+    put(tmp, "old.txt", shared_lines("line 1", "line 30"))
+    git(tmp, "add", "-A")
+    git(tmp, "commit", "-q", "-m", "base")
+    base = git(tmp, "rev-parse", "HEAD")
+
+    git(tmp, "checkout", "-q", "-b", "lane-a", base)
+    put(tmp, "old.txt", shared_lines("line 1 from a", "line 30"))
+    git(tmp, "add", "-A")
+    git(tmp, "commit", "-q", "-m", "lane a work")
+
+    git(tmp, "checkout", "-q", "-b", "lane-b", base)
+    git(tmp, "mv", "old.txt", "new.txt")
+    git(tmp, "commit", "-q", "-m", "lane b work")
+
+    git(tmp, "checkout", "-q", "-b", "train", base)
+    git(tmp, "merge", "-q", "--no-ff", "-m", "member a", "lane-a")
+    merge_a = git(tmp, "rev-parse", "--short", "HEAD")
+    git(tmp, "merge", "-q", "--no-ff", "-m", "member b", "lane-b")
+    merge_b = git(tmp, "rev-parse", "--short", "HEAD")
+
+    done = run(tmp, ["--base", base])
+    assert done.returncode == 0, err(done)
+    expected = (
+        "files: 2 members: 2 shared: 1\n"
+        "old.txt  <- %s member b, %s member a\n"
+        "\n"
+        "%s x %s: 1 files\n" % (merge_b, merge_a, merge_b, merge_a)
+    )
+    assert out(done) == expected, repr(out(done))
+
+
+def case_three_members(tmp):
+    """A path three members touched carries three labels, newest first."""
+    git(tmp, "init", "-q")
+    put(tmp, "trio.txt", shared_lines("line 1", "line 30"))
+    for name in ("a.txt", "b.txt", "c.txt"):
+        put(tmp, name, name + " base\n")
+    git(tmp, "add", "-A")
+    git(tmp, "commit", "-q", "-m", "base")
+    base = git(tmp, "rev-parse", "HEAD")
+
+    lanes = (
+        ("a", shared_lines("line 1 from a", "line 30")),
+        ("b", shared_lines("line 1", "line 30", middle="line 15 from b")),
+        ("c", shared_lines("line 1", "line 30 from c")),
+    )
+    for name, trio in lanes:
+        git(tmp, "checkout", "-q", "-b", "lane-" + name, base)
+        put(tmp, "trio.txt", trio)
+        put(tmp, name + ".txt", name + " lane\n")
+        git(tmp, "add", "-A")
+        git(tmp, "commit", "-q", "-m", "lane " + name + " work")
+
+    git(tmp, "checkout", "-q", "-b", "train", base)
+    merges = []
+    for name, _ in lanes:
+        git(tmp, "merge", "-q", "--no-ff", "-m", "member " + name, "lane-" + name)
+        merges.append(git(tmp, "rev-parse", "--short", "HEAD"))
+    merge_a, merge_b, merge_c = merges
+
+    done = run(tmp, ["--base", base])
+    assert done.returncode == 0, err(done)
+    expected = (
+        "files: 4 members: 3 shared: 1\n"
+        "trio.txt  <- %s member c, %s member b, %s member a\n"
+        "\n"
+        "%s x %s: 1 files\n"
+        "%s x %s: 1 files\n"
+        "%s x %s: 1 files\n"
+        % (merge_c, merge_b, merge_a, merge_c, merge_b, merge_c, merge_a, merge_b, merge_a)
+    )
+    assert out(done) == expected, repr(out(done))
+
+
+def case_bad_tip(tmp):
+    base, _, _ = build(tmp)
+    done = run(tmp, ["--base", base, "--tip", "no-such-tip"])
+    assert done.returncode == 2, done.returncode
+    assert out(done) == "", repr(out(done))
+    assert err(done).count("\n") == 1, repr(err(done))
+    assert err(done).startswith("train-overlap: cannot read --tip no-such-tip in "), repr(err(done))
+    assert err(done).endswith(": unknown ref\n"), repr(err(done))
+
+
 CASES = [
     case_table,
     case_one_member,
+    case_non_merge_members,
+    case_rename_across_members,
+    case_three_members,
     case_repo_argument,
     case_bad_base,
+    case_bad_tip,
     case_bad_repo,
     case_json,
 ]
