@@ -14,11 +14,17 @@ member's label is the short sha of C plus the first 60 characters of its subject
 
     python train-overlap.py --base <sha> [--repo <path>] [--tip <ref>] [--format table|json]
 
+A branch merged with a merge commit is one member and brings its whole change; a branch
+landed by fast forward is one member per commit it carried, which is a different reading
+of the same list, so the header ends with `non-merge members: <j>` whenever the walk
+found j first-parent commits with a single parent, and says nothing when there are none.
+
 Table output is a header line `files: <n> members: <m> shared: <k>`, then one line per
 shared path sorted by path, then a blank line and one line per member pair that shares
 at least one file, most shared files first. Files only one member touched are not
-printed: they belong to that member's own review. JSON output carries the same data,
-the shared files only.
+printed: they belong to that member's own review. Renames are not detected, so a member
+that renames a file another member edited still shows the old path as shared. JSON
+output carries the same data, the shared files only.
 
 Read-only. It runs `git log` and `git diff` and writes nothing. Exit 0 whenever git
 answers, including a train of one member, and exit 2 with one line on stderr when the
@@ -42,7 +48,12 @@ class GitError(Exception):
     """Git could not answer. Carries the single line the caller prints on stderr."""
 
 
-def git(repo, *args):
+def run_git(repo, *args):
+    """Runs git and returns (exit code, stdout, stderr as one line).
+
+    Only git failing to run at all raises here. A non-zero exit is data, because a
+    caller that expects one, such as the ref check, has to tell it from a real failure.
+    """
     command = ["git", "-C", repo, "-c", "core.quotepath=false"] + list(args)
     try:
         done = subprocess.run(command, capture_output=True, timeout=GIT_TIMEOUT)
@@ -50,10 +61,18 @@ def git(repo, *args):
         raise GitError("git %s timed out after %d s" % (args[0], GIT_TIMEOUT))
     except OSError as problem:
         raise GitError("git cannot be run: %s" % problem)
-    if done.returncode != 0:
-        detail = done.stderr.decode("utf-8", "replace").strip().replace("\n", " ")
-        raise GitError(detail or ("git %s exited %d" % (args[0], done.returncode)))
-    return done.stdout.decode("utf-8", "replace").replace("\r\n", "\n")
+    return (
+        done.returncode,
+        done.stdout.decode("utf-8", "replace").replace("\r\n", "\n"),
+        done.stderr.decode("utf-8", "replace").strip().replace("\n", " "),
+    )
+
+
+def git(repo, *args):
+    code, output, detail = run_git(repo, *args)
+    if code != 0:
+        raise GitError(detail or ("git %s exited %d" % (args[0], code)))
+    return output
 
 
 def check_repo(repo):
@@ -66,10 +85,11 @@ def check_repo(repo):
 
 
 def check_ref(repo, flag, ref):
-    try:
-        git(repo, "rev-parse", "--verify", "--quiet", ref + "^{commit}")
-    except GitError as problem:
-        raise GitError("cannot read %s %s in %s: %s" % (flag, ref, repo, problem or "unknown ref"))
+    # --verify --quiet exits non-zero and says nothing when the ref does not resolve,
+    # so an empty stderr here is the unknown ref itself, not a silent failure.
+    code, _, detail = run_git(repo, "rev-parse", "--verify", "--quiet", ref + "^{commit}")
+    if code != 0:
+        raise GitError("cannot read %s %s in %s: %s" % (flag, ref, repo, detail or "unknown ref"))
 
 
 def read_members(repo, base, tip):
@@ -88,13 +108,16 @@ def read_members(repo, base, tip):
                 "sha": short,
                 "parent": first_parent,
                 "subject": subject[:SUBJECT_CLIP],
+                "merge": len(parents.split()) > 1,
             }
         )
     return members
 
 
 def read_files(repo, member):
-    diff = git(repo, "diff", "--name-only", member["parent"], member["full"])
+    # --no-renames on purpose: a rename shows both the old and the new path, so a member
+    # that renames a file another member edited still meets it on the old path.
+    diff = git(repo, "diff", "--no-renames", "--name-only", member["parent"], member["full"])
     return [line for line in diff.split("\n") if line.strip()]
 
 
@@ -124,7 +147,11 @@ def label(members, sha):
 
 
 def render_table(members, touched, shared, pairs):
-    lines = ["files: %d members: %d shared: %d" % (len(touched), len(members), len(shared))]
+    header = "files: %d members: %d shared: %d" % (len(touched), len(members), len(shared))
+    plain = sum(1 for member in members if not member["merge"])
+    if plain:
+        header += " non-merge members: %d" % plain
+    lines = [header]
     for path in sorted(shared):
         names = ", ".join(label(members, sha) for sha in shared[path])
         lines.append("%s  <- %s" % (path, names))
