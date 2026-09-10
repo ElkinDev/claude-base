@@ -67,6 +67,9 @@ LANDING_ROW_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2} ")
 # A register row: the time is xx:xx when it is not on record, so both halves take x.
 RULING_ROW_RE = re.compile(r"^- \d{4}-\d{2}-\d{2} [0-9x]{2}:[0-9x]{2} \[")
 
+STAMP_RE = re.compile(r"^\[(?P<h>\d{2}):(?P<m>\d{2}):(?P<s>\d{2})\]")
+LOCK_TAKEN_RE = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] LOCK taken")
+
 
 def defaults_for(base):
     """The defaults of a config living in `base`. Nothing here names one machine."""
@@ -181,6 +184,39 @@ def find_exit_files(dirs):
     return found
 
 
+def lock_hold_secs(exit_path):
+    """Wall seconds the run held the gradle mutex.
+
+    The gate runner stamps "LOCK taken" with [HH:MM:SS] but writes LOCK_RELEASED without a
+    stamp, so the close of the hold is taken from the last timestamped line before
+    LOCK_RELEASED. Returns None when the .log is missing or the pair is incomplete.
+    """
+    log_path = (exit_path[:-5] if exit_path.endswith(".exit") else exit_path) + ".log"
+    try:
+        with open(log_path, encoding="utf-8", errors="replace") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return None
+    taken = last = None
+    released = False
+    for line in lines:
+        match = STAMP_RE.match(line)
+        if match:
+            stamp = (int(match.group("h")) * 3600 + int(match.group("m")) * 60
+                     + int(match.group("s")))
+            if taken is None and LOCK_TAKEN_RE.match(line):
+                taken = stamp
+            if taken is not None:
+                last = stamp
+        elif line.startswith("LOCK_RELEASED"):
+            released = True
+            break
+    if taken is None or last is None or not released:
+        return None
+    hold = last - taken
+    return hold + 86400 if hold < 0 else hold  # the stamps carry no date, so midnight wraps
+
+
 def parse_exit_file(path):
     """The keys of an exit file, with the phases in the order the gate runner wrote them."""
     values = {}
@@ -221,16 +257,21 @@ def gate_row(lane, path, now):
         "moved": values.get("TIP_MOVED", "-") or "-",
         "failed": failed,
         "phases": len(phases),
-        "secs": sum(secs for _, _, secs in phases),
+        # The gate runner writes secs as the cumulative offset from the gate's launch
+        # (START is taken before the lock wait), so the run's figure is the last offset,
+        # never the sum of the per-phase lines.
+        "secs": max([secs for _, _, secs in phases], default=0),
+        "hold": lock_hold_secs(path),
     }
 
 
 def format_gate_line(row):
-    return "%s %s %s %s exit=%s lock=%s moved=%s %s phases=%d secs=%d" % (
+    return "%s %s %s %s exit=%s lock=%s moved=%s %s phases=%d secs=%d hold=%s" % (
         row["lane"], row["run"], row["hhmm"], row["tip7"], row["exit"],
         row["lock"], row["moved"],
         ("failed=" + row["failed"]) if row["failed"] else "ok",
         row["phases"], row["secs"],
+        "-" if row.get("hold") is None else row["hold"],
     )
 
 
