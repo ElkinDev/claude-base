@@ -13,7 +13,7 @@ Every line below is a law. Cite laws by their words in briefs; never paraphrase 
 
 - Flat model: Fable 5 runs only in the orchestrator pane; every implementation and every script runs in an Opus agent launched from it in the worktree concerned; the orchestrator reviews and merges; the worktree of a merged branch is removed in the same turn as the merge.
 - Every session is one of two things, orchestrator or worker; everything else is an agent.
-- Orchestrator: exactly one per train, Fable 5 at 200k, in the pane the owner watches, named `orchestrator` (the launcher passes `claude --name <role>`, so the name is in the transcript, the terminal title and the resume picker, and scripts select it by name, never by a pane number that the multiplexer renumbers); it launches agents, reviews their reports, merges and keeps the board; it never writes code, reads images or keeps long notes.
+- Orchestrator: exactly one per train, Fable 5 at 200k, in the pane the owner watches, named `orchestrator` (the launcher passes `claude --name <role>`, so the name is in the transcript, the terminal title and the resume picker, and scripts select it by name, never by a pane number that the multiplexer renumbers); it launches agents, reviews their reports, merges and keeps the board; it never writes code, reads images from disk or keeps long notes (an image the owner pastes into its pane is the owner's input).
 - Worker: an Opus 5 session that implements one brief in one worktree with no subagents and no orchestration; it exists only when the work must run on another account (for example `cc a`) or must outlive the orchestrator (a device bench longer than the orchestrator's day); it closes at landing.
 - Everything else is an agent launched by the orchestrator with the Agent tool (implementer, reviewer, general-purpose on Opus).
 - Forbidden: a session that exists to launch a single agent and take notes; a Fable context outside the orchestrator pane; a per-worktree notes file (the checkpoint is the agent's report plus the board line; findings worth keeping go to `docs/` in main before the worktree is removed).
@@ -129,7 +129,7 @@ Every line below is a law. Cite laws by their words in briefs; never paraphrase 
 ## Economy and context
 
 - The orchestrator verifies every load-bearing claim from machine-readable artifacts before it shapes a decision; lane reports are evidence, not truth.
-- The orchestrator never reads images, never opens a browser and never reads raw build output; a hook stores it and returns a digest.
+- The orchestrator never reads images from disk (an image the owner pastes into its pane is the owner's input and it looks at it), never opens a browser and never reads raw build output; a hook stores it and returns a digest.
 - The orchestrator's heartbeat sweeps disk truth, wakes lanes with facts (branch tip, dirty count, exit-file verdict) and never narrates no-ops.
 - Wake on terminal lines only, never on per-phase lines and never on a clock.
 - An idle watchdog runs whenever lanes are in flight, the owner is never the one who notices dead air, and lanes from a closed train are stopped so their rows cannot revive on stale monitors.
