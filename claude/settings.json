@@ -118,6 +118,15 @@
             "timeout": 20
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/inflight.py\"",
+            "timeout": 20
+          }
+        ]
       }
     ],
     "PreToolUse": [
