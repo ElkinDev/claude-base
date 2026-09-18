@@ -8,6 +8,10 @@ prints the seat block and the rulings block and nothing else, which is what a Se
 startup, resume, clear or fork wires; stdin is read there too, because the payload is what tells
 a subagent from the session that launched it.
 
+Both modes are gated on the board: a session whose folder is not under CLAUDE_BOARD_ROOT
+(and, when prefixes are configured, not under one of them) is handed nothing of the board,
+neither seat nor register nor sheet nor brief, because none of it describes its work.
+
 The block states facts and gives no orders. An instruction to re-read a file is paid for
 on every compaction and is acted on whether or not the summary already carries the answer,
 so the opening line names the checkpoint and the one condition that makes it worth opening.
@@ -93,6 +97,44 @@ def disk_truth_section(path):
     if len(section) > DISK_TRUTH_CAP:
         section = section[:DISK_TRUTH_CAP - len(DISK_TRUTH_MARKER)] + DISK_TRUTH_MARKER
     return section
+
+
+# The board: the folders whose sessions hold a chair, read the register and get the state sheet.
+# The seats, the register, the briefs and the sheet all describe one board, the one under this
+# root, so a session anywhere else is handed none of them: a seat opened in a personal folder for
+# personal work was handed the board's rulings and its resume brief and asked whether to carry the
+# board on. The root itself is on the board (the seats run there); under it, only the folders whose
+# name starts with one of the prefixes (a repository and its worktrees, the evidence, the kit),
+# never a sibling project; no prefixes configured means the root and everything under it.
+# CLAUDE_BOARD_ROOT and CLAUDE_BOARD_PREFIXES (a semicolon list) are the seam, and a launcher that
+# gates the same way reads the same two. No root at all means no board was ever declared, so the
+# gate is open and every folder is on the board, which is what a project without a board wants.
+BOARD_ROOT = ""
+BOARD_PREFIXES = ()
+
+
+def on_board(cwd):
+    """Whether the session folder belongs to the board, by its path alone.
+
+    Case-insensitive and slash-agnostic, because the payload carries the folder as the shell
+    typed it. A prefix is matched on the folder name directly under the root, so a worktree
+    two levels down (<root>/<prefix>-abc/app) is on the board and a sibling of the prefix is
+    not. An empty cwd is off the board: nothing is known about it, so nothing is printed for it.
+    """
+    root = (os.environ.get("CLAUDE_BOARD_ROOT") or BOARD_ROOT).replace("\\", "/").rstrip("/").lower()
+    if not root:
+        return True
+    raw = os.environ.get("CLAUDE_BOARD_PREFIXES")
+    prefixes = [p.strip().lower() for p in (raw.split(";") if raw else BOARD_PREFIXES) if p.strip()]
+    path = str(cwd or "").replace("\\", "/").rstrip("/").lower()
+    if not path:
+        return False
+    if path == root:
+        return True
+    if not path.startswith(root + "/"):
+        return False
+    rest = path[len(root) + 1:]
+    return not prefixes or any(rest.startswith(p) for p in prefixes)
 
 
 RULINGS_FILE = os.path.join(os.path.expanduser("~"), ".claude", "rulings.md")
@@ -344,14 +386,19 @@ def payload():
 
 def main():
     data = payload()
-    block = seat_block(data)
+    cwd = data.get("cwd") or os.getcwd()
+    # Off the board nothing of the board is printed: no seat, no rulings, no sheet, no brief.
+    # The checkpoint line is the session's own and stays.
+    board = on_board(cwd)
+    block = seat_block(data) if board else ""
     if "--rulings" in sys.argv[1:]:
+        if not board:
+            return 0
         text = rulings_block()
         if block:
             text = block + "\n\n" + text
         sys.stdout.buffer.write(text.encode("utf-8"))
         return 0
-    cwd = data.get("cwd") or os.getcwd()
     session_id = str(data.get("session_id") or "")
     transcript_path = str(data.get("transcript_path") or "")
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -362,24 +409,28 @@ def main():
         if section:
             out.append(section)
     else:
-        out = [f"[compaction recovery {stamp}] No checkpoint for this session, so the summary plus the facts below are what there is."]
+        tail_note = "so the summary plus the facts below are what there is." if board else "and this folder is off the board, so no board facts follow."
+        out = [f"[compaction recovery {stamp}] No checkpoint for this session, {tail_note}"]
     if block:
         out.insert(0, block)
-    out.append(rulings_block())
-    sheet = state_sheet()
-    if sheet:
-        out.append(sheet)
+    if board:
+        out.append(rulings_block())
+        sheet = state_sheet()
+        if sheet:
+            out.append(sheet)
     notes = os.path.join(cwd, "NOTES.md")
     if os.path.isfile(notes):
         out.append(f"NOTES.md ({notes}), first 40 lines:\n{head(notes, 40).rstrip()}")
-    else:
+    elif board:
         out.append(f"No NOTES.md in {cwd}, which is correct: an agent keeps no notes file; its checkpoint is its report (law of 2026-08-27).")
-    briefs = os.environ.get("CLAUDE_BRIEFS_DIR")
+    # The two variables are the launcher's, and a window that inherited them from a seated
+    # launch carries them into any folder, so both are gated on the board as well.
+    briefs = os.environ.get("CLAUDE_BRIEFS_DIR") if board else ""
     if briefs and os.path.isdir(briefs):
         files = sorted(glob.glob(os.path.join(briefs, "*.md")), key=os.path.getmtime)
         if files:
             out.append(f"Train brief: {files[-1]}")
-    landings = os.environ.get("CLAUDE_LANDINGS_FILE")
+    landings = os.environ.get("CLAUDE_LANDINGS_FILE") if board else ""
     if landings and os.path.isfile(landings):
         out.append(f"Last landings ({landings}):\n{tail(landings, 5).rstrip()}")
     text = "\n\n".join(out)
