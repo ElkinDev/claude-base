@@ -407,6 +407,7 @@ function Invoke-Step {
     $outFile = Join-Path $env:TEMP "ledger-$stampFile-$Name.out"
     $errFile = Join-Path $env:TEMP "ledger-$stampFile-$Name.err"
     $lines = @()
+    $killed = $false
     try {
         $proc = Start-Process -FilePath $python -ArgumentList $ArgLine `
             -NoNewWindow -PassThru `
@@ -418,12 +419,14 @@ function Invoke-Step {
         # whole ledger; a step without one waits as before.
         if ($TimeoutMs -gt 0) {
             if (-not $proc.WaitForExit($TimeoutMs)) {
-                try { $proc.Kill() } catch {}
+                try { $proc.Kill(); $proc.WaitForExit(5000) } catch {}
                 Write-Log ("$Name killed after " + $TimeoutMs + " ms")
-                return @{ Code = 124; Lines = @() }
+                $killed = $true
             }
         } else { $proc.WaitForExit() }
-        $code = $proc.ExitCode
+        # A killed step keeps code 124 and still hands over what it printed, so its partial
+        # output and any traceback reach the log and its temp files are removed below.
+        $code = if ($killed) { 124 } else { $proc.ExitCode }
     } catch {
         Write-Log ("$Name could not start python: " + $_.Exception.Message)
         return @{ Code = 1; Lines = @() }

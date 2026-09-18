@@ -280,7 +280,7 @@ def inflight_line(transcript_path):
     if done.returncode != 0:
         return ""
     line = done.stdout.decode("utf-8", "replace").strip().splitlines()
-    if not line or not line[0].startswith("agents in flight:"):
+    if not line or not line[0].startswith("agents in flight:") or line[0].startswith("agents in flight: 0"):
         return ""
     return "Live subagents of this session at the compaction, from its transcript (never from the summary): " + line[0]
 # The three variables the account launcher sets on every launch. None of them in the environment
