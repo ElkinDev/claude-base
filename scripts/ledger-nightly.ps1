@@ -47,6 +47,8 @@ $scriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ledgerPy   = Join-Path $scriptDir 'ledger-day.py'
 $probePy    = Join-Path $scriptDir 'usage-probe.py'
 $comparePy  = Join-Path $scriptDir 'ledger-compare.py'
+$trainPy    = Join-Path $scriptDir 'train-wait.py'
+$errorsPy   = Join-Path $scriptDir 'tool-errors.py'
 if ($env:CLAUDE_LEDGER_DIR) {
     $ledgerDir = $env:CLAUDE_LEDGER_DIR
 } else {
@@ -54,6 +56,7 @@ if ($env:CLAUDE_LEDGER_DIR) {
 }
 $metersLog  = Join-Path $ledgerDir 'meters-log.csv'
 $metersHead = 'time,account,session,weekly_all,scoped_meter,scoped_pct'
+$errorsLog  = Join-Path $ledgerDir 'tool-errors.log'
 
 if ($LogPath) {
     $log = $LogPath
@@ -459,6 +462,49 @@ if (Test-Path $comparePy) {
     Write-Log "compare | ledger-compare.py not found, skipped"
 }
 
+# 3a. the train rule's numbers: trains per day, lanes per train, union gate runs per lane landed and the
+# hours from a lane's last CLEAR review to its merge, over the last seven days, one row per ledger. Git and
+# file reads only, no build, seconds. A window with no train prints its zeros, which is itself the news.
+if (Test-Path $trainPy) {
+    $train = Invoke-Step -Name 'train-wait' -ArgLine ('"{0}" --row' -f $trainPy) -KeepOutput -TimeoutMs 120000
+    $trainRow = $train.Lines | Where-Object { $_ -match ' train-wait ' } | Select-Object -Last 1
+    if ($train.Code -eq 0 -and $trainRow) {
+        Write-Log "trains | $trainRow"
+    } else {
+        Write-Log "trains | no row, train-wait exit code $($train.Code)"
+    }
+} else {
+    Write-Log 'trains | train-wait.py not found, skipped'
+}
+
+# 3b. failed tool calls by signature: tool-errors.py reads the transcripts touched in the window (the two
+# largest, which are the seats; a subagent keeps its own) and prints the calls, the failed ones and the top
+# four signatures of the day, from the is_error results plus the known-failure rules. A defect class surfaces
+# here the same day instead of waiting for someone to read a pane. One line per session appended to the log.
+if (Test-Path $errorsPy) {
+    $txRoot = $ProjectsRoot
+    if (-not $txRoot) { $txRoot = Join-Path (Join-Path ([Environment]::GetFolderPath('UserProfile')) '.claude') 'projects' }
+    $txFiles = @(Get-ChildItem -Path $txRoot -Filter '*.jsonl' -File -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -ge $since } | Sort-Object Length -Descending | Select-Object -First 2)
+    if ($txFiles.Count -gt 0) {
+        foreach ($tx in $txFiles) {
+            $sid = $tx.BaseName.Substring(0, [Math]::Min(8, $tx.BaseName.Length))
+            $err = Invoke-Step -Name ('tool-errors-' + $sid) -ArgLine ('"{0}" --file "{1}" --row' -f $errorsPy, $tx.FullName) -KeepOutput -TimeoutMs 120000
+            $errRow = $err.Lines | Where-Object { $_ -match '^tool-errors ' } | Select-Object -Last 1
+            if ($err.Code -eq 0 -and $errRow) {
+                if (-not (Test-Path $errorsLog)) { New-Item -ItemType File -Path $errorsLog -Force | Out-Null }
+                Add-Content -Path $errorsLog -Value ('{0} {1} {2}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm'), $sid, $errRow) -Encoding utf8
+                Write-Log "tool-errors | $sid $errRow"
+            } else {
+                Write-Log "tool-errors | $sid no line, exit code $($err.Code)"
+            }
+        }
+    } else {
+        Write-Log 'tool-errors | no transcript touched in the window'
+    }
+} else {
+    Write-Log 'tool-errors | tool-errors.py not found, skipped'
+}
 # 4. retention, morning only, after the three steps
 if ($sweepDue) {
     Invoke-RetentionSweep
