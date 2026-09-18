@@ -1,0 +1,14 @@
+# Known-failure lines inside tool results. One rule per line: the producer, a tab, then the regex. A hit counts only when the
+# command that produced the result contains <producer> (a substring; `*` means any command), so a read of a
+# transcript, a report or this file that quotes an old failure never counts as a new event. `a!b` means the command
+# holds a and not b (a dry run that sets ROW_REGISTER is not a register row).
+# A register row refused on length by an older wrapper (it exits 1, and a compound command hides the exit code).
+row.sh	TOO LONG \d+ \(cut \d+\)
+# A register row cut by the wrapper: the tail was dropped, so the seat overshot the cap.
+row.sh!ROW_REGISTER	ROW ok text \d+/\d+ CUT \d+ chars
+# A register write that asserts on the length of the row instead of going through the wrapper.
+rulings.md	AssertionError: [4-6]\d\d\b
+# A lane brief refused by the launch checker of claude/hooks/guard-delegate.py (the Agent tool result).
+*	fails the launch check at tier \d
+# Build or run exit files are NOT rules here: whatever already carries them is the source, and a transcript read
+# of an old exit file would count as a new event.

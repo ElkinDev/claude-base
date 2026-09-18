@@ -10,6 +10,8 @@ project-template/scripts/hooks/** text eol=lf
 scripts/git-hooks/** text eol=lf
 scripts/sanitize-rules.txt text eol=lf
 scripts/sanitize-allow.txt text eol=lf
+# The failed-call rules: tab separated, read line by line by scripts/tool-errors.py.
+scripts/tool-errors.rules text eol=lf
 scripts/tests/fixtures/sanitize/** text eol=lf
 # The uiautomator dumps the frame tool is tested against, compared byte for byte.
 claude/tools/tests/fixtures/xmlframe/** text eol=lf
