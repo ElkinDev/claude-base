@@ -121,14 +121,14 @@ def on_board(cwd):
     two levels down (<root>/<prefix>-abc/app) is on the board and a sibling of the prefix is
     not. An empty cwd is off the board: nothing is known about it, so nothing is printed for it.
     """
+    path = str(cwd or "").replace("\\", "/").rstrip("/").lower()
+    if not path:
+        return False
     root = (os.environ.get("CLAUDE_BOARD_ROOT") or BOARD_ROOT).replace("\\", "/").rstrip("/").lower()
     if not root:
         return True
     raw = os.environ.get("CLAUDE_BOARD_PREFIXES")
     prefixes = [p.strip().lower() for p in (raw.split(";") if raw else BOARD_PREFIXES) if p.strip()]
-    path = str(cwd or "").replace("\\", "/").rstrip("/").lower()
-    if not path:
-        return False
     if path == root:
         return True
     if not path.startswith(root + "/"):
@@ -254,6 +254,35 @@ def state_sheet():
 
 SEATS = ("orchestrator", "analyst")
 BRIEFS_DIR = os.path.join(os.path.expanduser("~"), ".claude", "briefs")
+# The live-subagents reader (scripts/agents-in-flight.py of the kit, installed wherever the adopter keeps
+# its tools); CLAUDE_INFLIGHT_SCRIPT moves it. Absent, the line is simply not printed.
+INFLIGHT_SCRIPT = os.environ.get("CLAUDE_INFLIGHT_SCRIPT") or os.path.join(os.path.expanduser("~"), ".claude", "tools", "agents-in-flight.py")
+INFLIGHT_TIMEOUT = 8
+
+
+def inflight_line(transcript_path):
+    """The live subagents of the session being recovered, read from its own transcript.
+
+    A compaction summary paraphrases which agents are running, and a board's count of live agents
+    is of these. The reader is the same script the day is read with; a full read of a large
+    transcript takes well under a second. Nothing here is typed by the session, so it costs no
+    tokens beyond its own line.
+    """
+    if not transcript_path or not os.path.isfile(transcript_path) or not os.path.isfile(INFLIGHT_SCRIPT):
+        return ""
+    try:
+        done = subprocess.run(
+            [sys.executable, INFLIGHT_SCRIPT, "--transcript", transcript_path],
+            capture_output=True, timeout=INFLIGHT_TIMEOUT,
+        )
+    except Exception:
+        return ""
+    if done.returncode != 0:
+        return ""
+    line = done.stdout.decode("utf-8", "replace").strip().splitlines()
+    if not line or not line[0].startswith("agents in flight:"):
+        return ""
+    return "Live subagents of this session at the compaction, from its transcript (never from the summary): " + line[0]
 # The three variables the account launcher sets on every launch. None of them in the environment
 # means nothing launched this session: a bare restore after a logon, or a session started by hand.
 LAUNCHER_VARS = ("CLAUDE_ROLE", "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "CLAUDE_CODE_DISABLE_1M_CONTEXT")
@@ -413,6 +442,9 @@ def main():
         out = [f"[compaction recovery {stamp}] No checkpoint for this session, {tail_note}"]
     if block:
         out.insert(0, block)
+    live = inflight_line(transcript_path)
+    if live:
+        out.insert(1 if block else 0, live)
     if board:
         out.append(rulings_block())
         sheet = state_sheet()

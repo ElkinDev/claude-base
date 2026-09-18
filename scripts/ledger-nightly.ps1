@@ -402,15 +402,27 @@ $stampFile = $now.ToString('yyyyMMdd-HHmmss')
 # Runs one python script, logs whatever it printed, and hands back the exit
 # code and the standard output lines so a caller can keep them.
 function Invoke-Step {
-    param([string]$Name, [string]$ArgLine, [switch]$KeepOutput)
+    param([string]$Name, [string]$ArgLine, [switch]$KeepOutput, [int]$TimeoutMs = 0)
 
     $outFile = Join-Path $env:TEMP "ledger-$stampFile-$Name.out"
     $errFile = Join-Path $env:TEMP "ledger-$stampFile-$Name.err"
     $lines = @()
     try {
         $proc = Start-Process -FilePath $python -ArgumentList $ArgLine `
-            -NoNewWindow -Wait -PassThru `
+            -NoNewWindow -PassThru `
             -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+        # Reading the handle once caches it, or ExitCode is empty after WaitForExit() on a process
+        # started with -PassThru and no -Wait (PowerShell 5.1 quirk, verified 2026-09-18).
+        $null = $proc.Handle
+        # A step with a cap is killed at the cap and reported, so one slow reader never holds the
+        # whole ledger; a step without one waits as before.
+        if ($TimeoutMs -gt 0) {
+            if (-not $proc.WaitForExit($TimeoutMs)) {
+                try { $proc.Kill() } catch {}
+                Write-Log ("$Name killed after " + $TimeoutMs + " ms")
+                return @{ Code = 124; Lines = @() }
+            }
+        } else { $proc.WaitForExit() }
         $code = $proc.ExitCode
     } catch {
         Write-Log ("$Name could not start python: " + $_.Exception.Message)

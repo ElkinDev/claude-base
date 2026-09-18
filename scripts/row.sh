@@ -12,7 +12,7 @@
 # ~/.claude/rulings.md; the first is what a dry run on a temp file sets. The row is written by python in UTF-8
 # with LF, so accents survive and no CR enters the register. Every cut prints a line the failed-call detector
 # counts (scripts/tool-errors.rules), so a seat that keeps overshooting the cap shows up in the ledger.
-K=${1:?kind}; TXT=${2:?text}; PANE=${3:-orchestrator pane}
+K=${1:?kind}; TXT=${2-}; PANE=${3:-orchestrator pane}
 REG=${ROW_REGISTER:-${CLAUDE_RULINGS_FILE:-$HOME/.claude/rulings.md}}
 D=$(date "+%Y-%m-%d"); T=$(date "+%H:%M" | cut -c1-4)x
 export ROW_K="$K" ROW_TXT="$TXT" ROW_PANE="$PANE" ROW_REG="$REG" ROW_D="$D" ROW_T="$T" PYTHONUTF8=1 PYTHONIOENCODING=utf-8

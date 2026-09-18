@@ -2,8 +2,8 @@
 # command that produced the result contains <producer> (a substring; `*` means any command), so a read of a
 # transcript, a report or this file that quotes an old failure never counts as a new event. `a!b` means the command
 # holds a and not b (a dry run that sets ROW_REGISTER is not a register row).
-# A register row refused on length by an older wrapper (it exits 1, and a compound command hides the exit code).
-row.sh	TOO LONG \d+ \(cut \d+\)
+# A register row refused by the wrapper (blank text, a bad kind or pane; it exits 1, and a compound command hides the exit code).
+row.sh	ROW REFUSED: [^\n]*
 # A register row cut by the wrapper: the tail was dropped, so the seat overshot the cap.
 row.sh!ROW_REGISTER	ROW ok text \d+/\d+ CUT \d+ chars
 # A register write that asserts on the length of the row instead of going through the wrapper.

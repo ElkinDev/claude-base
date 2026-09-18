@@ -92,6 +92,12 @@ class OnBoardTest(unittest.TestCase):
         self.assertFalse(hook.on_board(""))
         self.assertFalse(hook.on_board(None))
 
+    def test_an_empty_cwd_is_off_the_board_even_with_no_root_declared(self):
+        """Nothing is known about an empty folder, so nothing is printed for it, whatever the board."""
+        os.environ.pop("CLAUDE_BOARD_ROOT", None)
+        self.assertFalse(hook.on_board(""))
+        self.assertFalse(hook.on_board(None))
+
     def test_without_a_root_every_folder_is_on_the_board(self):
         """The kit ships no board. A project that never declares one keeps the whole block,
         which is the behaviour every install had before the gate."""
