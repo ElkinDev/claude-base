@@ -22,8 +22,10 @@ The hook runs the way the harness runs it, as a subprocess with the payload JSON
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -43,6 +45,10 @@ def load(name, path):
 # The two lists come from the hook itself, so a copy here cannot keep passing after the hook moved.
 guard = load("guard_delegate", GUARD)
 
+# Rule 2 appends a line per implementer launch beside the hook. Every run here writes into a
+# temporary file instead, so a suite run never leaves a log inside the checkout.
+LAUNCH_LOG = os.path.join(tempfile.mkdtemp(prefix="guard-log-"), "brief-launches.log")
+
 
 def run_guard(payload):
     """The hook as the harness runs it. A string payload is sent verbatim, so a malformed body
@@ -53,7 +59,7 @@ def run_guard(payload):
         input=body.encode("utf-8"),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env=dict(os.environ, PYTHONIOENCODING="utf-8"),
+        env=dict(os.environ, PYTHONIOENCODING="utf-8", GUARD_LOG=LAUNCH_LOG),
     )
     return process.returncode, process.stdout.decode("utf-8", "replace"), process.stderr.decode("utf-8", "replace")
 
@@ -205,6 +211,126 @@ class SettingsTemplate(unittest.TestCase):
         matchers = [entry.get("matcher") for entry in self.entries]
         for matcher in ("Read", "Bash", "PowerShell"):
             self.assertIn(matcher, matchers)
+
+BRIEF_PASSING = """# Lane w99
+
+Budget 40 tool uses.
+
+## Pins
+
+- `WidgetTest`: the widget keeps its label.
+
+## Report
+
+lanes/w99.md, at most 30 lines.
+"""
+
+BRIEF_FAILING = """# Lane w98
+
+Do the thing and say how it went.
+"""
+
+
+class BriefLaunchLogTest(unittest.TestCase):
+    """Rule 2: every implementer launch from a main session is logged, and a named brief under the
+    deny tier is refused. The log path and the tier are redirected, so no live log is written."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="brief-launch-")
+        self.log = os.path.join(self.tmp, "brief-launches.log")
+        self.briefs = os.path.join(self.tmp, "briefs")
+        os.makedirs(self.briefs)
+        self.passing = self.write_brief("w99.md", BRIEF_PASSING)
+        self.failing = self.write_brief("w98.md", BRIEF_FAILING)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def write_brief(self, name, text):
+        path = os.path.join(self.briefs, name)
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+        return path.replace(os.sep, "/")
+
+    def launch(self, prompt, tier="1", target="implementer-light", caller=None):
+        payload = {
+            "tool_name": "Agent",
+            "tool_input": {"subagent_type": target, "prompt": prompt},
+        }
+        if caller:
+            payload["agent_type"] = caller
+        env = dict(
+            os.environ,
+            PYTHONIOENCODING="utf-8",
+            GUARD_LOG=self.log,
+            CLAUDE_BRIEF_DENY_TIER=tier,
+            CLAUDE_BRIEFS_ROOT=self.tmp,
+        )
+        process = subprocess.run(
+            [sys.executable, GUARD],
+            input=json.dumps(payload).encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+        self.assertEqual(0, process.returncode, process.stderr[-300:])
+        return process.stdout.decode("utf-8", "replace")
+
+    def rows(self):
+        if not os.path.isfile(self.log):
+            return []
+        with open(self.log, encoding="utf-8") as handle:
+            return [line.split() for line in handle if line.strip()]
+
+    def test_a_brief_that_passes_the_tier_is_logged_and_allowed(self):
+        out = self.launch("Read " + self.passing + " in full before anything else.")
+        self.assertEqual("", out, "nothing is denied: %r" % out)
+        rows = self.rows()
+        self.assertEqual(1, len(rows), rows)
+        self.assertEqual("implementer-light", rows[0][2])
+        self.assertEqual(self.passing, rows[0][3])
+        self.assertIn("PASS", rows[0])
+        self.assertIn("T1=ok", rows[0])
+
+    def test_a_brief_under_the_tier_is_denied_with_the_reason_and_logged(self):
+        out = self.launch("Read " + self.failing + " in full before anything else.")
+        decision = json.loads(out)["hookSpecificOutput"]
+        self.assertEqual("deny", decision["permissionDecision"])
+        self.assertIn("no Report or Deliverable section", decision["permissionDecisionReason"])
+        self.assertIn("DENY", self.rows()[0])
+
+    def test_the_same_brief_passes_while_the_tier_is_zero(self):
+        out = self.launch("Read " + self.failing + " first.", tier="0")
+        self.assertEqual("", out, "tier 0 logs and denies nothing: %r" % out)
+        self.assertIn("PASS", self.rows()[0])
+        self.assertIn("deny_tier=0", self.rows()[0])
+
+    def test_a_launch_that_names_no_brief_is_logged_none_and_never_denied(self):
+        out = self.launch("Fix the failing test in the parser.", tier="3")
+        self.assertEqual("", out, "a launch with no brief is the coverage gap, not a denial")
+        self.assertIn("NONE", self.rows()[0])
+
+    def test_a_template_cited_before_the_brief_grades_the_brief(self):
+        template = self.write_brief("TEMPLATE-lane-brief.md", BRIEF_FAILING)
+        self.launch("Shaped after " + template + ", the brief is " + self.passing + ".")
+        self.assertEqual(self.passing, self.rows()[0][3], "the template is never the graded file")
+
+    def test_a_relative_path_resolves_against_the_briefs_root(self):
+        self.launch("Read briefs/w99.md in full.")
+        self.assertEqual(self.passing, self.rows()[0][3], self.rows())
+
+    def test_rule_one_still_wins_and_logs_nothing(self):
+        out = self.launch("Read " + self.passing + ".", caller="reviewer")
+        self.assertIn("deny", out)
+        self.assertEqual([], self.rows(), "a call denied by rule 1 never reaches the log")
+
+    def test_an_agent_that_is_not_an_implementer_is_not_logged(self):
+        out = self.launch("Read " + self.failing + ".", target="bulk-reader")
+        self.assertEqual("", out)
+        self.assertEqual([], self.rows())
+
+    def test_the_stop_gate_of_the_hook_is_the_tier_in_the_file_when_the_variable_is_absent(self):
+        self.assertEqual(0, guard.DENY_TIER, "the kit ships the log, not the denial")
 
 
 if __name__ == "__main__":
