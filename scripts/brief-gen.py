@@ -7,7 +7,7 @@ findings verbatim for a fix or notes brief, and leaves the architect's part (the
 pins) to one argument or to a marked placeholder. One shell call replaces one long Write; the reasoning stays typed
 by the orchestrator.
 
-  python brief-gen.py review <token> [--delta N --review <path>] [--attack "1. ...\\n2. ..."] [--tools 14] [--no-git] [--out <path>]
+  python brief-gen.py review <token> [--delta N --review <path>] [--attack "1. ...\\n2. ..."] [--tools 14] [--no-git | --base <sha>] [--out <path>]
   python brief-gen.py fix    <token> --review <path> [--round N] [--change "..."] [--pins "..."] [--tests "..." | --no-git] [--out <path>]
   python brief-gen.py notes  <token> --review <path> [--change "..."] [--pins "..."] [--tests "..." | --no-git] [--out <path>]
 
@@ -32,6 +32,14 @@ only the brief file at --out). Since the reviewer, not this script, writes that 
 reviewer to write nothing when it exists at its start, unless --force-review was given. --no-git is the shape of a lane whose files are in no git repository (tooling kept in a plain folder): it
 edits staged .new files beside the live ones and never a live file, runs its pins under timeout 120 against the
 .new and once against the live file, and writes no commit, precheck or test run; it is refused with --tests.
+
+Stacked lanes. A lane cut from another lane's unmerged tip gets `review <token> --base <sha or branch>`: the review's
+base becomes that tip, refused unless it is a commit strictly below the lane's tip or when it leaves more than 40
+commits above it (a wrong sha); it is the review kind's only, and refused with --no-git. Without it the base stays the
+merge-base with the base branch, and when a local branch not on the base branch has its tip below the lane's on its
+first-parent chain (the nearest one), the brief's Lane line and stderr name it with the --base to pass; a branch merged
+into the lane sits on a second parent and is not named. The script warns and the caller decides. A review brief lists
+at most 100 commits above its base, then one line with the git log command for the rest.
 
 Configuration: brief-gen.json beside this script, or the file BRIEF_GEN_CONFIG names; copy brief-gen.example.json
 and edit it. Every key is optional and the defaults write a brief that names no build tool and no machine path:
@@ -162,6 +170,39 @@ def git(wt, *args):
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
+def git_ok(wt, *args):
+    return subprocess.run(["git", "-C", wt] + list(args), capture_output=True, text=True, timeout=60).returncode == 0
+
+
+class Refused(Exception):
+    pass
+
+
+MAX_BASE_COMMITS = 40  # a --base with more commits above it is refused: a lane has a handful, so the sha is wrong
+MAX_COMMITS = 100      # commits listed above a review's base; more is cut with a pointer
+
+
+def stacked_on(wt, head):
+    """The nearest local branch whose tip is below HEAD, on HEAD's first-parent chain and not on the base branch, as
+    (branch, tip), or None. A lane cut from another lane's unmerged tip has one, and the merge-base with the base
+    branch then lists that lane's commits as this lane's. A branch merged INTO the lane (a train's members, a sibling
+    merged in) has its tip on a second parent, off the first-parent chain, so it is not named. It only warns: --base
+    decides."""
+    out = git(wt, "branch", "--merged", "HEAD", "--no-merged", CFG["base_branch"], "--format=%(refname:short) %(objectname)")
+    if not out:
+        return None
+    chain = set(git(wt, "rev-list", "--first-parent", "HEAD", "^" + CFG["base_branch"]).split())
+    best = None
+    for line in out.splitlines():
+        name, _, tip = line.strip().partition(" ")
+        if not tip or tip == head or tip not in chain:
+            continue
+        n = git(wt, "rev-list", "--count", "%s..HEAD" % tip)
+        if n.isdigit() and (best is None or int(n) < best[0]):
+            best = (int(n), name, tip)
+    return (best[1], best[2]) if best else None
+
+
 def subject_rule():
     """' ending `X`' when a subject suffix is configured, else nothing."""
     return " ending `%s`" % CFG["subject_suffix"] if CFG["subject_suffix"] else ""
@@ -200,22 +241,51 @@ def lane_facts(token):
     sys.exit("brief-gen: no lane report whose title starts with '# Lane %s' under %s" % (token, lanes))
 
 
-def git_facts(fx):
+def git_facts(fx, base_ref=None):
     wt = fx["wt"]
+    fx["base_how"] = "merge-base with %s" % CFG["base_branch"]
     if not os.path.isdir(wt):
+        if base_ref:
+            raise Refused("--base %s needs the lane's worktree, and %s is not a directory" % (base_ref, wt))
         fx.update(branch="<<branch>>", tip="<<tip>>", base="<<base>>",
                   commits=["<<commits: worktree %s not found; a lane with no git repository takes --no-git>>" % wt])
         return fx
-    if not git(wt, "rev-parse", "HEAD"):
+    head = git(wt, "rev-parse", "HEAD")
+    if not head:
+        if base_ref:
+            raise Refused("--base %s needs a git worktree, and %s is not one" % (base_ref, wt))
         why = "<<%s is not a git worktree (directory present, worktree pruned)>>" % wt
         fx.update(branch=why, tip=why, base=why, commits=[why])
         return fx
     fx["branch"] = git(wt, "rev-parse", "--abbrev-ref", "HEAD") or "<<branch>>"
-    fx["tip"] = (git(wt, "rev-parse", "HEAD") or "<<tip>>")[:9]
-    base = git(wt, "merge-base", "HEAD", CFG["base_branch"])
+    fx["tip"] = head[:9]
+    if base_ref:  # a stacked lane: the caller names the tip it was cut from
+        base = git(wt, "rev-parse", "--verify", "--quiet", base_ref + "^{commit}")
+        if not base:
+            raise Refused("--base %s is not a commit in %s" % (base_ref, wt))
+        if base == head:
+            raise Refused("--base %s is the tip itself: nothing above it to review" % base_ref)
+        if not git_ok(wt, "merge-base", "--is-ancestor", base, head):
+            raise Refused("--base %s (%s) is not below the tip %s" % (base_ref, base[:9], head[:9]))
+        fx["base_how"] = "given by --base: the lane was cut from that tip, not from %s" % CFG["base_branch"]
+    else:
+        base = git(wt, "merge-base", "HEAD", CFG["base_branch"])
+        below = stacked_on(wt, head)
+        if below:
+            fx["base_how"] = ("merge-base with %s; branch %s at %s is below the tip and not on %s: if the lane was cut "
+                              "from it, the commits up to %s are that lane's, not this one's (brief-gen ... --base %s)"
+                              % (CFG["base_branch"], below[0], below[1][:9], CFG["base_branch"], below[1][:9], below[1][:9]))
+            sys.stderr.write("brief-gen: warning, %s\n" % fx["base_how"])
     fx["base"] = base[:9] if base else "<<base>>"
     log = git(wt, "log", "--format=%h %s", "%s..HEAD" % base) if base else ""
-    fx["commits"] = log.splitlines() if log else ["<<no commits above the base>>"]
+    lines = log.splitlines()
+    if base_ref and len(lines) > MAX_BASE_COMMITS:  # --base HEAD~999 would list 999 commits
+        raise Refused("--base %s leaves %d commits above it, more than a lane's %d; check the sha"
+                      % (base_ref, len(lines), MAX_BASE_COMMITS))
+    if len(lines) > MAX_COMMITS:  # a filled fact, not a placeholder: no << >> marker
+        lines = lines[:MAX_COMMITS] + ["(%d more commits above the base: git log --oneline %s..%s)"
+                                       % (len(lines) - MAX_COMMITS, base[:9], head[:9])]
+    fx["commits"] = lines or ["<<no commits above the base>>"]
     return fx
 
 
@@ -320,9 +390,10 @@ def review_brief(fx, a):
         where = ("%s; read `diff <live> <live>.new` for the change. Brief: %s. Report: %s (read it whole, Open items "
                  "included)." % (NOGIT_WHERE, fx["brief"], fx["report"]))
     else:
-        where = ("Worktree %s, branch %s, base %s (merge-base with %s), tip %s, commits above the base: %s. Brief: %s. "
+        where = ("Worktree %s, branch %s, base %s (%s), tip %s, commits above the base: %s. Brief: %s. "
                  "Report: %s (read it whole, Open items included).%s" % (fx["wt"], fx["branch"], fx["base"],
-                 CFG["base_branch"], fx["tip"], commits, fx["brief"], fx["report"], runs))
+                 fx.get("base_how", "merge-base with %s" % CFG["base_branch"]), fx["tip"], commits, fx["brief"],
+                 fx["report"], runs))
     # the reviewer writes the file, so a brief generated while an earlier reviewer of the round still runs passes the
     # existence check in main(); the reviewer checks again when it starts
     guard = ("" if getattr(a, "force_review", False) else
@@ -481,6 +552,7 @@ def main():
     ap.add_argument("--purpose", help="review: the purpose line (one of the four and its number)")
     ap.add_argument("--tools", type=int, default=None, help="the tool budget (review_tools and fix_tools by default)")
     ap.add_argument("--no-git", action="store_true", help="a lane with no git repository: staged .new files, no branch, tip, commit or test run")
+    ap.add_argument("--base", help="review: the sha or branch a stacked lane was cut from (default the merge-base with the base branch)")
     ap.add_argument("--out")
     ap.add_argument("--force", action="store_true", help="overwrite an existing brief file at --out")
     ap.add_argument("--force-review", action="store_true", help="review: write the brief although its deliverable exists, "
@@ -500,6 +572,12 @@ def main():
             ap.error("--round is the round the fix opens, 2 or more")
     if a.no_git and a.tests:
         ap.error("--tests names the own-tests run, which a --no-git lane does not launch; its pins run under timeout 120")
+    if a.base is not None and a.kind != "review":  # the base only shapes the review's commit list
+        ap.error("--base is the review kind's: it sets the base whose commits the reviewer reads")
+    if a.base is not None and a.no_git:
+        ap.error("--base names a commit, which a --no-git lane does not have")
+    if a.base is not None and not a.base.strip():
+        ap.error("--base is blank; give the sha or branch the lane was cut from")
     try:
         CFG = load_config()
     except ConfigError as e:
@@ -511,7 +589,10 @@ def main():
             sys.exit("brief-gen: review file not found: %s" % a.review)
     fx = lane_facts(a.token)
     if not a.no_git:
-        fx = git_facts(fx)
+        try:
+            fx = git_facts(fx, a.base.strip() if a.base else None)
+        except Refused as e:
+            sys.exit("brief-gen: refused, %s" % e)
     if a.kind == "review":
         deliverable = review_deliverable(fx, a.delta)
         if os.path.exists(deliverable) and not a.force_review:
