@@ -16,9 +16,10 @@ in brackets such as (ABC-12), (item 7) or (3.2)) and the topic; the worktree is 
 filled in, or the report's "Worktree <path>" word when the pattern is unset or names no folder; git gives branch,
 tip, base (merge-base with the base branch) and the commits above the base. The output path defaults to
 <briefs>/<slug>-review-<today>.md, -fixN-, -notes-; an existing file is never overwritten (--force). The text is
-printed to stdout as well, so the caller reads what it launched. Placeholders are marked <<...>> and brief-check.py
-still grades the result (Report section present, a test class name under Pins): fill --pins, or a launch hook with
-a deny tier of 2 or more refuses the brief.
+printed to stdout as well, so the caller reads what it launched. Placeholders are marked <<...>>. A fix or notes
+brief goes to an implementer, whose launches the hook grades with brief-check.py (Report section present, a test
+class name under Pins): fill --pins, or a deny tier of 2 or more refuses it. A review brief goes to a reviewer,
+which the hook never grades (claude/hooks/guard-delegate.py, LOGGED_TARGETS), so it carries no Pins section.
 
 Configuration: brief-gen.json beside this script, or the file BRIEF_GEN_CONFIG names; copy brief-gen.example.json
 and edit it. Every key is optional and the defaults write a brief that names no build tool and no machine path:
@@ -169,7 +170,9 @@ def lane_facts(token):
         topic = title.split(":", 1)[1].strip() if ":" in title else ""
         topic = re.sub(r",?\s*\d{4}-\d{2}-\d{2}$", "", topic)  # a report title that ends with its date
         wt = CFG["worktree"].replace("{token}", token) if CFG["worktree"] else ""
-        mw = re.search(r"[Ww]orktree `?([A-Za-z]:/[^\s,`]+|/[^\s,`]+)", head)
+        # a backticked path keeps its spaces (`C:/src/my app-tok`); a bare one ends at the first space or comma
+        mw = (re.search(r"[Ww]orktree `([A-Za-z]:/[^`\n]+|/[^`\n]+)`", head)
+              or re.search(r"[Ww]orktree `?([A-Za-z]:/[^\s,`]+|/[^\s,`]+)", head))
         if (not wt or not os.path.isdir(wt)) and mw:
             wt = mw.group(1)
         wt = wt or "<<worktree: set worktree in the config or name it in the report>>"
@@ -409,6 +412,7 @@ def main():
     out = a.out or os.path.join(under_root(CFG["briefs_dir"]), name)
     if os.path.exists(out) and not a.force:
         sys.exit("brief-gen: %s exists; pass --force to overwrite" % out)
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)  # a fresh evidence root has no briefs folder yet
     with open(out, "w", encoding="utf-8", newline="\n") as f:
         f.write(body)
     sys.stdout.write(body)

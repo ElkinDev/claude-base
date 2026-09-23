@@ -151,6 +151,8 @@ def settings(ap, a):
             ap.error("%s=%r is not a valid value" % (var, raw))
 
     a.root = a.root or env("TOOLING_BLOCK_ROOT") or env("EVIDENCE_ROOT") or os.getcwd()
+    if not os.path.isdir(os.path.join(a.root, "reviews")):  # a wrong root would read as a quiet window
+        ap.error("no reviews folder under %s; pass --root or set TOOLING_BLOCK_ROOT" % a.root)
     a.first_decision = pick(a.first_decision, "TOOLING_BLOCK_FIRST_DECISION", day, None)
     a.anchor = pick(a.anchor, "TOOLING_BLOCK_ANCHOR", day, None) or a.first_decision
     a.window_days = pick(a.window_days, "TOOLING_BLOCK_WINDOW_DAYS", int, 4)

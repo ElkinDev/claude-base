@@ -7,8 +7,9 @@ A kit is only useful while it carries what the machine actually runs. A hook, sc
 is changed where it runs and never brought back here is lost to every other project. This script reads the drift
 twice a day from a scheduled task (automation) and names each file that has to travel (quality). Not served: tokens.
 
-Pairing. A live file pairs with a tracked kit file under claude/, scripts/, herdr/, install/ or project-template/ of
-the same basename. When one kit file has that basename it pairs, except that a seat or agent twin pairs only with a
+Pairing. A live file pairs with a tracked kit file under claude/, scripts/, herdr/, install/ or project-template/briefs/
+of the same basename (only the briefs folder of the template: the rest of it copies kit-home files such as
+run-tests.py and CLAUDE.md, and a copy tying with its original would hide both). When one kit file has that basename it pairs, except that a seat or agent twin pairs only with a
 live folder of the same name. When several kit files share it (run-tests.py, SKILL.md, analyst.md), the live file
 pairs only with the one whose path shares the longest tail with the live path, at least its folder and name; a tie
 pairs none.
@@ -52,7 +53,7 @@ DEFAULT_LIVE = [KIT_HOME + "/" + d for d in ("hooks", "hooks/tests", "tools", "t
 EXPLICIT_LIVE = [d for d in os.environ.get("KIT_TWIN_LIVE", "").split(os.pathsep) if d]
 WAIVERS = os.environ.get("KIT_TWIN_WAIVERS") or os.path.join(HERE, "kit-twin-waivers.txt")
 SINCE = os.environ.get("KIT_TWIN_SINCE")
-TRACKED = ("claude/", "scripts/", "herdr/", "install/", "project-template/")
+TRACKED = ("claude/", "scripts/", "herdr/", "install/", "project-template/briefs/")
 TOOL_EXT = (".py", ".sh", ".ps1", ".md")
 PAIRED_FOLDERS = ("seats", "agents")
 TEMPLATE = "TEMPLATE-lane-brief.md"

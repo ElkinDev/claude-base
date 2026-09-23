@@ -195,6 +195,16 @@ def main():
         return rc == 0 and row_numbers(out) == (6, 3, 3)
     check("a template tracked under project-template/ pairs with the live one and leaves the no-twin list", template_pairs)
 
+    def template_copy_never_ties(root):
+        kit = make_kit(root)
+        put(os.path.join(kit, "project-template", "scripts", "hooks", "tests", "run-tests.py"), "template runner\n")
+        put(os.path.join(kit, "project-template", "CLAUDE.md"), "template rules\n")
+        commit(kit, 3 * DAY)
+        put(os.path.join(root, "live", "hooks", "tests", "run-tests.py"), "live runner changed\n", age=2 * DAY)
+        rc, out, _ = run(root, kit, ["--row"])
+        return rc == 0 and row_numbers(out) == (1, 1, 0)
+    check("a project-template copy of a kit-home file never ties with it: the live runner still trails", template_copy_never_ties)
+
     def default_kit_and_floor(root):
         kit = world(root)
         copy = os.path.join(kit, "scripts", "kit-twin-drift.py")

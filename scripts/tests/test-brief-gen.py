@@ -173,6 +173,17 @@ def main():
             return fx["wt"] == "/srv/lanes/word-wt" and fx["item"] == "item 7" and fx["topic"] == "a word topic"
         check("with no worktree pattern the report's Worktree word is used, a POSIX path included", report_worktree_word)
 
+        def worktree_with_a_space():
+            ev = os.path.join(tmp, "ev-space")
+            os.makedirs(os.path.join(ev, "lanes"))
+            with open(os.path.join(ev, "lanes", "spc-lane-2026-01-22.md"), "w", encoding="utf-8") as f:
+                f.write("# Lane spc: a topic\n\nWorktree `C:/src/my app-spc`, branch x.\n")
+            with open(os.path.join(ev, "lanes", "bare-lane-2026-01-22.md"), "w", encoding="utf-8") as f:
+                f.write("# Lane bare: a topic\n\nWorktree C:/src/plain-bare, branch x.\n")
+            mod.CFG = dict(mod.DEFAULTS, evidence_root=ev)
+            return mod.lane_facts("spc")["wt"] == "C:/src/my app-spc" and mod.lane_facts("bare")["wt"] == "C:/src/plain-bare"
+        check("a backticked Worktree path keeps its spaces; a bare one ends at the comma", worktree_with_a_space)
+
         def end_to_end():
             ev, wt = os.path.join(tmp, "ev"), os.path.join(tmp, "wt-e2e")
             os.makedirs(os.path.join(ev, "lanes"))
@@ -203,6 +214,19 @@ def main():
                     and again.returncode != 0 and "exists" in again.stderr)
         check("end to end: the report and a real worktree give the item, branch, base and commits; a second run "
               "never overwrites", end_to_end)
+
+        def fresh_root_gets_its_briefs_folder():
+            ev = os.path.join(tmp, "ev-fresh")
+            os.makedirs(os.path.join(ev, "lanes"))
+            with open(os.path.join(ev, "lanes", "e2e-lane-2026-01-22.md"), "w", encoding="utf-8") as f:
+                f.write("# Lane e2e (ABC-12): parser keeps the last key, 2026-01-22\n")
+            r = subprocess.run([sys.executable, SCRIPT, "review", "e2e"], capture_output=True, text=True, timeout=60,
+                               env=dict(os.environ, BRIEF_GEN_CONFIG=os.path.join(tmp, "e2e.json"), EVIDENCE_ROOT=ev))
+            briefs = os.path.join(ev, "briefs")
+            return (r.returncode == 0 and "Traceback" not in r.stderr and os.path.isdir(briefs)
+                    and any(n.startswith("e2e-lane-review-") for n in os.listdir(briefs)))
+        check("a first run on an evidence root with no briefs folder creates it, no traceback",
+              fresh_root_gets_its_briefs_folder)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("%d of %d OK" % (sum(results), len(results)))

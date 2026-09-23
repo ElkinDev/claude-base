@@ -298,6 +298,10 @@ def main():
             rc, _ = run(root, mem, "x", "--since", "22-01-2026")
             return rc == 2
         check("a malformed --since is a usage error", bad_since)
+
+        def bad_max():
+            return run(root, mem, "x", "--max", "0")[0] == 2 and run(root, mem, "x", "--max", "-1")[0] == 2
+        check("--max under 1 is a usage error, never an empty or clipped list", bad_max)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("%d of %d OK (%s)" % (sum(results), len(results), SCRIPT))

@@ -211,6 +211,13 @@ def main():
         return "2026-09-23 to 2026-09-27" in out
     check("with no anchor the first decision day anchors the windows", anchor_from_first_decision)
 
+    def no_reviews_folder(root):
+        empty = os.path.join(root, "no-reviews-here")
+        os.makedirs(empty, exist_ok=True)
+        rc, out, err = run(["2026-09-19", "2026-09-23"], empty)
+        return rc == 2 and out == "" and "no reviews folder" in err
+    check("a root with no reviews folder is a usage error, never a quiet window", no_reviews_folder)
+
     print("%d of %d OK" % (sum(results), len(results)))
     return 0 if all(results) else 1
 

@@ -154,6 +154,8 @@ def main(argv):
     a = ap.parse_args(argv)
     if a.since and not re.fullmatch(r"20\d\d-\d\d-\d\d", a.since):
         ap.error("--since takes YYYY-MM-DD")
+    if a.max < 1:
+        ap.error("--max takes a whole number of 1 or more")
     words = [fold(w) for w in a.words if w.strip()]
     if not words:
         ap.error("give at least one word that is not blank")
