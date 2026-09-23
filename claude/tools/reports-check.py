@@ -21,14 +21,16 @@ that states a train and its tip says a train was built, not that the main branch
 a correction or a review narrative that quotes a commit is neither, and a row that
 says NOT MERGED landed nothing however loudly it says LANDED. A token is a word of
 the lane-and-commit cell that is at least three characters long, carries a digit and is
-not itself a date or a time by shape (a year, a year-month or a full date, `2026`,
-`2026-09`, `2026-09-10`, or `H:MM`/`HH:MM`, `15:11`), so a lane id (F33.13, 86.8.11b,
+not itself a date or a time by shape (a year of 19xx or 20xx, a year-month or a full date,
+`2026`, `2026-09`, `2026-09-10`, or `H:MM`/`HH:MM`, `15:11`; any other four digits, a
+tracker id such as 4821, stays a token), so a lane id (F33.13, 86.8.11b,
 7.1), a commit and a branch name are tokens while prose and a date or a time written
 there are not. Digits alone is not the rule: a short sha with no hex letter (547557281,
 about one in 65 at nine characters) is a commit and stays a token. Dots, colons and
 hyphens are stripped from the two ends of a word and kept inside it, so `-86.8.11`,
-`86.8.11:` and `86.8.11` are the same token; a hyphenated word is one token, so the
-branch of one lane does not match the branch of another through a shared prefix; it is matched
+`86.8.11:` and `86.8.11` are the same token; a hyphenated word is one token, but a
+hyphen is still a boundary where it is matched, so a branch qr-90.8 is also found inside
+a landing that names qr-90.8-b; it is matched
 with dots and alphanumerics as boundaries, so 7.1 does not match 86.7.1 and 90.8 does not
 match 90.8b. Keep the lane-and-commit cell to lane ids and commits: a figure written
 there (an amount, a train number) would be read as a token.
@@ -87,7 +89,7 @@ SEPARATOR_RE = re.compile(r":?-{2,}:?$")
 TOKEN_RE = re.compile(r"[0-9A-Za-z][0-9A-Za-z.:-]*")
 # The SHAPE of a date or a time, not "digits alone": a nine-digit short sha (547557281) is a
 # commit and stays a token. 2026, 2026-09, 2026-09-10, 15:11, 9:05.
-DATE_OR_TIME_TOKEN_RE = re.compile(r"(?:\d{4}(?:-\d{2}){0,2}|\d{1,2}:\d{2})$")
+DATE_OR_TIME_TOKEN_RE = re.compile(r"(?:(?:19|20)\d{2}(?:-\d{2}){0,2}|\d{1,2}:\d{2})$")
 DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})(?: (\d{2}:\d{2}))?")
 YEAR_RE = re.compile(r"(\d{4})-\d{2}-\d{2}")
 SESSION_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])(\d{2})(\d{2})([a-z]{1,2})(?![0-9A-Za-z])")

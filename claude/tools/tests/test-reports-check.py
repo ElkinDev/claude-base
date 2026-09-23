@@ -129,6 +129,10 @@ def main():
                [], now_secs),
          [])
 
+    # four digits that are not a 19xx or 20xx year are a tracker id, and stay a token
+    case("a four-digit tracker id stays a token and a year does not",
+         module.lane_tokens("lane 2026 item 4821 and F33.13"), ["4821", "F33.13"])
+
     # a short sha with no hex letter is digits alone but a commit, not a date shape
     sha_when = datetime(2026, 9, 8, 15, 11)
     sha_row = HEADER + row("OR-6", "2026-09-07", "el resumen no cuadra", "547557281",
