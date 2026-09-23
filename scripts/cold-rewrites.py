@@ -79,9 +79,13 @@ def read(root, lo, hi):
         try:
             with open(sp[:-6] + ".meta.json", encoding="utf-8") as f:
                 meta = json.load(f)
+        except FileNotFoundError:
+            continue  # no meta beside it: not a subagent transcript
         except (OSError, ValueError):
+            unreadable += 1  # a meta that is there and cannot be read hides a transcript: a floor
             continue
         if not isinstance(meta, dict):
+            unreadable += 1
             continue
         kind, desc = meta.get("agentType"), str(meta.get("description") or "")
         tools, seen, last, first, nturn, total = {}, set(), "start", None, 0, 0
@@ -154,7 +158,7 @@ def main(argv):
         ap.error("--until is before --since")
     n, unreadable, cause, cause_cc, cause_kind, fix = read(ROOT, lo, hi)
     if unreadable:
-        sys.stderr.write("cold-rewrites: %d subagent transcript(s) could not be opened; the counts are floors\n" % unreadable)
+        sys.stderr.write("cold-rewrites: %d subagent transcript(s) or their meta could not be read; the counts are floors\n" % unreadable)
     if n == 0:
         ap.error("no readable subagent transcript (agent-*.jsonl with its .meta.json) under %s; set COLD_REWRITES_ROOT" % ROOT)
     gate_n = sum(cause[c] for c in GATE_CLASS)

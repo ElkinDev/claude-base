@@ -29,7 +29,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 PROXY = {"in": 1.0, "cc": 1.25, "cr": 0.1, "out": 5.0}
 
@@ -212,9 +212,12 @@ def main():
     def stamp(value, flag):
         # the window is compared as text against the transcript stamps, so a malformed one would read an empty window
         try:
-            return datetime.fromisoformat(value.strip().rstrip("Z")).strftime("%Y-%m-%dT%H:%M:%S")
+            moment = datetime.fromisoformat(value.strip().rstrip("Z"))
         except ValueError:
             ap.error(f"{flag} takes a UTC ISO stamp such as 2026-09-09T13:06:00")
+        if moment.tzinfo is not None:  # an offset is honored, never dropped: 00:00-05:00 is 05:00 UTC
+            moment = moment.astimezone(timezone.utc).replace(tzinfo=None)
+        return moment.strftime("%Y-%m-%dT%H:%M:%S")
 
     since, until = stamp(args.since, "--since"), stamp(args.until, "--until")
     if until <= since:

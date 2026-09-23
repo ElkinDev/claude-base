@@ -22,9 +22,20 @@ register are floors. The review-round counter reads alphabetic lane tokens known
 round without the lane is not counted. The lock figure is printed twice, exit 1 and every non-zero exit,
 both floors (teardown after the last phase line is never counted).
 
+A red run (last GATE_EXIT 1) is classed by its failing phase: compile, a module suite (test), the app
+module's own suite (app: any test phase whose name holds _app_, whatever its flavor), the app-scoped
+phases (app), then format, ktlint, detekt. A project that runs a heavy and a light app suite and wants
+only the heavy one counted as app edits failed_phase; the private original counted only its Standard
+flavor.
+
 Configuration: the lane-state config (--config, else CLAUDE_LANE_STATE_CONFIG, else
-~/.claude/lane-state.json): gates_dirs (empty means no gate is read), rulings_file (CLAUDE_RULINGS_FILE
-wins over it; default rulings.md beside the config), reviews_dir (default reviews/ beside the register).
+~/.claude/lane-state.json), read as the state sheet reads it: the folder of a config that exists is the
+base of the defaults, ~/.claude when there is none, and a config that cannot be read or is not a JSON
+object is named on stderr once and the defaults are used. gates_dirs: folders or glob patterns, each
+read with its .exit files and those one level below (a pattern such as <temp>/*/scratchpad/*gate* reads
+every session's gate folders; a literal folder whose name holds [ or * cannot be named this way); empty
+means no gate is read. rulings_file: CLAUDE_RULINGS_FILE wins over it; default rulings.md in the base.
+reviews_dir: default reviews/ beside the register.
 
 Usage:
   python rework-shape.py --since "2026-09-09 08:00" --until "2026-09-09 22:00" [--report] [--phases]
@@ -37,6 +48,7 @@ import json
 import os
 import re
 import statistics
+import sys
 from datetime import datetime
 
 # Filled by main() from the lane-state config; a test sets them directly and main() keeps what is set.
@@ -50,17 +62,23 @@ def parse_local(s):
 
 
 def load_paths(config_path):
-    """(gates_dirs, rulings_file, reviews_dir) from the lane-state config; an absent or unreadable config
-    gives the defaults beside it, never an error, like the state sheet."""
+    """(gates_dirs, rulings_file, reviews_dir) from the lane-state config, with the state sheet's rules
+    (claude/tools/lane-state.py load_config): a missing config gives the defaults in ~/.claude, one that
+    cannot be read or is not an object is named on stderr and gives the defaults, never an error."""
+    home = os.path.join(os.path.expanduser("~"), ".claude")
     path = ((config_path or "").strip() or os.environ.get("CLAUDE_LANE_STATE_CONFIG")
-            or os.path.join(os.path.expanduser("~"), ".claude", "lane-state.json"))
-    base = os.path.dirname(os.path.abspath(path))
+            or os.path.join(home, "lane-state.json"))
+    base = os.path.dirname(os.path.abspath(path)) if os.path.isfile(path) else home
+    loaded = {}
     try:
         with open(path, encoding="utf-8-sig") as f:
             loaded = json.load(f)
-    except (OSError, ValueError):
-        loaded = {}
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError) as error:  # a trailing comma must not read as "gate runs 0" without a word
+        sys.stderr.write("rework-shape: config %s not read (%s); defaults used\n" % (path, error))
     if not isinstance(loaded, dict):
+        sys.stderr.write("rework-shape: config %s is not a JSON object; defaults used\n" % path)
         loaded = {}
     text = lambda v: v if isinstance(v, str) and v.strip() else None  # a number or a list where a path belongs is absent
     rulings = os.environ.get("CLAUDE_RULINGS_FILE") or text(loaded.get("rulings_file")) or os.path.join(base, "rulings.md")

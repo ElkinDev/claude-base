@@ -186,7 +186,7 @@ def find_exit_files(dirs):
         for pattern, depth in ((os.path.join(folder, "*.exit"), 0),
                                (os.path.join(folder, "*", "*.exit"), 1)):
             for path in glob.glob(pattern):
-                key = os.path.normcase(os.path.abspath(path))
+                key = os.path.normcase(os.path.realpath(path))  # a junction and its target are one folder
                 if key in seen or not os.path.isfile(path):
                     continue
                 seen.add(key)

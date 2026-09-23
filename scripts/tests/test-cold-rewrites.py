@@ -113,7 +113,12 @@ class ColdRewritesTest(unittest.TestCase):
         code, out, err = self.window("--row")
         self.assertEqual(code, 0, err)
         self.assertIn(": 1 events", out)
-        self.assertIn("1 subagent transcript(s) could not be opened", err)
+        self.assertIn("1 subagent transcript(s) or their meta could not be read", err)
+        # a meta that is there and cannot be read hides its transcript too (review f6f7 note 3)
+        with open(os.path.join(d, "agent-m.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps(turn("m1", 1, "10:00")) + "\n")
+        os.makedirs(os.path.join(d, "agent-m.meta.json"))
+        self.assertIn("2 subagent transcript(s) or their meta could not be read", self.window("--row")[2])
 
     def test_a_stamp_with_no_offset_leaves_its_turn_out_and_the_run_reads(self):
         naive = turn("m3", 60000, "10:20")

@@ -79,6 +79,10 @@ class RowTest(unittest.TestCase):
         self.assertIn("in 2 turns", r.stdout)
         self.assertIn("cold resumes 1 (0.1M)", r.stdout)
         self.assertIn("register-row-only shell calls 1 of 1", r.stdout)
+        # the same window written with an offset reads the same turns (review f6f7 note 2: it was dropped)
+        shifted = subprocess.run([sys.executable, SCRIPT, session, "--since", "2026-01-10T04:00:00-05:00",
+                                  "--until", "2026-01-10T07:00:00-05:00", "--row"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(shifted.stdout, r.stdout)
 
 
 class UsageTest(unittest.TestCase):

@@ -82,7 +82,37 @@ class ReworkShapeTest(unittest.TestCase):
         self.assertEqual(os.path.normcase(reviews), os.path.normcase(os.path.join(self.root, "reviews")))
         with open(cfg, "w", encoding="utf-8") as f:
             f.write("{bad json")
-        self.assertEqual(self.mod.load_paths(cfg)[0], [])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(self.mod.load_paths(cfg)[0], [])
+        self.assertIn("not read", err.getvalue())  # named, never silent (review f6f7 note 4)
+
+    def test_a_missing_config_takes_its_defaults_from_the_home_folder_like_the_sheet(self):
+        saved = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE", "CLAUDE_RULINGS_FILE")}
+        try:
+            os.environ["HOME"] = os.environ["USERPROFILE"] = self.root
+            os.environ.pop("CLAUDE_RULINGS_FILE", None)
+            rulings = self.mod.load_paths(os.path.join(self.root, "nowhere", "none.json"))[1]
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        self.assertEqual(os.path.normcase(rulings), os.path.normcase(os.path.join(self.root, ".claude", "rulings.md")))
+
+    @unittest.skipUnless(os.name == "nt", "a junction is a Windows folder link")
+    def test_a_junction_and_its_target_are_one_folder(self):
+        import subprocess
+        temp = os.path.join(self.root, "temp")
+        with open(os.path.join(temp, "r1.exit"), "w", encoding="utf-8") as f:
+            f.write("GATE_EXIT=0\n")
+        link = os.path.join(self.root, "link")
+        subprocess.run(["cmd", "/c", "mklink", "/J", link, temp], capture_output=True, timeout=60, check=True)
+        self.mod.GATES_DIRS = [temp, link]
+        now = __import__("datetime").datetime.now()
+        found = self.mod.exit_files(now.replace(year=now.year - 1), now.replace(year=now.year + 1))
+        self.assertEqual(len(found), 1)
 
     def test_a_folder_named_exit_and_a_repeated_gates_dir_are_one_run_or_none(self):
         temp = os.path.join(self.root, "temp")
