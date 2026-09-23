@@ -214,6 +214,16 @@ def main():
         return rc == 0 and row_numbers(out) == (1, 1, 0)
     check("a file only the template holds (run-logged.py) still pairs and trails", template_original_pairs)
 
+    def two_template_files_tie(root):
+        kit = make_kit(root)
+        for side in ("a", "b"):
+            put(os.path.join(kit, "project-template", side, "hooks", "tests", "runner-x.py"), side + " runner\n")
+        commit(kit, 3 * DAY)
+        put(os.path.join(root, "live", "hooks", "tests", "runner-x.py"), "live runner\n", age=2 * DAY)
+        rc, out, err = run(root, kit, ["--row"])
+        return rc == 0 and "Traceback" not in err and row_numbers(out) == (0, 0, 0)
+    check("a tie between two template files pairs none and never crashes", two_template_files_tie)
+
     def default_kit_and_floor(root):
         kit = world(root)
         copy = os.path.join(kit, "scripts", "kit-twin-drift.py")
