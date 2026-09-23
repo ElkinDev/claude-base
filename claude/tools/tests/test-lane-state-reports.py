@@ -42,7 +42,7 @@ def put(path, text):
 
 
 def render(tmp, ledger_text, landings_text="", session_text="", reports_key=True,
-           reports_path=None, script=None):
+           reports_path=None, script=None, sessions_glob=None):
     """Renders the sheet in `tmp` and gives back the lines of the reports section."""
     lanes = os.path.join(tmp, "lanes")
     gates = os.path.join(tmp, "gates")
@@ -60,7 +60,7 @@ def render(tmp, ledger_text, landings_text="", session_text="", reports_key=True
         "rulings_file": os.path.join(tmp, "rulings.md"),
         "project_repo": "",
         "lanes_glob": os.path.join(lanes, "*.md"),
-        "sessions_glob": os.path.join(lanes, "*-session-*.md"),
+        "sessions_glob": sessions_glob or os.path.join(lanes, "*-session-*.md"),
         "devices": ["pixel", "s21u"],
         "briefs_glob": os.path.join(tmp, "briefs", "*.md"),
     }
@@ -230,6 +230,24 @@ def main():
              ["no open owner report",
               "VERIFIED in the last 48 h: 1",
               "check: VERIFIED without a cell: OR-3"])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # 12. a sessions_glob list in the config reaches the checker through the renderer:
+        # the only cell naming OR-3 is a cells file the single default glob does not name
+        ledger = HEADER + row("OR-3", fresh, "merchant", "F33.13 ae1e40249", "TRAIN 1",
+                              "none", "VERIFIED %s" % fresh)
+        lanes = os.path.join(tmp, "lanes")
+        put(os.path.join(lanes, "phone-cells-2026-09-06.md"), "cell 2 of OR-3 reads PASS\n")
+        case("one glob misses a cells file",
+             render(tmp, ledger),
+             ["no open owner report",
+              "VERIFIED in the last 48 h: 1",
+              "check: VERIFIED without a cell: OR-3"])
+        case("a list of globs in the config finds it",
+             render(tmp, ledger, sessions_glob=[os.path.join(lanes, "*-session-*.md"),
+                                                os.path.join(lanes, "*-cells-*.md")]),
+             ["no open owner report",
+              "VERIFIED in the last 48 h: 1"])
 
     print("\n%d cases, %d failed" % (case.count, len(FAILURES)))
     return 1 if FAILURES else 0

@@ -119,6 +119,28 @@ def main():
                % stamp(two_days), [], now_secs),
          [])
 
+    # the year of a date in the lane cell is not a lane token (2026-09-10 vs the stamp)
+    date_cell = ("lane qrf, branch x off 4faa4b2a9 (briefs/y-2026-09-10.md), "
+                 "diagnosis drafts/z-2026-09-10.md")
+    date_row = HEADER + row("OR-19", "2026-09-10", "las notas qr salen en blanco",
+                            date_cell, "not landed", "none", "OPEN")
+    case("a date in the lane cell of an OPEN row is not a landing match",
+         check(date_row, landed_row(datetime(2026, 9, 8, 15, 11), "90.8b 5b598683d"),
+               [], now_secs),
+         [])
+
+    # four digits that are not a 19xx or 20xx year are a tracker id, and stay a token
+    case("a four-digit tracker id stays a token and a year does not",
+         module.lane_tokens("lane 2026 item 4821 and F33.13"), ["4821", "F33.13"])
+
+    # a short sha with no hex letter is digits alone but a commit, not a date shape
+    sha_when = datetime(2026, 9, 8, 15, 11)
+    sha_row = HEADER + row("OR-6", "2026-09-07", "el resumen no cuadra", "547557281",
+                           "not landed", "none", "OPEN")
+    case("an all-digit short sha in the lane cell of an OPEN row is a landing match",
+         check(sha_row, landed_row(sha_when, "547557281"), [], now_secs),
+         ["OPEN with a landing row: OR-6 547557281 %s" % stamp(sha_when)])
+
     # 2. the id is matched whole, hyphen included, so OR-1 is not OR-10
     verified = HEADER + row("OR-1", "2026-09-06", "merchant", "F33.13 ae1e40249", "TRAIN 1",
                             "none", "VERIFIED 2026-09-07")
@@ -274,6 +296,22 @@ def main():
         case("a missing ledger names itself once",
              len(text_of(done.stderr).strip().splitlines()), 1)
         case("a missing ledger does not raise", "Traceback" in text_of(done.stderr), False)
+
+        # 12. sessions_glob takes a list: a cell file under another name counts, and a
+        # file two globs name is read once
+        cells_glob = os.path.join(lanes, "*-cells-*.md")
+        put(os.path.join(lanes, "phone-cells-2026-09-08.md"), "cell for OR-6\n")
+        names = [name for name, _ in module.session_files_of([sessions_glob, cells_glob,
+                                                                  cells_glob])]
+        case("a list of globs reads each named file once",
+             [os.path.basename(name) for name in names].count("phone-cells-2026-09-08.md"), 1)
+        # cells glob first: a parser that keeps only the last flag reads the session glob
+        # alone, whose file case 10 removed, and prints the flag
+        done = run_cli(["--ledger", ledger_path, "--landings", landings_path,
+                        "--sessions-glob", cells_glob, "--sessions-glob", sessions_glob,
+                        "--lines"], tmp)
+        case("--sessions-glob repeats and a cells file answers the flag",
+             text_of(done.stdout), "")
 
     print("\n%d cases, %d failed" % (case.count, len(FAILURES)))
     return 1 if FAILURES else 0

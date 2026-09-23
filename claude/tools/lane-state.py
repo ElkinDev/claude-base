@@ -23,7 +23,7 @@ gate exit files, empty means no gate is scanned), landings_file, rulings_file,
 project_repo (the repository whose worktrees are listed, empty means none),
 lanes_glob, briefs_glob, reports_file (the owner reports ledger rendered by the
 section below, checked by reports-check.py beside this file), sessions_glob (the
-session files that count as evidence for that ledger), devices (the device words
+session files that count as evidence for that ledger: one glob or a list), devices (the device words
 that bind a session token to one phone, empty for no narrowing).
 
 Env seams, each of which wins over the default and is what the recovery hook wires:

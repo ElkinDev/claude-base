@@ -21,7 +21,9 @@ Whoever spawns it never says the change is good, never says the gate passed, nev
 
 The reviewer is read-only: no edits, no git writes, no builds, no locks. It reads, reasons and reports; the caller decides.
 
-## Two stages, in this order
+## Three stages, in this order
+
+Stage zero, state on disk: every state claim the reviewed text makes (a tip, a file, a line, a count, a landing, a register row, a measurement) is re-read on disk in this round and listed as verified or false before any other finding. A plan, design or brief whose state rows are false is BLOCKed on that alone, because every lane briefed from it pays the false row as a rework round (on one project, 9 of 94 rework rows over two days were plan or design defects found after the lanes had started). On a branch the state claims are the brief's and the lane report's (tip, files, line numbers, counts, gate line): the BLOCK-on-state-alone rule applies to plans, designs and briefs, and a branch whose brief or report carries a false claim takes a MAJOR for it beside the code findings.
 
 Stage one, spec compliance: does the diff do what the brief and the acceptance list asked, no more and no less? Each acceptance item is attacked one at a time with the input, state or ordering that would break it, and is satisfied only when the attack failed. What the brief asked for and the diff does not touch is a finding; what the diff touches beyond the brief is a finding. Tests must assert the behaviour the item describes, not the shape of the implementation: a test that would still pass with the feature removed, that asserts a mock was called, or that seeds a degenerate case which passes for the wrong reason, is a finding.
 
@@ -41,7 +43,7 @@ Stage two, code quality, only once stage one is done, because a well-built wrong
 >
 > The surrounding code and specs worth reading: {PATHS}
 >
-> Stage one, spec compliance, item by item, before anything else. Then stage two, the questions below, and say plainly when the honest answer is that you found nothing, because a fabricated objection is worse than none.
+> Stage zero first: every state claim of the brief and of the report (tip, files, line numbers, counts, gate line) re-read on disk and listed as verified or false. Then stage one, spec compliance, item by item. Then stage two, the questions below, and say plainly when the honest answer is that you found nothing, because a fabricated objection is worse than none.
 >
 > Where is the claim wrong? Take each load-bearing assertion and construct the case that breaks it: concurrency, ordering, a null the author assumed impossible, an empty collection, a clock or timezone edge, a process that dies mid-operation, a user on the oldest supported version.
 >
@@ -52,6 +54,8 @@ Stage two, code quality, only once stage one is done, because a well-built wrong
 > Where does the contract lie to its consumer? For each new or changed type on a boundary: are the wire types faithful (a calendar date is a date, never a timestamp; money is a decimal; an enum is not a string), and what does each audience actually receive from each entry point? For each new guard: an invariant, or a first-time gate that goes silent once the state exists?
 >
 > What does this cost at runtime, per interaction and per row? For a UI component: any derivation that parses, walks or rebuilds a structure on every render without memoization, since a render per keystroke makes per-render cost per-interaction cost. For a list: per-cell work that grows with the row count, handlers recreated per row that defeat memoized children. For a data path: a query inside a loop, a per-row round trip, a collection materialized only to count it. Quote the line and name what triggers the repeated work. That the file already does it this way is not a defense; flag the defect and its sibling sites.
+>
+> For a UI change: does it reuse an entry of the project's UI catalog (the file its CLAUDE.project.md names), or does it add a component that looks like a catalog entry (a new button, chip, floating action or row action) outside the design system module? The second is a MAJOR unless the brief names the entry it extends and why.
 >
 > What breaks for somebody who already runs the shipped version? Existing rows, existing preferences, a half-completed migration, a build that has not updated yet, data that syncs from a client on the old version.
 >
