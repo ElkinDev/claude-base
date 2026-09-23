@@ -350,6 +350,11 @@ def main():
                 f.write("# Lane %s (ABC-7): a stacked topic\n\nWorktree %s, branch as git says.\n" % (tok, wt))
             with open(os.path.join(ev, "briefs", "%s-lane-%s.md" % (tok, today)), "w", encoding="utf-8") as f:
                 f.write("# the lane brief\n")
+        plain_dir = os.path.join(tmp, "stack-plain-dir").replace("\\", "/")
+        os.makedirs(plain_dir)
+        for tok, wt in (("gone", os.path.join(tmp, "no-such-wt").replace("\\", "/")), ("nogit", plain_dir)):
+            with open(os.path.join(ev, "lanes", "%s-lane-%s.md" % (tok, today)), "w", encoding="utf-8") as f:
+                f.write("# Lane %s (ABC-8): a refused topic\n\nWorktree %s, branch none.\n" % (tok, wt))
         scfg = os.path.join(tmp, "stack.json")
         with open(scfg, "w", encoding="utf-8") as f:
             json.dump({"base_branch": "trunk"}, f)
@@ -394,6 +399,9 @@ def main():
                      (sgen("review", "stk", "--base", "nosuchref", "--out", out), 1, "is not a commit"),
                      (sgen("review", "stk", "--base", head, "--out", out), 1, "is the tip itself"),
                      (sgen("review", "stk", "--base", "  ", "--out", out), 2, "--base is blank"),
+                     (sgen("review", "stk", "--base", "", "--out", out), 2, "--base is blank"),
+                     (sgen("review", "gone", "--base", a1, "--out", out), 1, "is not a directory"),
+                     (sgen("review", "nogit", "--base", a1, "--out", out), 1, "needs a git worktree"),
                      (sgen("notes", "stk", "--review", review, "--base", a1, "--out", out), 2, "review kind's"),
                      (sgen("review", "stk", "--no-git", "--base", a1, "--out", out), 2, "--no-git")]
             return all(r.returncode == code and why in r.stderr for r, code, why in cases) and not os.path.exists(out)
