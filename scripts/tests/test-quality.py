@@ -298,6 +298,17 @@ class QualityCase(unittest.TestCase):
         self.assertIn("f69-w3 bench", defects["rows"][0])
         self.assertEqual([r for r in defects["rows"] if "2026-09-01" in r], [])
 
+    def test_a_row_with_an_unrecorded_minute_counts_at_the_first_minute_of_its_ten(self):
+        # row writers and most hands stamp "13:4x"; a digits-only pattern dropped such rows from the count
+        path = os.path.join(self.tmp, "defects-x.md")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("2026-09-06 09:3x 91.1 bench the sheet saves an empty title\n"
+                         "2026-09-05 17:5x 91.2 bench before the window\n"
+                         "2026-09-06 10:0x 91.3 bench at the window's end\n")
+        defects = quality.defect_numbers(START, END, path, [], 0)
+        self.assertEqual(defects["declared"], 2)  # 09:30 and 10:00 are inside the window, 17:50 is not
+        self.assertIn("91.1", defects["rows"][0])
+
     def test_fix_landings(self):
         defects = self.compute()["defects"]
         self.assertEqual(defects["fix_landings"], 1)
@@ -359,9 +370,16 @@ class QualityCase(unittest.TestCase):
         first = next((i for i, line in enumerate(lines) if quality.ROW_RE.match(line)),
                      None)
         self.assertIsNotNone(first, "the register carries no row at all")
-        malformed = ["%d: %s" % (number, line)
-                     for number, line in enumerate(lines[first:], first + 1)
-                     if line.strip() and not quality.ROW_RE.match(line)]
+        # A "## " heading opens a prose section (a state note between rows); its lines are documentation
+        # until the next row, and only a line outside such a section must be a row.
+        malformed, prose = [], False
+        for number, line in enumerate(lines[first:], first + 1):
+            if quality.ROW_RE.match(line):
+                prose = False
+            elif line.startswith("## "):
+                prose = True
+            elif line.strip() and not prose:
+                malformed.append("%d: %s" % (number, line))
         self.assertEqual(malformed, [],
                          "a line below the first row is not in the row shape")
 
