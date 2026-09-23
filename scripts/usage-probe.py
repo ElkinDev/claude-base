@@ -4,7 +4,8 @@
 Reads the OAuth token of the active Claude Code profile (CLAUDE_CONFIG_DIR, or ~/.claude when
 unset) and asks the usage endpoint once. Prints every meter it returns as `name used% resets_at`;
 never prints the token, not even when the endpoint echoes it back in an error body. Exit 1 on
-any failure, 2 on a bad argument.
+any failure, 2 on a bad argument. An HTTP 401 means the stored access token expired, not that
+the login is gone: opening a session on that profile once refreshes it; the probe never does.
 
 Usage:
     python usage-probe.py            human lines

@@ -103,6 +103,12 @@ def fetch(token, timeout=20, url=ENDPOINT):
             body = b""
         if token:
             body = body.replace(token.encode("utf-8", "replace"), b"<token>")
+        if error.code == 401:
+            # The stored access token expired; the login itself is intact, and the CLI refreshes
+            # the token the next time a session opens on that profile. The probe never refreshes.
+            return None, ("HTTP 401: the stored access token of this profile has expired; the login is "
+                          "intact, opening a session on that profile once refreshes it; this probe does "
+                          f"not refresh. Body: {body[:300].decode(errors='replace')}")
         return None, f"HTTP {error.code}: {body[:300].decode(errors='replace')}"
     except Exception as error:
         return None, scrub(f"request failed: {error}", token)

@@ -205,6 +205,17 @@ class ProbeTest(unittest.TestCase):
         self.assertNotIn(TOKEN, out)
         self.assertNotIn(TOKEN, err)
 
+    def test_an_expired_token_says_the_login_is_intact(self):
+        body = json.dumps({"error": "unauthorized", "echo": TOKEN}).encode("utf-8")
+        failure = urllib.error.HTTPError("https://example.com/usage", 401, "Unauthorized", {}, io.BytesIO(body))
+        with profile(self.tmp, self.account_dir), endpoint(failure=failure):
+            code, out, err = run(probe, [])
+        self.assertEqual(code, 1)
+        self.assertIn("HTTP 401", out)
+        self.assertIn("expired", out)
+        self.assertIn("login is intact", out)
+        self.assertNotIn(TOKEN, out + err)
+
     def test_a_transport_failure_is_one_line_and_exit_one(self):
         with profile(self.tmp, self.account_dir), endpoint(failure=urllib.error.URLError("no route")):
             code, out, _ = run(probe, [])
