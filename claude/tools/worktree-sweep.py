@@ -26,7 +26,12 @@ under `--evidence-root` in `worktree-archive/`; left out, it is EVIDENCE_ROOT, e
 `{repo_parent}/evidence` (pass `--evidence-root "$(python scripts/evidence-path.py)"` to
 follow the project's own spec). The run belt and the two root leaves follow the kit's
 gradle-lockrun convention: a runner writes `build/lockrun/<tag>.log` when a run starts and
-`<tag>.done` when it ends, and `build/precheck` holds the precheck stamps.
+`<tag>.done` when it ends, and `build/precheck` holds the precheck stamps. A project that writes no
+`build/lockrun` log and names no --lock-root has no in-flight belt at all: --apply there can remove a
+landed, clean worktree while a build still runs in it (the build dies; tracked source survives on the
+branch), so such a project passes --lock-root or runs --apply only when no build is running.
+The default evidence root is read from the main checkout, never from the current directory, so a run
+from inside a linked worktree archives to the same place as a run from the main checkout.
 
 Standard library only. Every git call is an argument list; no shell.
 """
@@ -446,8 +451,6 @@ def sweep(args, after_archive=None):
     second re-check covers. Nothing on the command line can set it.
     """
     repo = args.repo
-    if not args.evidence_root:
-        args.evidence_root = default_evidence_root(repo)
     code, _, err = git(["-C", repo, "rev-parse", "--verify", args.main])
     if code != 0:
         print("REFUSED {} has no ref {}: {}".format(repo, args.main, one_line(err)))
@@ -456,6 +459,9 @@ def sweep(args, after_archive=None):
     if records is None:
         print("REFUSED cannot list worktrees of {}: {}".format(repo, problem))
         return 4
+    if not args.evidence_root:
+        # git lists the main checkout first, so the default is the same from any worktree of the repo
+        args.evidence_root = default_evidence_root(records[0]["path"] if records else repo)
 
     kept = {norm(path) for path in args.keep}
     registered = {norm(record["path"]) for record in records}

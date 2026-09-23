@@ -632,6 +632,24 @@ class WorktreeSweepTest(unittest.TestCase):
             if saved is not None:
                 os.environ["EVIDENCE_ROOT"] = saved
 
+    def test_run_from_a_linked_worktree_the_default_archive_is_beside_the_main_checkout(self):
+        anchor = self.worktree(os.path.join("nest", "wt-anchor"), "anchor", self.commits[0])
+        path = self.worktree("wt-landed", "landed", self.commits[0])
+        self.exclude_build()
+        self.lockrun_files(path, ("x.done", "x.log"))
+        leaf = self.leaf_name(path)
+        argv = ["--repo", anchor, "--keep", anchor, "--lock-root", self.lock, "--apply"]
+        self.assert_confined(argv)
+        env = dict(os.environ)
+        env.pop("EVIDENCE_ROOT", None)
+        done = subprocess.run(
+            [sys.executable, SCRIPT] + argv, capture_output=True, text=True, timeout=300, env=env
+        )
+        self.assertEqual(0, done.returncode, done.stdout)
+        self.assertTrue(os.path.isfile(self.archived(leaf, "build", "lockrun", "x.log")), done.stdout)
+        self.assertFalse(os.path.isdir(os.path.join(self.root, "nest", "evidence")), done.stdout)
+        self.assertTrue(os.path.isdir(anchor))
+
     def test_no_lock_root_is_no_mutex_belt_and_the_archive_lands_beside_the_repository(self):
         path = self.worktree("wt-landed", "landed", self.commits[0])
         self.exclude_build()
