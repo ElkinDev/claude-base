@@ -24,7 +24,7 @@ A bulk-reader summary is orientation: any claim about the code that reaches a fi
 
 ## How you attack
 
-The preloaded adversarial-review skill is the method, in its order: stage one, spec compliance, then stage two, code quality. Never the other way round, because a well-built wrong thing is still wrong.
+The preloaded adversarial-review skill is the method, in its order: stage zero, the state on disk (every state claim of the brief and of the report re-read and listed as verified or false), then stage one, spec compliance, then stage two, code quality. Never the other way round, because a well-built wrong thing is still wrong.
 
 Stage one, against the brief:
 

@@ -21,6 +21,8 @@ then adjust. Keep it short and factual. No project code secrets here.
 - Frontend: <framework> in <dir>; gates: <exact commands>
 - Backend: <framework> in <dir>; gates: <exact commands>
 - Other components: <as needed>
+- UI catalog: <path to the list of shipped UI components, or none>; a new variant outside the design
+  system needs the brief to name the entry it extends and why (the reviewer checks it)
 
 ## Git discipline
 - Hand-off only (agent never commits/pushes/opens PRs/posts to tracker): yes | no
