@@ -72,7 +72,9 @@ def lane_state_path():
     return None
 
 
-ROW_RE = re.compile(r"^(?:- )?(\d{4}-\d{2}-\d{2} \d{2}:\d{2}) ")
+# A row stamped "13:4x" (the minute not recorded, the shape most hands and row writers use) counts at the first
+# minute of its ten; a digits-only pattern dropped such rows from every count without a word.
+ROW_RE = re.compile(r"^(?:- )?(\d{4}-\d{2}-\d{2} \d{2}:[0-5][0-9x]) ")
 HEAD_END_RE = re.compile(r":|\.(?=\s|$)")
 WINDOW_RE = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}) to "
                        r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2})")
@@ -284,7 +286,7 @@ def review_numbers(start, end, landings_path):
             if not m:
                 continue
             try:
-                when = dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M")
+                when = dt.datetime.strptime(m.group(1).replace("x", "0"), "%Y-%m-%d %H:%M")
             except ValueError:
                 continue
             if not (start <= when <= end):
@@ -331,7 +333,7 @@ def defect_numbers(start, end, defects_path, features, landings):
             if not m:
                 continue
             try:
-                when = dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M")
+                when = dt.datetime.strptime(m.group(1).replace("x", "0"), "%Y-%m-%d %H:%M")
             except ValueError:
                 continue
             if start <= when <= end:
