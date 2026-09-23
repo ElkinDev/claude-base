@@ -27,9 +27,9 @@ the report and the done file), a red one comes back as the next round. A resume 
 the same, so only the green share saves, and no lane waits for a verdict.
 
 Guards. A review refuses --round (a review of round N is --delta N, 2 or more; --delta is refused on the other
-kinds) and refuses a deliverable already under the reviews folder (--force writes over it); since the reviewer, not
-this script, writes that file, the review brief also tells the reviewer to write nothing when it exists at its
-start. --no-git is the shape of a lane whose files are in no git repository (tooling kept in a plain folder): it
+kinds) and refuses a deliverable already under the reviews folder (--force-review writes over it; --force covers
+only the brief file at --out). Since the reviewer, not this script, writes that file, the review brief also tells the
+reviewer to write nothing when it exists at its start, unless --force-review was given. --no-git is the shape of a lane whose files are in no git repository (tooling kept in a plain folder): it
 edits staged .new files beside the live ones and never a live file, runs its pins under timeout 120 against the
 .new and once against the live file, and writes no commit, precheck or test run; it is refused with --tests.
 
@@ -48,7 +48,7 @@ and edit it. Every key is optional and the defaults write a brief that names no 
                      {worktree_posix} (/c/... form), {worktree_native} (C:/... form), {tag} and {tests} are filled
                      in; default null, a placeholder
   own_tests_done     the file that run writes when it ends, same fields; when set, the lane ends its turn on it
-                     instead of waiting; default null
+                     instead of waiting; it needs own_tests_command; default null
   precheck_command   a static check of the tip run after the tests, {worktree}, {worktree_posix} and
                      {worktree_native} filled in; default null, the line is left out
   review_tools, fix_tools   the tool budgets; default 14 and 20
@@ -110,6 +110,8 @@ def load_config(path=None):
         elif v is not None and not isinstance(v, str):
             raise ConfigError("%s: %s must be a string or null" % (path, k))
         cfg[k] = v
+    if cfg["own_tests_done"] and not cfg["own_tests_command"]:  # the done file alone would render the old order
+        raise ConfigError("%s: own_tests_done needs own_tests_command, the run that writes it" % path)
     for k in TEMPLATE_KEYS:  # a stray brace would otherwise fail at render time, after the facts were read
         if cfg[k]:
             try:
@@ -323,7 +325,7 @@ def review_brief(fx, a):
                  CFG["base_branch"], fx["tip"], commits, fx["brief"], fx["report"], runs))
     # the reviewer writes the file, so a brief generated while an earlier reviewer of the round still runs passes the
     # existence check in main(); the reviewer checks again when it starts
-    guard = ("" if getattr(a, "force", False) else
+    guard = ("" if getattr(a, "force_review", False) else
              " If %s already exists when you start, write nothing and end with one line naming it: a review of this "
              "round is already on disk." % report)
     body = f"""# {kind} ({fx['item']}): {fx['topic']}, {TODAY}
@@ -480,7 +482,9 @@ def main():
     ap.add_argument("--tools", type=int, default=None, help="the tool budget (review_tools and fix_tools by default)")
     ap.add_argument("--no-git", action="store_true", help="a lane with no git repository: staged .new files, no branch, tip, commit or test run")
     ap.add_argument("--out")
-    ap.add_argument("--force", action="store_true", help="overwrite an existing brief, or a review deliverable that already exists")
+    ap.add_argument("--force", action="store_true", help="overwrite an existing brief file at --out")
+    ap.add_argument("--force-review", action="store_true", help="review: write the brief although its deliverable exists, "
+                    "and drop the line that stops its reviewer on an existing file")
     a = ap.parse_args()
     if not a.token.strip():  # a blank token would write a brief of placeholders
         ap.error("give a lane token that is not blank")
@@ -510,9 +514,9 @@ def main():
         fx = git_facts(fx)
     if a.kind == "review":
         deliverable = review_deliverable(fx, a.delta)
-        if os.path.exists(deliverable) and not a.force:
+        if os.path.exists(deliverable) and not a.force_review:
             sys.exit("brief-gen: refused, %s exists: a review of this round already wrote it; a review of round N "
-                     "takes --delta N, and --force writes over it" % deliverable)
+                     "takes --delta N, and --force-review writes over it" % deliverable)
         name, body = review_brief(fx, a)
     else:
         if not a.review:

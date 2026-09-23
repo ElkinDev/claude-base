@@ -165,7 +165,8 @@ def main():
                      "type.json": (json.dumps({"review_tools": "14"}), "whole number"),
                      "blank.json": (json.dumps({"base_branch": " "}), "not blank"),
                      "brace.json": (json.dumps({"precheck_command": "run {wt}"}), "does not fill"),
-                     "broken.json": ("{\"laws\": ,}", "cannot be read")}
+                     "broken.json": ("{\"laws\": ,}", "cannot be read"),
+                     "doneonly.json": (json.dumps({"own_tests_done": "/w/{tag}.done"}), "needs own_tests_command")}
             ok = 0
             for name, (text, why) in cases.items():
                 path = os.path.join(tmp, name)
@@ -291,15 +292,17 @@ def main():
             none_written = not os.path.exists(out)
             delta = gen("review", "gd", "--delta", "2", "--review", r1, "--out", out2)
             body2 = open(out2, encoding="utf-8").read() if os.path.exists(out2) else ""
-            forced = gen("review", "gd", "--force", "--out", out3)
+            plain_force = gen("review", "gd", "--force", "--out", out3)
+            refused_too = plain_force.returncode == 1 and "--force-review" in plain_force.stderr and not os.path.exists(out3)
+            forced = gen("review", "gd", "--force-review", "--out", out3)
             body3 = open(out3, encoding="utf-8").read() if os.path.exists(out3) else ""
             guard = "already exists when you start, write nothing"
             return (again.returncode == 1 and "gd-lane-%s.md exists" % today in again.stderr and none_written
                     and delta.returncode == 0 and "/reviews/gd-lane-fix1-%s.md" % today in body2 and guard in body2
-                    and forced.returncode == 0 and guard not in body3
+                    and refused_too and forced.returncode == 0 and guard not in body3
                     and open(r1, encoding="utf-8").read() == "Disposition: BLOCK (1 MAJOR)\n")
         check("a review whose deliverable exists is refused; a delta review names its own file and tells its reviewer "
-              "to stop if that file exists; --force passes and drops the line", review_never_overwrites)
+              "to stop if that file exists; --force alone does not pass it, --force-review does and drops the line", review_never_overwrites)
 
         def nogit_shape():
             n, rv = os.path.join(tmp, "nogit-notes.md"), os.path.join(tmp, "nogit-review.md")
