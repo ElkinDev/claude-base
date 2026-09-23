@@ -170,11 +170,11 @@ def lane_facts(token):
         topic = title.split(":", 1)[1].strip() if ":" in title else ""
         topic = re.sub(r",?\s*\d{4}-\d{2}-\d{2}$", "", topic)  # a report title that ends with its date
         wt = CFG["worktree"].replace("{token}", token) if CFG["worktree"] else ""
-        # a backticked path keeps its spaces (`C:/src/my app-tok`); a bare one ends at the first space or comma
-        mw = (re.search(r"[Ww]orktree `([A-Za-z]:/[^`\n]+|/[^`\n]+)`", head)
-              or re.search(r"[Ww]orktree `?([A-Za-z]:/[^\s,`]+|/[^\s,`]+)", head))
+        # the first Worktree word of the head decides, by position; a backticked path there keeps its spaces
+        # (`C:/src/my app-tok`), a bare one ends at the first space or comma
+        mw = re.search(r"[Ww]orktree (?:`([A-Za-z]:/[^`\n]+|/[^`\n]+)`|`?([A-Za-z]:/[^\s,`]+|/[^\s,`]+))", head)
         if (not wt or not os.path.isdir(wt)) and mw:
-            wt = mw.group(1)
+            wt = mw.group(1) or mw.group(2)
         wt = wt or "<<worktree: set worktree in the config or name it in the report>>"
         briefs = under_root(CFG["briefs_dir"])
         brief = os.path.join(briefs, "%s-%s.md" % (slug, rdate)).replace("\\", "/")

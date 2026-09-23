@@ -205,6 +205,15 @@ def main():
         return rc == 0 and row_numbers(out) == (1, 1, 0)
     check("a project-template copy of a kit-home file never ties with it: the live runner still trails", template_copy_never_ties)
 
+    def template_original_pairs(root):
+        kit = make_kit(root)
+        put(os.path.join(kit, "project-template", "scripts", "hooks", "run-logged.py"), "template original\n")
+        commit(kit, 3 * DAY)
+        put(os.path.join(root, "live", "hooks", "run-logged.py"), "live copy drifted\n", age=2 * DAY)
+        rc, out, _ = run(root, kit, ["--row"])
+        return rc == 0 and row_numbers(out) == (1, 1, 0)
+    check("a file only the template holds (run-logged.py) still pairs and trails", template_original_pairs)
+
     def default_kit_and_floor(root):
         kit = world(root)
         copy = os.path.join(kit, "scripts", "kit-twin-drift.py")

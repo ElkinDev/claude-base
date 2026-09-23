@@ -180,9 +180,14 @@ def main():
                 f.write("# Lane spc: a topic\n\nWorktree `C:/src/my app-spc`, branch x.\n")
             with open(os.path.join(ev, "lanes", "bare-lane-2026-01-22.md"), "w", encoding="utf-8") as f:
                 f.write("# Lane bare: a topic\n\nWorktree C:/src/plain-bare, branch x.\n")
+            with open(os.path.join(ev, "lanes", "ord-lane-2026-01-22.md"), "w", encoding="utf-8") as f:
+                f.write("# Lane ord (item 3): a topic\n\nWorktree C:/src/ord-wt, branch lane-ord.\n"
+                        "The orchestrator worktree `C:/src/other checkout` holds the kit scripts.\n")
             mod.CFG = dict(mod.DEFAULTS, evidence_root=ev)
-            return mod.lane_facts("spc")["wt"] == "C:/src/my app-spc" and mod.lane_facts("bare")["wt"] == "C:/src/plain-bare"
-        check("a backticked Worktree path keeps its spaces; a bare one ends at the comma", worktree_with_a_space)
+            return (mod.lane_facts("spc")["wt"] == "C:/src/my app-spc" and mod.lane_facts("bare")["wt"] == "C:/src/plain-bare"
+                    and mod.lane_facts("ord")["wt"] == "C:/src/ord-wt")
+        check("a backticked Worktree path keeps its spaces; a bare one ends at the comma; the first Worktree word "
+              "wins over a later backticked mention", worktree_with_a_space)
 
         def end_to_end():
             ev, wt = os.path.join(tmp, "ev"), os.path.join(tmp, "wt-e2e")

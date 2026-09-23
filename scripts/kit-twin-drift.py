@@ -7,12 +7,15 @@ A kit is only useful while it carries what the machine actually runs. A hook, sc
 is changed where it runs and never brought back here is lost to every other project. This script reads the drift
 twice a day from a scheduled task (automation) and names each file that has to travel (quality). Not served: tokens.
 
-Pairing. A live file pairs with a tracked kit file under claude/, scripts/, herdr/, install/ or project-template/briefs/
-of the same basename (only the briefs folder of the template: the rest of it copies kit-home files such as
-run-tests.py and CLAUDE.md, and a copy tying with its original would hide both). When one kit file has that basename it pairs, except that a seat or agent twin pairs only with a
+Pairing. A live file pairs with a tracked kit file under claude/, scripts/, herdr/, install/ or project-template/ of
+the same basename. When one kit file has that basename it pairs, except that a seat or agent twin pairs only with a
 live folder of the same name. When several kit files share it (run-tests.py, SKILL.md, analyst.md), the live file
 pairs only with the one whose path shares the longest tail with the live path, at least its folder and name; a tie
-pairs none.
+pairs none, except that a project-template/ file never ties with a kit file outside the template: the template
+copies some kit-home files (project-template/scripts/hooks/tests/run-tests.py beside claude/hooks/tests/run-tests.py)
+and holds originals of its own (project-template/scripts/hooks/run-logged.py), so a tie between the two sides goes
+to the file outside it. A name the kit holds twice at a tail of one (CLAUDE.md, README.md) pairs with none and
+counts in neither column, which is why the default live folders are the kit-home folders only.
 
 Trailing and owed. A pair trails when the live file changed more than 60 s after the twin's last commit AND their
 CR-stripped texts differ (a byte-equal twin is carried, whatever its mtime). Owed is a trailing pair whose live
@@ -53,7 +56,7 @@ DEFAULT_LIVE = [KIT_HOME + "/" + d for d in ("hooks", "hooks/tests", "tools", "t
 EXPLICIT_LIVE = [d for d in os.environ.get("KIT_TWIN_LIVE", "").split(os.pathsep) if d]
 WAIVERS = os.environ.get("KIT_TWIN_WAIVERS") or os.path.join(HERE, "kit-twin-waivers.txt")
 SINCE = os.environ.get("KIT_TWIN_SINCE")
-TRACKED = ("claude/", "scripts/", "herdr/", "install/", "project-template/briefs/")
+TRACKED = ("claude/", "scripts/", "herdr/", "install/", "project-template/")
 TOOL_EXT = (".py", ".sh", ".ps1", ".md")
 PAIRED_FOLDERS = ("seats", "agents")
 TEMPLATE = "TEMPLATE-lane-brief.md"
@@ -106,9 +109,12 @@ def pair(live, cands):
         return t
     scored = sorted(((tail_len(live, t), t) for t in cands), reverse=True)
     best = scored[0][0]
-    if best < 2 or sum(1 for s, _ in scored if s == best) > 1:
+    top = [t for s, t in scored if s == best]
+    if len(top) > 1:  # a template copy never ties with the kit file outside the template (module docstring)
+        top = [t for t in top if not t.startswith("project-template/")] or top
+    if best < 2 or len(top) > 1:
         return None
-    return scored[0][1]
+    return top[0]
 
 
 def mtime(path):
