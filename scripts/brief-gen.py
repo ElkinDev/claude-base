@@ -330,7 +330,8 @@ def disposition(review_path):
             t = l if re.search(r"CLEAR|BLOCK", l) else next((x for x in head[i + 1:] if x.strip()), "")
             m = re.search(r"(CLEAR with notes|CLEAR|BLOCK)[^.\n]*", t)
             if m:
-                return m.group(0).strip()
+                # a review opening `Disposition: BLOCK, lane <token>` (the review brief's first line) quotes the verdict only
+                return re.sub(r",\s*lane\s+\S+\s*$", "", m.group(0).strip())
     return "<<disposition>>"
 
 
@@ -413,7 +414,7 @@ Your reader is a session, never a person. Write in English. The deliverable is {
 
 ## Report
 
-{report}, at most 40 lines: Disposition (CLEAR, CLEAR with notes, BLOCK) on the first line, then MAJOR, MINOR, Verified sound, Not covered. Every finding with file:line at {at}.{guard}
+{report}, at most 40 lines: the first line is exactly `Disposition: <CLEAR, CLEAR with notes or BLOCK>, lane {fx['token']}` (the train readers, train-due.py and train-wait.py, find the lane on that line), then MAJOR, MINOR, Verified sound, Not covered. Every finding with file:line at {at}.{guard}
 """
     return out_name, body
 
@@ -606,6 +607,8 @@ def main():
     out = a.out or os.path.join(under_root(CFG["briefs_dir"]), name)
     if os.path.exists(out) and not a.force:
         sys.exit("brief-gen: %s exists; pass --force to overwrite" % out)
+    if os.path.isdir(out):  # --force never writes over a folder, and a folder is never a traceback
+        sys.exit("brief-gen: refused, --out is a folder, not a file: %s" % out.replace("\\", "/"))
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)  # a fresh evidence root has no briefs folder yet
     with open(out, "w", encoding="utf-8", newline="\n") as f:
         f.write(body)

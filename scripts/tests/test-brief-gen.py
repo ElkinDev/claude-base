@@ -258,6 +258,38 @@ def main():
         check("a first run on an evidence root with no briefs folder creates it, no traceback",
               fresh_root_gets_its_briefs_folder)
 
+        def out_folder_refused():
+            ev = os.path.join(tmp, "ev-fresh")
+            a_dir = os.path.join(tmp, "a folder")
+            os.makedirs(a_dir, exist_ok=True)
+            r = subprocess.run([sys.executable, SCRIPT, "review", "e2e", "--out", a_dir, "--force", "--force-review"],
+                               capture_output=True, text=True, timeout=60,
+                               env=dict(os.environ, BRIEF_GEN_CONFIG=os.path.join(tmp, "e2e.json"), EVIDENCE_ROOT=ev))
+            return (r.returncode == 1 and "--out is a folder" in r.stderr and "Traceback" not in r.stderr
+                    and os.path.isdir(a_dir))
+        check("an --out that is a folder is refused with one line, no traceback, even with --force", out_folder_refused)
+
+        def review_names_its_lane_on_line_1():
+            # train-due.py and train-wait.py find a review's lane on its line 1
+            configure()
+            _, body = mod.review_brief(dict(FX), args)
+            _, delta = mod.review_brief(dict(FX), argparse.Namespace(**dict(vars(args), delta=2, review="r.md")))
+            want = "`Disposition: <CLEAR, CLEAR with notes or BLOCK>, lane %s`" % FX["token"]
+            return want in body and want in delta
+        check("a review brief asks for the verdict and the lane token on the review's first line",
+              review_names_its_lane_on_line_1)
+
+        def disposition_drops_the_lane():
+            p = os.path.join(tmp, "disp.md")
+            got = []
+            for first in ("Disposition: BLOCK, lane demo\n", "Disposition: CLEAR with notes, lane demo\n",
+                          "Disposition: BLOCK (1 MAJOR)\n"):
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(first)
+                got.append(mod.disposition(p))
+            return got == ["BLOCK", "CLEAR with notes", "BLOCK (1 MAJOR)"]
+        check("the quoted disposition drops the lane the review's first line names", disposition_drops_the_lane)
+
         # The review guards and the no-git shape, on a temp evidence root with no config (the defaults).
         ev = os.path.join(tmp, "ev-guards")
         for sub in ("lanes", "briefs", "reviews"):
