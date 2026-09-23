@@ -1,0 +1,420 @@
+"""brief-gen.py: the review, fix and notes briefs of a lane from its facts on disk.
+
+A hand-written review, fix or notes brief is mostly the same text every time: the reader, deliverable, role and
+budget paragraph, the lane's facts (worktree, branch, base, tip, commits, brief and report paths) and the standard
+Checks, Report and Forbidden sections. This script writes those parts from disk and git, quotes the reviewer's
+findings verbatim for a fix or notes brief, and leaves the architect's part (the attack points, the change, the
+pins) to one argument or to a marked placeholder. One shell call replaces one long Write; the reasoning stays typed
+by the orchestrator.
+
+  python brief-gen.py review <token> [--delta N --review <path>] [--attack "1. ...\\n2. ..."] [--tools 14] [--out <path>]
+  python brief-gen.py fix    <token> --review <path> [--round N] [--change "..."] [--pins "..."] [--tests "..."] [--out <path>]
+  python brief-gen.py notes  <token> --review <path> [--change "..."] [--pins "..."] [--tests "..."] [--out <path>]
+
+Facts: the newest <lanes>/<slug>-<date>.md whose title starts with "# Lane <token>" gives the slug, the item (an id
+in brackets such as (ABC-12), (item 7) or (3.2)) and the topic; the worktree is the configured pattern with the token
+filled in, or the report's "Worktree <path>" word when the pattern is unset or names no folder; git gives branch,
+tip, base (merge-base with the base branch) and the commits above the base. The output path defaults to
+<briefs>/<slug>-review-<today>.md, -fixN-, -notes-; an existing file is never overwritten (--force). The text is
+printed to stdout as well, so the caller reads what it launched. Placeholders are marked <<...>> and brief-check.py
+still grades the result (Report section present, a test class name under Pins): fill --pins, or a launch hook with
+a deny tier of 2 or more refuses the brief.
+
+Configuration: brief-gen.json beside this script, or the file BRIEF_GEN_CONFIG names; copy brief-gen.example.json
+and edit it. Every key is optional and the defaults write a brief that names no build tool and no machine path:
+  evidence_root      the folder holding the lanes, briefs and reviews folders; default EVIDENCE_ROOT, else the
+                     working directory
+  lanes_dir, briefs_dir, reviews_dir   relative to the evidence root; default lanes, briefs, reviews
+  template           the lane brief template the hostile-input line points at, relative to the evidence root
+                     unless absolute; default briefs/TEMPLATE-lane-brief.md
+  worktree           the worktree of a lane, {token} filled in, for example "C:/src/myapp-{token}"; default null
+  base_branch        the branch the base is the merge-base with; default main
+  laws               a laws file named in the implementer briefs; default null, the sentence is left out
+  subject_suffix     what every commit subject ends with, for example "[skip ci]"; default "", nothing asked
+  own_tests_command  the command that runs the lane's own test classes on its tip. {worktree} (as written),
+                     {worktree_posix} (/c/... form), {worktree_native} (C:/... form), {tag} and {tests} are filled
+                     in; default null, a placeholder
+  own_tests_done     the file that run writes when it ends, same fields; when set, the lane ends its turn on it
+                     instead of waiting; default null
+  precheck_command   a static check of the tip run after the tests, {worktree}, {worktree_posix} and
+                     {worktree_native} filled in; default null, the line is left out
+  review_tools, fix_tools   the tool budgets; default 14 and 20
+A config file that is not a JSON object, or a key of the wrong type, is exit 2 with the reason: a brief written on
+a half-read config would carry the wrong commands.
+"""
+import argparse
+import datetime
+import glob
+import json
+import os
+import re
+import subprocess
+import sys
+
+TODAY = datetime.date.today().strftime("%Y-%m-%d")
+DEFAULTS = {
+    "evidence_root": None, "lanes_dir": "lanes", "briefs_dir": "briefs", "reviews_dir": "reviews",
+    "template": "briefs/TEMPLATE-lane-brief.md", "worktree": None, "base_branch": "main", "laws": None,
+    "subject_suffix": "", "own_tests_command": None, "own_tests_done": None, "precheck_command": None,
+    "review_tools": 14, "fix_tools": 20,
+}
+INT_KEYS = ("review_tools", "fix_tools")
+REQUIRED_STR = ("lanes_dir", "briefs_dir", "reviews_dir", "template", "base_branch")
+TEMPLATE_KEYS = ("own_tests_command", "own_tests_done", "precheck_command")
+
+
+class ConfigError(Exception):
+    pass
+
+
+def load_config(path=None):
+    """DEFAULTS overlaid with the config file; no file is the defaults, a bad file is ConfigError."""
+    path = path or os.environ.get("BRIEF_GEN_CONFIG") or os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                                      "brief-gen.json")
+    cfg = dict(DEFAULTS)
+    if not os.path.exists(path):
+        if os.environ.get("BRIEF_GEN_CONFIG"):
+            raise ConfigError("BRIEF_GEN_CONFIG names %s, which does not exist" % path)
+        return cfg
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        raise ConfigError("%s cannot be read as JSON (%s)" % (path, e))
+    if not isinstance(data, dict):
+        raise ConfigError("%s is not a JSON object" % path)
+    for k, v in data.items():
+        if k.startswith("_"):
+            continue
+        if k not in DEFAULTS:
+            raise ConfigError("%s has an unknown key %r" % (path, k))
+        if k in INT_KEYS:
+            if not isinstance(v, int) or isinstance(v, bool) or v < 1:
+                raise ConfigError("%s: %s must be a whole number above 0" % (path, k))
+        elif k in REQUIRED_STR:
+            if not isinstance(v, str) or not v.strip():
+                raise ConfigError("%s: %s must be a string that is not blank" % (path, k))
+        elif v is not None and not isinstance(v, str):
+            raise ConfigError("%s: %s must be a string or null" % (path, k))
+        cfg[k] = v
+    for k in TEMPLATE_KEYS:  # a stray brace would otherwise fail at render time, after the facts were read
+        if cfg[k]:
+            try:
+                cfg[k].format(worktree="w", worktree_posix="w", worktree_native="w", tag="t", tests="s")
+            except (KeyError, IndexError, ValueError) as e:
+                raise ConfigError("%s: %s has a field this script does not fill (%s); write a literal brace as {{ or }}"
+                                  % (path, k, e))
+    return cfg
+
+
+CFG = dict(DEFAULTS)
+
+
+def root():
+    return CFG["evidence_root"] or os.environ.get("EVIDENCE_ROOT") or os.getcwd()
+
+
+def under_root(rel):
+    return (rel if os.path.isabs(rel) else os.path.join(root(), rel)).replace("\\", "/")
+
+
+def hostile_line():
+    return ("If this round writes or changes a script (a file under scripts/, or a .py, .ps1, .sh or .ts file), "
+            "the appended section also carries the hostile-input table of the Report section of %s: one row per "
+            "probe H1 to H8, each under `timeout 120` and never against a shared build lock, a device lock, the "
+            "register or a device." % under_root(CFG["template"]))
+
+
+def native(p):
+    """C:/... form of a path (a /c/... path is refused by Windows tools)."""
+    p = p.replace("\\", "/")
+    if len(p) > 2 and p[0] == "/" and p[2] == "/":
+        return p[1].upper() + ":" + p[2:]
+    return p
+
+
+def posix(path):
+    m = re.match(r"^([A-Za-z]):/(.*)$", path.replace("\\", "/"))
+    return "/%s/%s" % (m.group(1).lower(), m.group(2)) if m else path
+
+
+def fill(template, wt, **extra):
+    return template.format(worktree=wt, worktree_posix=posix(wt), worktree_native=native(wt), **extra)
+
+
+def git(wt, *args):
+    r = subprocess.run(["git", "-C", wt] + list(args), capture_output=True, text=True, timeout=60)
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def subject_rule():
+    """' ending `X`' when a subject suffix is configured, else nothing."""
+    return " ending `%s`" % CFG["subject_suffix"] if CFG["subject_suffix"] else ""
+
+
+def lane_facts(token):
+    lanes = under_root(CFG["lanes_dir"])
+    reports = sorted(glob.glob(os.path.join(lanes, "*.md")), key=os.path.getmtime, reverse=True)
+    pat = re.compile(r"^# Lane %s\b" % re.escape(token))
+    for rp in reports:
+        with open(rp, encoding="utf-8", errors="replace") as f:
+            head = f.read(4000)
+        title = head.splitlines()[0] if head else ""
+        if not pat.match(title):
+            continue
+        name = os.path.basename(rp)[:-3]
+        m = re.search(r"^(.*)-(\d{4}-\d{2}-\d{2})$", name)
+        slug, rdate = (m.group(1), m.group(2)) if m else (name, TODAY)
+        item = re.search(r"\(([A-Za-z]+-\d+|item \d+|\d+(?:\.\d+)*)\)", title)
+        topic = title.split(":", 1)[1].strip() if ":" in title else ""
+        topic = re.sub(r",?\s*\d{4}-\d{2}-\d{2}$", "", topic)  # a report title that ends with its date
+        wt = CFG["worktree"].replace("{token}", token) if CFG["worktree"] else ""
+        mw = re.search(r"[Ww]orktree `?([A-Za-z]:/[^\s,`]+|/[^\s,`]+)", head)
+        if (not wt or not os.path.isdir(wt)) and mw:
+            wt = mw.group(1)
+        wt = wt or "<<worktree: set worktree in the config or name it in the report>>"
+        briefs = under_root(CFG["briefs_dir"])
+        brief = os.path.join(briefs, "%s-%s.md" % (slug, rdate)).replace("\\", "/")
+        if not os.path.exists(brief):
+            cands = sorted(glob.glob(os.path.join(briefs, slug + "-20*.md")))
+            brief = cands[-1].replace("\\", "/") if cands else brief + " <<brief not found>>"
+        return {"token": token, "slug": slug, "item": item.group(1) if item else "<<item>>", "topic": topic,
+                "report": rp.replace("\\", "/"), "brief": brief, "wt": wt}
+    sys.exit("brief-gen: no lane report whose title starts with '# Lane %s' under %s" % (token, lanes))
+
+
+def git_facts(fx):
+    wt = fx["wt"]
+    if not os.path.isdir(wt):
+        fx.update(branch="<<branch>>", tip="<<tip>>", base="<<base>>", commits=["<<commits: worktree %s not found>>" % wt])
+        return fx
+    if not git(wt, "rev-parse", "HEAD"):
+        why = "<<%s is not a git worktree (directory present, worktree pruned)>>" % wt
+        fx.update(branch=why, tip=why, base=why, commits=[why])
+        return fx
+    fx["branch"] = git(wt, "rev-parse", "--abbrev-ref", "HEAD") or "<<branch>>"
+    fx["tip"] = (git(wt, "rev-parse", "HEAD") or "<<tip>>")[:9]
+    base = git(wt, "merge-base", "HEAD", CFG["base_branch"])
+    fx["base"] = base[:9] if base else "<<base>>"
+    log = git(wt, "log", "--format=%h %s", "%s..HEAD" % base) if base else ""
+    fx["commits"] = log.splitlines() if log else ["<<no commits above the base>>"]
+    return fx
+
+
+def findings(review_path, kinds):
+    """The numbered or bulleted items under the '## MAJOR' and '## MINOR' headings of a review file, verbatim,
+    plus lines that open with MAJOR n or MINOR n outside those headings (the two shapes reviews are written in)."""
+    with open(review_path, encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    out, section, last_section = [], None, None
+    for line in text.splitlines():
+        m = re.match(r"^##\s+(MAJOR|MINOR)\b", line)
+        if m:
+            section = m.group(1)
+            continue
+        if line.startswith("#"):
+            section = None
+            continue
+        s = line.strip()
+        if not s or s.lower().rstrip(".") in ("none", "no findings", "nothing"):
+            continue
+        if section in kinds and (re.match(r"^(\d+\.|-|\*)\s+", s) or re.match(r"^(MAJOR|MINOR)\b", s)):
+            n = re.match(r"^(\d+)\.", s)
+            body = re.sub(r"^(\d+\.|-|\*)\s+", "", s)
+            if re.match(r"^(MAJOR|MINOR)\b", body):
+                out.append(body)  # the item names its own severity ("1. MAJOR file:line ..." or "MAJOR 1: ...")
+            else:
+                out.append("%s %s: %s" % (section, n.group(1) if n else "", body))
+            last_section = section
+        elif section in kinds and out and section == last_section:
+            out[-1] += " " + s  # a continuation line of the item above, same heading only
+        elif section is None and re.match(r"^(MAJOR|MINOR)\s*\d*\s*[:,.]", s) and s[:5] in kinds:
+            out.append(s)
+            last_section = None
+    return out
+
+
+def disposition(review_path):
+    with open(review_path, encoding="utf-8", errors="replace") as f:
+        head = [next(f, "") for _ in range(12)]
+    for i, l in enumerate(head):
+        if "disposition" in l.lower() or l.lstrip("# *").startswith(("CLEAR", "BLOCK")):
+            t = l if re.search(r"CLEAR|BLOCK", l) else next((x for x in head[i + 1:] if x.strip()), "")
+            m = re.search(r"(CLEAR with notes|CLEAR|BLOCK)[^.\n]*", t)
+            if m:
+                return m.group(0).strip()
+    return "<<disposition>>"
+
+
+def own_tests_line(fx, tag, tests):
+    """The Checks line that runs the lane's own test classes on its committed tip."""
+    tests = tests or "<<the test selection: your own test classes, never a whole suite>>"
+    cmd = CFG["own_tests_command"]
+    if not cmd:
+        return ("<<the command that runs your own test classes (%s) on the committed tip, tag %s; the report names "
+                "the tag and the exit>>" % (tests, tag))
+    line = "`%s`" % fill(cmd, fx["wt"], tag=tag, tests=tests)
+    if CFG["own_tests_done"]:
+        done = fill(CFG["own_tests_done"], fx["wt"], tag=tag, tests=tests)
+        line += (", then END YOUR TURN with %s as your last line: no watcher, no polling, no sleep; the launch is a "
+                 "FOREGROUND tool call that returns at once, never run_in_background. The orchestrator resumes you "
+                 "with the verdict." % done)
+    else:
+        line += "; the report names the tag and the exit."
+    return line
+
+
+def review_brief(fx, a):
+    delta = a.delta
+    kind = "Delta review of lane %s round %d" % (fx["token"], delta) if delta else "Review of lane %s" % fx["token"]
+    out_name = "%s-fix%d-review-%s.md" % (fx["slug"], delta - 1, TODAY) if delta else "%s-review-%s.md" % (fx["slug"], TODAY)
+    reviews = under_root(CFG["reviews_dir"])
+    report = ("%s/%s-fix%d-%s.md" % (reviews, fx["slug"], delta - 1, TODAY) if delta
+              else "%s/%s-%s.md" % (reviews, fx["slug"], TODAY))
+    lane_word = "The delta" if delta else "The lane"
+    tools = a.tools or CFG["review_tools"]
+    commits = "; ".join(fx["commits"])
+    suffix = "subjects end %s, " % CFG["subject_suffix"] if CFG["subject_suffix"] else ""
+    attack = (a.attack.replace("\\n", "\n") if a.attack else
+              "1. <<what must be true at the tip, with file:line; three to six numbered points, the last one hygiene: "
+              "%sno attribution, no amend, only the named paths touched>>" % suffix)
+    prev = ("Previous review: %s (read it first; every MAJOR must be closed at the new tip, every MINOR answered or "
+            "carried).\n\n" % a.review) if delta and a.review else ""
+    runs = ""
+    if CFG["own_tests_done"]:
+        runs = " Test runs under %s/." % os.path.dirname(fill(CFG["own_tests_done"], fx["wt"], tag="x", tests=""))
+    purpose = a.purpose or "<<one of quality, optimization, automation, token reduction, and the number it proves>>"
+    body = f"""# {kind} ({fx['item']}): {fx['topic']}, {TODAY}
+
+Your reader is a session, never a person. Write in English. The deliverable is {report}; your last message is one line naming that path, no summary. Role: reviewer (read only toward the repo: no build, no lock, no git write; if your tools carry no Write tool, write the report through Bash with a quoted heredoc). Plan for {tools} tool uses and write the report by turn {max(4, tools - 2)}. Purpose: {purpose}.
+
+## {lane_word}
+
+Worktree {fx['wt']}, branch {fx['branch']}, base {fx['base']} (merge-base with {CFG['base_branch']}), tip {fx['tip']}, commits above the base: {commits}. Brief: {fx['brief']}. Report: {fx['report']} (read it whole, Open items included).{runs}
+
+{prev}## Attack
+
+{attack}
+
+## Report
+
+{report}, at most 40 lines: Disposition (CLEAR, CLEAR with notes, BLOCK) on the first line, then MAJOR, MINOR, Verified sound, Not covered. Every finding with file:line at {fx['tip']}.
+"""
+    return out_name, body
+
+
+def fix_or_notes_brief(fx, a, kind):
+    rnd = a.round if kind == "fix" else None
+    kinds = ("MAJOR", "MINOR") if kind == "fix" else ("MINOR",)
+    quoted = findings(a.review, kinds) if a.review else []
+    quoted_text = ("\n".join("- %s" % q for q in quoted) if quoted else
+                   "- <<no %s item found under a '## MAJOR' or '## MINOR' heading of %s; quote them here by hand>>"
+                   % ("/".join(kinds), a.review))
+    disp = disposition(a.review) if a.review else "<<disposition>>"
+    section = "## Round %d" % rnd if kind == "fix" else "## Notes applied"
+    out_name = "%s-fix%d-%s.md" % (fx["slug"], rnd - 1, TODAY) if kind == "fix" else "%s-notes-%s.md" % (fx["slug"], TODAY)
+    title = "Lane %s round %d" % (fx["token"], rnd) if kind == "fix" else "Lane %s notes" % fx["token"]
+    budget = a.tools or CFG["fix_tools"]
+    tag = "%s-fix%d" % (fx["token"], rnd - 1) if kind == "fix" else "%s-notes" % fx["token"]
+    ending = subject_rule()
+    change = a.change or ("<<the change: one commit%s, the items above; every other file stays>>" % (
+        ", subject" + ending if ending else "") if kind == "fix" else
+        "<<the change per note, one commit%s>>" % (", subject" + ending if ending else ""))
+    pins = a.pins or "<<the test class names that prove it, one per line; a red-by-mutation line when the review asked for one>>"
+    purpose_kind = ("blocked round %d (%s)" % (rnd - 1, disp)) if kind == "fix" else ("is %s" % disp)
+    laws = " Laws: %s." % CFG["laws"] if CFG["laws"] else ""
+    if CFG["precheck_command"]:
+        precheck = ("- Then `%s` on the new tip; paste its line. No commit after it. Never poll in a loop of tool "
+                    "calls, never tail -f.\n" % fill(CFG["precheck_command"], fx["wt"]))
+        precheck_report = ", the precheck line"
+    else:
+        precheck, precheck_report = "- Never poll in a loop of tool calls, never tail -f.\n", ""
+    body = f"""# {title} ({fx['item']}): {fx['topic']}, {TODAY}
+
+Your reader is a session, never a person. Write in English. The deliverable is a "{section}" section appended to {fx['report']}; your last message is one line naming that path, no summary. No attribution lines in commits or reports. Role: implementer-light.{laws} Budget {budget} tool uses.
+
+## Purpose
+
+Quality. The review {a.review or '<<review path>>'} {purpose_kind} on {fx['tip']}. The number: <<the count that proves it, one today, zero after>>.
+
+## Where
+
+Worktree {fx['wt']}, branch {fx['branch']}, tip {fx['tip']} (verify with git rev-parse; commit on top, never amend or rebase). No build run except the one under Checks.
+
+## The review, quoted
+
+{quoted_text}
+
+## Change, one commit{', subject' + ending if ending else ''}
+
+{change}
+
+## Pins
+
+{pins}
+
+## Checks
+
+- Green, on the committed tip: {own_tests_line(fx, tag, a.tests)}
+{precheck}- The gate and the {'delta review' if kind == 'fix' else 'train'} are the orchestrator's.
+
+## Report
+
+Append "{section}" to {fx['report']}, at most {'40' if kind == 'fix' else '25'} lines: the new tip and the commit subject, the changes, the test run tag and exit{precheck_report}, and Open items if any.
+
+{hostile_line()}
+
+## Forbidden
+
+Any file outside the ones the review names; any amend or rebase; any worktree other than {fx['wt']}.
+"""
+    return out_name, body
+
+
+def main():
+    global CFG
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("kind", choices=["review", "fix", "notes"])
+    ap.add_argument("token")
+    ap.add_argument("--review", help="the review file the fix or notes brief quotes (or the previous review of a delta review)")
+    ap.add_argument("--delta", type=int, default=0, help="review: the round this delta review reads (2 for the first fix)")
+    ap.add_argument("--round", type=int, default=2, help="fix: the round the implementer opens")
+    ap.add_argument("--attack", help="review: the numbered attack points (\\n separated)")
+    ap.add_argument("--change", help="fix or notes: the change section")
+    ap.add_argument("--pins", help="fix or notes: the pins section; name a test class (ending in Test) or a golden")
+    ap.add_argument("--tests", help="fix or notes: the test selection of the own-tests run")
+    ap.add_argument("--purpose", help="review: the purpose line (one of the four and its number)")
+    ap.add_argument("--tools", type=int, default=None, help="the tool budget (review_tools and fix_tools by default)")
+    ap.add_argument("--out")
+    ap.add_argument("--force", action="store_true")
+    a = ap.parse_args()
+    if not a.token.strip():  # a blank token would write a brief of placeholders
+        ap.error("give a lane token that is not blank")
+    try:
+        CFG = load_config()
+    except ConfigError as e:
+        print("brief-gen: %s" % e, file=sys.stderr)
+        return 2
+    if a.review:
+        a.review = os.path.abspath(a.review).replace("\\", "/")
+        if not os.path.exists(a.review):
+            sys.exit("brief-gen: review file not found: %s" % a.review)
+    fx = git_facts(lane_facts(a.token))
+    if a.kind == "review":
+        name, body = review_brief(fx, a)
+    else:
+        if not a.review:
+            sys.exit("brief-gen: %s needs --review <file>" % a.kind)
+        name, body = fix_or_notes_brief(fx, a, a.kind)
+    out = a.out or os.path.join(under_root(CFG["briefs_dir"]), name)
+    if os.path.exists(out) and not a.force:
+        sys.exit("brief-gen: %s exists; pass --force to overwrite" % out)
+    with open(out, "w", encoding="utf-8", newline="\n") as f:
+        f.write(body)
+    sys.stdout.write(body)
+    print("brief-gen wrote %s (%d chars, %d placeholders)" % (out.replace("\\", "/"), len(body), body.count("<<")))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

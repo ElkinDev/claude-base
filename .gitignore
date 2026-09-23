@@ -32,3 +32,5 @@ claude/hooks/inflight-state/
 
 # the sanitization guard's private denylist: the real names, never committed (ADR-007)
 .sanitize/
+scripts/brief-gen.json
+scripts/ledger-config.json
