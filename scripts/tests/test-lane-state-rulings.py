@@ -223,8 +223,8 @@ class RenderCase(unittest.TestCase):
         last = lines.index(self.rows[-1])
         # The next section follows the last row directly: no cut marker sits inside the
         # rulings. The owner reports section prints between them and the gates.
-        self.assertTrue(lines[last + 1].startswith("## "),
-                        "a cut marker or another line follows the rulings: %r" % lines[last + 1])
+        self.assertEqual(lines[last + 1], lane_state.reports_heading(self.config),
+                         "a cut marker or another line follows the rulings: %r" % lines[last + 1])
         cut_markers = [line for line in lines if line.endswith(" lines cut]")]
         self.assertTrue(cut_markers, "no cuttable section was cut at max_lines=40")
         lane_rows = [line for line in lines if line.startswith("lanes/lane-")]

@@ -71,8 +71,9 @@ LANDING_ROW_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2} ")
 # and the same row with no leading "- ", the shape a row-writing helper appends. A reader that
 # knows only one of them silently drops every row of the other, newest included.
 RULING_ROW_RE = re.compile(r"^(?:- )?\d{4}-\d{2}-\d{2} [0-9x]{2}:[0-9x]{2} \[")
-# A lane merge on main: "Merge lane <token> (...) into <branch>", the subject train-wait.py reads.
-LANE_MERGE_RE = re.compile(r"^Merge lane (\S+) .*? into (\S+)")
+# A lane merge on main, in the subjects scripts/train-wait.py reads: "Merge lane <token> (...) into
+# <branch>", "Merge lane <token> into <branch>" and "merge(train): <token> into <branch>".
+LANE_MERGE_RE = re.compile(r"^(?:Merge lane|merge\(train\):) (\S+) (?:.*? )?into (\S+)")
 
 STAMP_RE = re.compile(r"^\[(?P<h>\d{2}):(?P<m>\d{2}):(?P<s>\d{2})\]")
 LOCK_TAKEN_RE = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] LOCK taken")

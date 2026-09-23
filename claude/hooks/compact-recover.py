@@ -145,9 +145,10 @@ RULINGS_FILE = os.path.join(os.path.expanduser("~"), ".claude", "rulings.md")
 RULINGS_ROWS = 30
 # The block prints before the state sheet, so what CAP trims from the tail of a long run is
 # the sheet and the notes line, never a ruling. After a compaction the open-asks block (up to
-# ASKS_COMPACT_CAP) prints before this one, and rows written by a helper run longer than hand
-# rows, so 7,200 keeps the asks and the rulings together inside the room the rulings alone
-# had at 7,600; a bigger block pushed the whole output past CAP and cut the state sheet.
+# ASKS_COMPACT_CAP, 450) prints before this one, and rows written by a helper run longer than
+# hand rows, so 7,200 plus the 450 of the asks comes to 7,650, fifty characters over the room
+# the rulings alone had at 7,600; a bigger block pushed the whole output past CAP and cut the
+# state sheet.
 RULINGS_CAP = 7200
 RULINGS_MARKER = "\n[rulings cut, open the file]"
 # A register row: the time is xx:xx when it is not on record, so both halves take x. Two row
@@ -240,14 +241,18 @@ def open_asks(data, cap=ASKS_CAP):
     "" for a subagent's payload, with no file or with no open ask. Never raises: it prints at
     every start.
 
-    The heading plus one clipped row plus the marker fit in ASKS_COMPACT_CAP, so the count and
-    the last written ask always survive the smaller cap.
+    The count and the last written ask always survive the smaller cap: when the file's path
+    leaves no room for that row the heading names the file alone, and a row that still does
+    not fit prints clipped to the room left.
     """
     if data.get("agent_id") or data.get("agent_type"):
         return ""
     try:
         pattern = os.environ.get("CLAUDE_DECISIONS_GLOB") or DECISIONS_GLOB
-        files = sorted(f for f in glob.glob(pattern) if DATED_NAME_RE.search(f))
+        # the newest by the date in the name, then by path: a glob over several prefixes
+        # (asks-*.md beside notes-*.md) must not pick by prefix
+        files = sorted((f for f in glob.glob(pattern) if DATED_NAME_RE.search(f)),
+                       key=lambda f: (DATED_NAME_RE.search(f).group(0), f))
         if not files:
             return ""
         path = files[-1].replace("\\", "/")
@@ -257,12 +262,21 @@ def open_asks(data, cap=ASKS_CAP):
         return ""
     if not rows:
         return ""
-    text = ("Open owner asks (%d) in %s, last written first; rows clipped: read the row in the file"
-            " and restate an ask whole, never by number:" % (len(rows), path))
-    for row in reversed(rows):
-        row = row if len(row) <= ASK_CLIP else row[:ASK_CLIP - 6] + " [cut]"
-        if len(text) + 1 + len(row) + len(ASKS_MORE) > cap:
-            text += ASKS_MORE
+    clipped = [row if len(row) <= ASK_CLIP else row[:ASK_CLIP - 6] + " [cut]" for row in reversed(rows)]
+
+    def heading(where):
+        return ("Open owner asks (%d) in %s, last written first; rows clipped: read the row in the file"
+                " and restate an ask whole, never by number:" % (len(rows), where))
+    text = heading(path)
+    if len(text) + 1 + len(clipped[0]) + len(ASKS_MORE) > cap:
+        text = heading(os.path.basename(path))  # a long path would leave no room for the newest ask
+    for i, row in enumerate(clipped):
+        room = cap - len(text) - 1 - len(ASKS_MORE)
+        if len(row) > room:
+            if i == 0:  # the last written ask always prints, clipped to the room left
+                text += "\n" + row[:max(room - 6, 0)] + " [cut]"
+            if len(clipped) > 1:
+                text += ASKS_MORE
             break
         text += "\n" + row
     return text

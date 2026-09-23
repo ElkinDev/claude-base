@@ -414,6 +414,14 @@ class MainMergesTest(unittest.TestCase):
             "b2b2b2b 2026-09-22 18:30 Merge branch 'hotfix' into main",
         ])
 
+    def test_every_subject_shape_train_wait_reads_folds_into_its_train(self):
+        lane_state.run_git = lambda args, cwd=None: "\n".join([
+            "f6f6f6f|2026-09-22 19:40:00 +0000|merge(train): dd4 into train-b2",
+            "e5e5e5e|2026-09-22 19:30:00 +0000|Merge lane cc3 into train-b2",
+        ]) + "\n"
+        self.assertEqual(lane_state.main_merges("some-repo"),
+                         ["train-b2 2026-09-22 19:40 2 lanes e5e5e5e..f6f6f6f: cc3 dd4"])
+
     def test_no_repository_means_no_line_and_no_git(self):
         def refuse(args, cwd=None):
             raise AssertionError("git ran with no repository configured")

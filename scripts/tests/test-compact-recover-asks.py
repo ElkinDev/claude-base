@@ -166,6 +166,27 @@ class OpenAsksCase(unittest.TestCase):
         self.assertLessEqual(max(sizes), ASKS_CAP)
         self.assertGreater(max(sizes), ASKS_CAP - len(MARKER) - 2)
 
+    def test_the_newest_file_is_read_by_the_date_in_its_name_not_by_its_prefix(self):
+        folder = self.tmp + "/mixed"
+        os.makedirs(folder)
+        self.write(folder, "asks-2026-09-23.md", "- 08:0x today ask, PROPOSED.\n")
+        self.write(folder, "zz-notes-2026-01-05.md", "- 08:0x january row PROPOSED.\n")
+        block = asks_block(self.run_hook(self.payload, args=("--rulings",), decisions_glob=folder + "/*.md"))
+        self.assertIn("today ask", block)
+        self.assertNotIn("january row", block)
+
+    def test_a_long_path_never_drops_the_newest_ask_after_a_compaction(self):
+        folder = self.tmp + "/" + "a-very-long-folder-name-" * 5
+        os.makedirs(folder)
+        self.write(folder, "owner-decisions-2026-09-23.md",
+                   "".join("- %02d:0x ask %02d %s PROPOSED.\n" % (i, i, "y" * 190) for i in range(3)))
+        block = asks_block(self.run_hook(self.compact, decisions_glob=folder + "/owner-decisions-*.md"))
+        self.assertLessEqual(len(block), ASKS_COMPACT_CAP)
+        self.assertIn("Open owner asks (3)", block)
+        self.assertIn("owner-decisions-2026-09-23.md", block)
+        self.assertIn("- 02:0x ask 02", block)
+        self.assertTrue(block.endswith(MARKER))
+
     def test_a_subagent_gets_no_asks_at_either_entry_and_the_rulings_still_print(self):
         for extra in ({"agent_type": "reviewer"}, {"agent_id": "a0000000000000000"}):
             for payload, args in ((self.payload, ("--rulings",)), (self.compact, ())):
