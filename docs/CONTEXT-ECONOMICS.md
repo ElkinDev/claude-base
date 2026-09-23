@@ -484,3 +484,50 @@ extrapolated: the toolkit does not guess how many tokens are left before the win
 `scripts/usage-probe.py --csv` is the same row the nightly ledger has always appended, byte for
 byte. The design, the states and the decisions behind the knobs are in
 `docs/03-features/F14-quota-wake.md`.
+
+## 12. Waiting without a session: the gate courier
+
+A long build or test run started from a session tempts the session to wait for it: a background
+wait command, or a subagent that arms a watcher. Both are paid in context. The wait's end wakes
+the session, and a wake is a full turn, the whole context re-sent to read one exit code. On one
+measured morning (2026-09-16, not the day of the numbers above) an orchestrator took one
+full-context turn per gate ending (a mean of 275k
+tokens, 13 endings of 13), a low-memory guard killed two of those background waits (426k per
+wake), and subagents that waited by re-arming watchers re-sent 5.48M tokens in 48 turns.
+
+The fix has the watcher's shape again: a resident process that belongs to no session, so no
+session pays for it and no guard that kills a session's children kills it. In the private tree it
+is a bash script, one per orchestrator session, launched detached. Each pass (every 20 seconds)
+it lists the mtime of every gate exit file and every build `.done` marker in one stat, reads only
+the files that changed, and queues each ending once, keyed by path, mtime and exit code, so a file
+reused after a relaunch is a new ending when it ends again. It reports what ends after it starts,
+and a restart delivers what ended while no courier ran.
+
+Delivery is where the design was wrong twice. The first rule typed a line into the orchestrator's
+pane only when the pane was idle with an empty input box. It held every ending of a working
+morning (35 of 35, 2026-09-23), because a terminal multiplexer reads a session as working whenever any of its
+subagents runs, which for an orchestrator is nearly always. Typing into a working pane was worse:
+the screen read could not rule out a survey or a menu that the typed text would answer. The rule
+that works splits the two cases:
+
+- Pane idle, box empty, no chooser in the last screen rows: the line is typed and submitted.
+- Pane working: the line goes to an outbox file, and a PostToolUse hook in the session hands it
+  to the model as additional context after the session's next tool call. Nothing is typed, and
+  the session reads the ending in a turn it was taking anyway.
+
+Endings that finish together share one line: a delivery is held until 600 seconds after the
+previous one (13 endings of a morning were 12 lines at 300 seconds, 9 at 600), while the first
+ending after a quiet spell goes out at once. The line says it is machine text, not the owner, and
+names the files to read; the session reads the exit file itself rather than trusting the line.
+
+What it serves and what proves it: the number of gate-ending notifications and guard kills that
+reached the main session per day, to zero, with the courier's own log of deliveries and hand-overs
+beside it. The hand-over path is new (first hand-over recorded in a session transcript on its day
+of adoption) and is kept only if hand-overs occur on each of the next two measured windows.
+
+The code is not in this kit. It watches the exit files of a lane-gate runner and the markers of a
+build mutex that are specific to one project and are not carried here either; without them it has
+nothing to watch. The pattern carries: a resident watcher with no model cost, a queue keyed so a
+restart neither loses nor repeats an ending, batching by a hold after the previous delivery, and
+two delivery paths chosen by what the pane is doing, with the busy path going through a hook
+instead of the keyboard.
