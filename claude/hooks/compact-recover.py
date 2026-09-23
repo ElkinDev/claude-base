@@ -267,11 +267,13 @@ def open_asks(data, cap=ASKS_CAP):
     def heading(where):
         return ("Open owner asks (%d) in %s, last written first; rows clipped: read the row in the file"
                 " and restate an ask whole, never by number:" % (len(rows), where))
+    def marker_room(i):  # the marker prints only when rows older than row i exist
+        return len(ASKS_MORE) if i < len(clipped) - 1 else 0
     text = heading(path)
-    if len(text) + 1 + len(clipped[0]) + len(ASKS_MORE) > cap:
+    if len(text) + 1 + len(clipped[0]) + marker_room(0) > cap:
         text = heading(os.path.basename(path))  # a long path would leave no room for the newest ask
     for i, row in enumerate(clipped):
-        room = cap - len(text) - 1 - len(ASKS_MORE)
+        room = cap - len(text) - 1 - marker_room(i)
         if len(row) > room:
             if i == 0:  # the last written ask always prints, clipped to the room left
                 text += "\n" + row[:max(room - 6, 0)] + " [cut]"

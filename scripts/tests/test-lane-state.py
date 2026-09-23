@@ -418,9 +418,11 @@ class MainMergesTest(unittest.TestCase):
         lane_state.run_git = lambda args, cwd=None: "\n".join([
             "f6f6f6f|2026-09-22 19:40:00 +0000|merge(train): 9d9d9d9 into train-b2, dd4: a topic [skip ci]",
             "e5e5e5e|2026-09-22 19:30:00 +0000|Merge lane cc3 into train-b2",
+            "d4d4d4d|2026-09-22 19:20:00 +0000|merge(train): 4967fac into train-b2, ee5-long-token [skip ci]",
+            "c3c3c3c|2026-09-22 19:10:00 +0000|Merge lane ff6 (one commit) into train-b2, extra words",
         ]) + "\n"
         self.assertEqual(lane_state.main_merges("some-repo"),
-                         ["train-b2 2026-09-22 19:40 2 lanes e5e5e5e..f6f6f6f: cc3 dd4"])
+                         ["train-b2 2026-09-22 19:40 4 lanes c3c3c3c..f6f6f6f: ff6 ee5-long-token cc3 dd4"])
 
     def test_no_repository_means_no_line_and_no_git(self):
         def refuse(args, cwd=None):

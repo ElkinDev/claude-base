@@ -187,6 +187,20 @@ class OpenAsksCase(unittest.TestCase):
         self.assertIn("- 02:0x ask 02", block)
         self.assertTrue(block.endswith(MARKER))
 
+    def test_one_open_row_keeps_the_full_path_when_it_fits_without_a_marker(self):
+        folder = self.tmp + "/" + "d" * 40
+        os.makedirs(folder)
+        path = folder + "/owner-decisions-2026-09-23.md"
+        heading = ("Open owner asks (1) in %s, last written first; rows clipped: read the row in the file"
+                   " and restate an ask whole, never by number:" % path)
+        width = ASKS_COMPACT_CAP - len(heading) - 1 - 10  # fits alone, not beside a marker
+        self.assertTrue(20 < width <= ASK_CLIP and width + len(MARKER) + 1 > 10, width)
+        self.write(folder, "owner-decisions-2026-09-23.md", "- 09:0x " + "z" * (width - 8) + "\n")
+        block = asks_block(self.run_hook(self.compact, decisions_glob=folder + "/owner-decisions-*.md"))
+        self.assertIn(path, block, "the full path fits beside the one row and no marker is owed")
+        self.assertLessEqual(len(block), ASKS_COMPACT_CAP)
+        self.assertFalse(block.endswith(MARKER))
+
     def test_a_subagent_gets_no_asks_at_either_entry_and_the_rulings_still_print(self):
         for extra in ({"agent_type": "reviewer"}, {"agent_id": "a0000000000000000"}):
             for payload, args in ((self.payload, ("--rulings",)), (self.compact, ())):
