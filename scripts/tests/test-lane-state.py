@@ -416,7 +416,7 @@ class MainMergesTest(unittest.TestCase):
 
     def test_every_subject_shape_train_wait_reads_folds_into_its_train(self):
         lane_state.run_git = lambda args, cwd=None: "\n".join([
-            "f6f6f6f|2026-09-22 19:40:00 +0000|merge(train): dd4 into train-b2",
+            "f6f6f6f|2026-09-22 19:40:00 +0000|merge(train): 9d9d9d9 into train-b2, dd4: a topic [skip ci]",
             "e5e5e5e|2026-09-22 19:30:00 +0000|Merge lane cc3 into train-b2",
         ]) + "\n"
         self.assertEqual(lane_state.main_merges("some-repo"),

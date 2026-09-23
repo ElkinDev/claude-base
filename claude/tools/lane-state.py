@@ -72,8 +72,9 @@ LANDING_ROW_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2} ")
 # knows only one of them silently drops every row of the other, newest included.
 RULING_ROW_RE = re.compile(r"^(?:- )?\d{4}-\d{2}-\d{2} [0-9x]{2}:[0-9x]{2} \[")
 # A lane merge on main, in the subjects scripts/train-wait.py reads: "Merge lane <token> (...) into
-# <branch>", "Merge lane <token> into <branch>" and "merge(train): <token> into <branch>".
-LANE_MERGE_RE = re.compile(r"^(?:Merge lane|merge\(train\):) (\S+) (?:.*? )?into (\S+)")
+# <branch>", "Merge lane <token> into <branch>" and "merge(train): <sha> into <branch>, <token>: <topic>".
+# The last names the lane's commit first, so the token after the comma wins when it is there.
+LANE_MERGE_RE = re.compile(r"^(?:Merge lane|merge\(train\):) (\S+) (?:.*? )?into ([^\s,]+)(?:, ([\w.-]+):)?")
 
 STAMP_RE = re.compile(r"^\[(?P<h>\d{2}):(?P<m>\d{2}):(?P<s>\d{2})\]")
 LOCK_TAKEN_RE = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] LOCK taken")
@@ -392,7 +393,7 @@ def main_merges(repo, hours=RECENT_HOURS, clip=MERGES_CLIP):
         if not match:
             rows.append((when, clip_text("%s %s %s" % (sha, when[:16], subject), clip)))
             continue
-        lane, target = match.group(1), match.group(2)
+        lane, target = match.group(3) or match.group(1), match.group(2)
         train = trains.setdefault(target, {"lanes": [], "last": sha, "when": when})
         train["lanes"].append(lane)
         train["first"] = sha
