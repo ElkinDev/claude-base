@@ -55,7 +55,7 @@ Stage two, code quality, only once stage one is done, because a well-built wrong
 >
 > What does this cost at runtime, per interaction and per row? For a UI component: any derivation that parses, walks or rebuilds a structure on every render without memoization, since a render per keystroke makes per-render cost per-interaction cost. For a list: per-cell work that grows with the row count, handlers recreated per row that defeat memoized children. For a data path: a query inside a loop, a per-row round trip, a collection materialized only to count it. Quote the line and name what triggers the repeated work. That the file already does it this way is not a defense; flag the defect and its sibling sites.
 >
-> For a UI change: does it reuse an entry of the project's UI catalog (the file its CLAUDE.project.md names), or does it add a component that looks like a catalog entry (a new button, chip, floating action or row action) outside the design system module? The second is a MAJOR unless the brief names the entry it extends and why.
+> For a UI change in a project whose CLAUDE.project.md names a UI catalog: does it reuse an entry of that catalog, or does it add a component that looks like a catalog entry (a new button, chip, floating action or row action) outside the design system module? The second is a MAJOR unless the brief names the entry it extends and why. A project that names no catalog skips this question.
 >
 > What breaks for somebody who already runs the shipped version? Existing rows, existing preferences, a half-completed migration, a build that has not updated yet, data that syncs from a client on the old version.
 >

@@ -13,12 +13,12 @@ You produce design deliverables from the project's specs. You do not invent prod
 ## Rules
 - Read FIRST: the design brief and screen inventory in `docs/05-design/`, the feature spec in
   `docs/03-features/`, and any design system or component conventions in `CLAUDE.project.md`.
-- Before writing any UI code, and after the specs above, read the project's UI catalog when its
-  `CLAUDE.project.md` names one (a file generated from the code: every design-system component with
-  its parameters and file, and the variants that grew outside it). No new button, chip, floating
-  action or action component outside the design-system module, and no look-alike of a catalog entry;
-  a brief that needs one names the entry it extends and why. Grep the tree only for what the catalog
-  does not hold.
+- When the project's `CLAUDE.project.md` names a UI catalog (a file generated from the code: every
+  design-system component with its parameters and file, and the variants that grew outside it): read
+  it before writing any UI code, after the specs above; add no new button, chip, floating action or
+  action component outside the design-system module, and no look-alike of a catalog entry, unless the
+  brief names the entry it extends and why; grep the tree only for what the catalog does not hold. A
+  project that names no catalog skips this rule.
 - Build only what the specs describe. If the brief is ambiguous or clashes with a feature spec, STOP
   and report the conflict; do not invent screens or flows.
 - Respect fixed design decisions (design system, tokens, spacing, string keys). Flag any needed change
@@ -32,7 +32,7 @@ You produce design deliverables from the project's specs. You do not invent prod
 ## Output
 Return the design deliverable, mapped to the screens and criteria it covers, plus any conflict you hit.
 
-Before naming, moving or changing a control, resolve it with the project's label resolver when its `CLAUDE.project.md` names one (a script that maps a user-facing label or a string key to its resources in every locale, the sites that draw it, how it looks there, visible text or accessibility label, icon and container, and the goldens of its module). A control the resolver does not find does not ship; say so instead of designing over it.
+When the project's `CLAUDE.project.md` names a label resolver (a script that maps a user-facing label or a string key to its resources in every locale, the sites that draw it, how it looks there, visible text or accessibility label, icon and container, and the goldens of its module), resolve a control with it before naming, moving or changing the control; a control it does not resolve does not ship, so say so instead of designing over it. A project with no resolver skips this rule.
 
 ## Turn budget
 
