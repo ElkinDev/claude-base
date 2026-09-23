@@ -1,6 +1,7 @@
 """Tests for the rulings block of claude/hooks/compact-recover.py.
 
     python scripts/tests/test-compact-recover-rulings.py
+    COMPACT_RECOVER_HOOK=<installed hook> python scripts/tests/test-compact-recover-rulings.py
 
 The hook runs the way the harness runs it, as a subprocess with the payload JSON on
 stdin, against a fixture register in a temp folder. CLAUDE_RULINGS_FILE points at that
@@ -24,7 +25,10 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
-HOOK = os.path.join(ROOT, "claude", "hooks", "compact-recover.py")
+KIT_HOOK = os.path.join(ROOT, "claude", "hooks", "compact-recover.py")
+# COMPACT_RECOVER_HOOK runs the same cases against an installed copy of the hook, which may carry
+# its machine's defaults; only the kit's own copy is held to naming no machine path.
+HOOK = os.environ.get("COMPACT_RECOVER_HOOK") or KIT_HOOK
 
 STDIN_JSON = json.dumps({"session_id": "zz", "cwd": ROOT}).encode("utf-8")
 
@@ -58,7 +62,33 @@ def row(index, stamp="09:00", scope="process", pad=0):
     return text + (" " + "d" * pad if pad else "") + " (source %d)" % index
 
 
+# Stands in for the state renderer: writes a sheet with a Gates section the size a real one carries, so the case
+# that measures the whole output measures the production shape.
+STUB_RENDERER = '''import os
+lines = ["# stub state sheet", "## Gates (last 24 h)"]
+for index in range(20):
+    lines.append("lan lan-g%02d 10:00 abc1234 exit=0 lock=0 moved=0 ok phases=5 secs=1200" % index)
+with open(os.environ["CLAUDE_LANE_STATE_SHEET"], "w", encoding="utf-8", newline="\\n") as out:
+    out.write("\\n".join(lines) + "\\n")
+'''
+# The name the checkpoint hook gives a checkpoint of session zz, the session_id of STDIN_JSON.
+CHECKPOINT_NAME = "20260906-114500-zz-orchestrator.md"
+# The sheet the hook renders when nothing moves it; no run of this suite may touch it.
+REAL_SHEET = hook.LANE_STATE_SHEET
+REAL_SHEET_MTIME = os.path.getmtime(REAL_SHEET) if os.path.isfile(REAL_SHEET) else None
+
+
 class RulingsBlockCase(unittest.TestCase):
+    @classmethod
+    def tearDownClass(cls):
+        # Armed on the kit's own hook only: an installed hook's default sheet may be one its sessions rewrite
+        # while the suite runs, and every case here points CLAUDE_LANE_STATE_SHEET at a temp path anyway.
+        if os.path.normcase(os.path.abspath(HOOK)) != os.path.normcase(os.path.abspath(KIT_HOOK)):
+            return
+        now = os.path.getmtime(REAL_SHEET) if os.path.isfile(REAL_SHEET) else None
+        if now != REAL_SHEET_MTIME:
+            raise AssertionError("the suite rewrote or created the real state sheet %s" % REAL_SHEET)
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="compact-recover-rulings-").replace("\\", "/")
         self.addCleanup(shutil.rmtree, self.tmp, True)
@@ -73,7 +103,7 @@ class RulingsBlockCase(unittest.TestCase):
             handle.write(header + "\n".join(rows) + ("\n" if rows else ""))
         return path
 
-    def run_hook(self, register, args=(), stdin=STDIN_JSON):
+    def run_hook(self, register, args=(), stdin=STDIN_JSON, env_extra=None):
         env = dict(os.environ)
         env["PYTHONIOENCODING"] = "utf-8"
         env["CLAUDE_RULINGS_FILE"] = register
@@ -93,15 +123,21 @@ class RulingsBlockCase(unittest.TestCase):
         # decide what the first line says. No role is a lane, and one launcher variable set is
         # what keeps the loud line of an unlaunched session out of these cases.
         env["CLAUDE_CODE_DISABLE_1M_CONTEXT"] = "1"
+        # The payload's folder, and the working folder when the payload is empty, is the board
+        # root, so a hook installed with a board of its own still prints its board blocks here.
+        env["CLAUDE_BOARD_ROOT"] = ROOT
+        env.update(env_extra or {})
         process = subprocess.run(
             [sys.executable, HOOK] + list(args),
             input=stdin,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
+            cwd=ROOT,
         )
         self.assertEqual(process.returncode, 0, process.stderr.decode("utf-8", "replace"))
-        self.assertFalse(os.path.exists(self.sheet), "the run wrote a state sheet")
+        if "CLAUDE_LANE_STATE_SCRIPT" not in (env_extra or {}):
+            self.assertFalse(os.path.exists(self.sheet), "the run wrote a state sheet")
         return process.stdout.decode("utf-8", "replace")
 
     # --- the seeded register in full mode ---------------------------------
@@ -114,6 +150,43 @@ class RulingsBlockCase(unittest.TestCase):
         self.assertLess(out.index("[compaction recovery"), out.index(HEADING_START))
         self.assertLess(out.index(HEADING_START), out.index("NOTES.md"))
         self.assertNotIn(CUT_MARKER, out)
+
+    def test_the_session_shape_fills_the_cap_from_its_tail_and_keeps_every_ruling(self):
+        """The shape a session gets at a compaction: a checkpoint, a register whose last rows
+        nearly fill the rulings cap, a rendered state sheet, a landings file and a briefs dir.
+        The whole output stays under the hook's CAP; what the cap takes is the tail, never a
+        ruling; and the paragraphs keep their order: checkpoint, rulings, state sheet."""
+        width = (RULINGS_CAP - 250) // RULINGS_ROWS - 1  # the block a few rows short of its cap
+        rows = [row(i, "10:%02d" % i, pad=max(0, width - len(row(i, "10:%02d" % i)) - 1))
+                for i in range(1, RULINGS_ROWS + 1)]
+        with open(os.path.join(self.checkpoints, CHECKPOINT_NAME), "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("# Checkpoint\n\n## Disk truth\n" + "\n".join(
+                "- C:/src/app-lane%02d: branch lane-%02d, tip abc%04d, 0 uncommitted" % (i, i, i)
+                for i in range(40)) + "\n\n## Next\n- the next step\n")
+        stub = self.tmp + "/stub-lane-state.py"
+        with open(stub, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(STUB_RENDERER)
+        landings, briefs = self.tmp + "/landings.md", self.tmp + "/briefs"
+        with open(landings, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("\n".join("2026-09-06 11:%02d landing row %d" % (i, i) for i in range(1, 9)) + "\n")
+        os.makedirs(briefs)
+        with open(briefs + "/lane-brief.md", "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("# Brief\n")
+        out = self.run_hook(self.write_register(rows), env_extra={
+            "CLAUDE_LANE_STATE_SCRIPT": stub, "CLAUDE_LANDINGS_FILE": landings, "CLAUDE_BRIEFS_DIR": briefs})
+        self.assertLessEqual(len(out), hook.CAP)
+        marker = hook.CAP_MARKER.strip()
+        self.assertIn(marker, out, "this fixture no longer fills the cap (%d chars), so the cut is untested" % len(out))
+        self.assertIn(CHECKPOINT_NAME, out)
+        block = out[out.index(HEADING_START):].split("\n\n")[0]
+        self.assertNotIn(CUT_MARKER, block, "a ruling was dropped in the shape a session gets")
+        self.assertEqual([ln for ln in block.splitlines() if ln.startswith("- 20")], rows)
+        self.assertLess(out.index(CHECKPOINT_NAME), out.index(HEADING_START))
+        self.assertIn("## Gates (last 24 h)", out)
+        self.assertLess(out.index(HEADING_START), out.index("## Gates (last 24 h)"))
+        self.assertTrue(out.endswith(marker), out[-90:])
+        self.assertGreater(out.index(marker), out.index(HEADING_START) + len(block),
+                           "the output cap cut into the rulings block")
 
     def test_only_the_last_rows_are_kept_when_the_register_is_longer(self):
         rows = [row(i, "09:%02d" % i) for i in range(1, RULINGS_ROWS + 6)]
@@ -206,6 +279,8 @@ class RulingsBlockCase(unittest.TestCase):
         self.assertEqual(out, LANE_BLOCK + "No rulings yet in %s." % path)
 
     # --- the defaults of a public hook ------------------------------------
+    @unittest.skipUnless(os.path.normcase(os.path.abspath(HOOK)) == os.path.normcase(os.path.abspath(KIT_HOOK)),
+                         "an installed copy names its machine's defaults by design")
     def test_the_hook_carries_no_path_of_one_machine(self):
         """The kit is installed on any home, so a default that names a drive letter
         and somebody's folder is a default that works on one machine only. The four
