@@ -1,6 +1,7 @@
 """Tests for the rulings block of claude/hooks/compact-recover.py.
 
     python scripts/tests/test-compact-recover-rulings.py
+    COMPACT_RECOVER_HOOK=<installed hook> python scripts/tests/test-compact-recover-rulings.py
 
 The hook runs the way the harness runs it, as a subprocess with the payload JSON on
 stdin, against a fixture register in a temp folder. CLAUDE_RULINGS_FILE points at that
@@ -24,7 +25,10 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
-HOOK = os.path.join(ROOT, "claude", "hooks", "compact-recover.py")
+KIT_HOOK = os.path.join(ROOT, "claude", "hooks", "compact-recover.py")
+# COMPACT_RECOVER_HOOK runs the same cases against an installed copy of the hook, which may carry
+# its machine's defaults; only the kit's own copy is held to naming no machine path.
+HOOK = os.environ.get("COMPACT_RECOVER_HOOK") or KIT_HOOK
 
 STDIN_JSON = json.dumps({"session_id": "zz", "cwd": ROOT}).encode("utf-8")
 
@@ -93,12 +97,16 @@ class RulingsBlockCase(unittest.TestCase):
         # decide what the first line says. No role is a lane, and one launcher variable set is
         # what keeps the loud line of an unlaunched session out of these cases.
         env["CLAUDE_CODE_DISABLE_1M_CONTEXT"] = "1"
+        # The payload's folder, and the working folder when the payload is empty, is the board
+        # root, so a hook installed with a board of its own still prints its board blocks here.
+        env["CLAUDE_BOARD_ROOT"] = ROOT
         process = subprocess.run(
             [sys.executable, HOOK] + list(args),
             input=stdin,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
+            cwd=ROOT,
         )
         self.assertEqual(process.returncode, 0, process.stderr.decode("utf-8", "replace"))
         self.assertFalse(os.path.exists(self.sheet), "the run wrote a state sheet")
@@ -206,6 +214,8 @@ class RulingsBlockCase(unittest.TestCase):
         self.assertEqual(out, LANE_BLOCK + "No rulings yet in %s." % path)
 
     # --- the defaults of a public hook ------------------------------------
+    @unittest.skipUnless(os.path.normcase(os.path.abspath(HOOK)) == os.path.normcase(os.path.abspath(KIT_HOOK)),
+                         "an installed copy names its machine's defaults by design")
     def test_the_hook_carries_no_path_of_one_machine(self):
         """The kit is installed on any home, so a default that names a drive letter
         and somebody's folder is a default that works on one machine only. The four
