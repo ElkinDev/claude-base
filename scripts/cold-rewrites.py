@@ -72,7 +72,7 @@ def local_minute(text):
 
 def read(root, lo, hi):
     cause, cause_cc, cause_kind = collections.Counter(), collections.Counter(), collections.Counter()
-    fix, readable = [], 0
+    fix, readable, unreadable = [], 0, 0
     found = (glob.glob(os.path.join(root, "*", "subagents", "agent-*.jsonl"))
              + glob.glob(os.path.join(root, "*", "*", "subagents", "agent-*.jsonl")))
     for sp in sorted(set(found)):
@@ -88,6 +88,7 @@ def read(root, lo, hi):
         try:
             handle = open(sp, encoding="utf-8", errors="replace")
         except OSError:
+            unreadable += 1  # held by its writer or not a file: said on stderr, the counts are floors
             continue
         readable += 1
         with handle:
@@ -135,7 +136,7 @@ def read(root, lo, hi):
                         cause_kind[(last, kind)] += 1
         if first and lo <= first < hi and kind in ("implementer", "implementer-light") and FIX.search(desc):
             fix.append(total)
-    return readable, cause, cause_cc, cause_kind, fix
+    return readable, unreadable, cause, cause_cc, cause_kind, fix
 
 
 def main(argv):
@@ -151,7 +152,9 @@ def main(argv):
         ap.error("--since and --until take YYYY-MM-DD HH:MM (local time)")
     if hi <= lo:
         ap.error("--until is before --since")
-    n, cause, cause_cc, cause_kind, fix = read(ROOT, lo, hi)
+    n, unreadable, cause, cause_cc, cause_kind, fix = read(ROOT, lo, hi)
+    if unreadable:
+        sys.stderr.write("cold-rewrites: %d subagent transcript(s) could not be opened; the counts are floors\n" % unreadable)
     if n == 0:
         ap.error("no readable subagent transcript (agent-*.jsonl with its .meta.json) under %s; set COLD_REWRITES_ROOT" % ROOT)
     gate_n = sum(cause[c] for c in GATE_CLASS)

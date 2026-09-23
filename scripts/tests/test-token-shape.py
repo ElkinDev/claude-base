@@ -81,5 +81,24 @@ class RowTest(unittest.TestCase):
         self.assertIn("register-row-only shell calls 1 of 1", r.stdout)
 
 
+class UsageTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="token shape ")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.session = os.path.join(self.tmp, "sess.jsonl")
+        open(self.session, "w").close()
+
+    def code(self, session, since, until):
+        return subprocess.run([sys.executable, SCRIPT, session, "--since", since, "--until", until, "--row"],
+                              capture_output=True, text=True, timeout=60).returncode
+
+    def test_a_malformed_or_reversed_window_and_a_missing_transcript_are_usage_errors(self):
+        self.assertEqual(self.code(self.session, "2026-1", "2026-01-10T12:00:00"), 2)
+        self.assertEqual(self.code(self.session, "2026-01-10T12:00:00", "2026-01-10T09:00:00"), 2)
+        self.assertEqual(self.code(os.path.join(self.tmp, "none.jsonl"), "2026-01-10T09:00:00", "2026-01-10T12:00:00"), 2)
+        self.assertEqual(self.code(self.tmp, "2026-01-10T09:00:00", "2026-01-10T12:00:00"), 2)
+        self.assertEqual(self.code(self.session, "2026-01-10T09:00:00Z", "2026-01-10T12:00:00Z"), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

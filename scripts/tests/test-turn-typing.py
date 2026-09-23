@@ -114,6 +114,20 @@ class RunTest(unittest.TestCase):
         self.assertEqual(code, 3)
         self.assertIn("no transcript with 50 or more", out)
 
+    def test_a_day_without_zero_padding_reads_the_same_day(self):
+        padded = self.run_it("--jsonl", self.jsonl, "--ledger")
+        r = subprocess.run([sys.executable, SCRIPT, "--day", "2026-1-10", "--profile", self.profile, "--evidence-root",
+                            self.evidence, "--scratch-root", os.path.join(self.tmp, "scratch"), "--jsonl", self.jsonl,
+                            "--ledger"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, padded[1])
+
+    def test_a_blank_or_unknown_session_is_said_as_such(self):
+        self.assertEqual(self.run_it("--session", "  ")[0], 2)
+        code, _, err = self.run_it("--session", "ffffffff")
+        self.assertEqual(code, 1)
+        self.assertIn("not found", err)
+
     def test_a_malformed_day_is_a_usage_error(self):
         self.assertEqual(subprocess.run([sys.executable, SCRIPT, "--day", "2026-1", "--jsonl", self.jsonl],
                                         capture_output=True, timeout=60).returncode, 2)

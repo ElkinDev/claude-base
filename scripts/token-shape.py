@@ -28,6 +28,7 @@ import glob
 import json
 import os
 import re
+import sys
 from datetime import datetime
 
 PROXY = {"in": 1.0, "cc": 1.25, "cr": 0.1, "out": 5.0}
@@ -207,12 +208,31 @@ def main():
 
     if not args.since or not args.until:
         ap.error("--since and --until are required unless --agent is given")
-    since, until = args.since, args.until
 
-    main_turns, main_users = load_turns(args.session)
+    def stamp(value, flag):
+        # the window is compared as text against the transcript stamps, so a malformed one would read an empty window
+        try:
+            return datetime.fromisoformat(value.strip().rstrip("Z")).strftime("%Y-%m-%dT%H:%M:%S")
+        except ValueError:
+            ap.error(f"{flag} takes a UTC ISO stamp such as 2026-09-09T13:06:00")
+
+    since, until = stamp(args.since, "--since"), stamp(args.until, "--until")
+    if until <= since:
+        ap.error("--until is not after --since")
+    if not os.path.isfile(args.session):
+        ap.error(f"no session transcript at {args.session!r}")
+
+    try:
+        main_turns, main_users = load_turns(args.session)
+    except OSError as e:
+        raise SystemExit(f"token-shape: cannot read {args.session}: {e.strerror or e}")
     subs = {}
     for fp in sorted(glob.glob(os.path.join(subdir, "*.jsonl"))):
-        tr, _ = load_turns(fp)
+        try:
+            tr, _ = load_turns(fp)
+        except OSError as e:
+            print(f"token-shape: skipped {fp}: {e.strerror or e}; the subagent sums are floors", file=sys.stderr)
+            continue
         if not tr:
             continue
         meta = {}

@@ -207,6 +207,15 @@ def day_has_records(path, day):
     return sum(1 for _ in main_thread_records(path, day))
 
 
+def readable_count(path, day):
+    """day_has_records, with a transcript its writer holds open counted 0 and said on stderr."""
+    try:
+        return day_has_records(path, day)
+    except OSError as e:
+        sys.stderr.write("turn-typing: skipped %s: %s\n" % (path, e.strerror or e))
+        return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--session", help="session id prefix; the file is <profile>/projects/<project>/<id>*.jsonl")
@@ -223,30 +232,38 @@ def main():
         d0 = datetime.datetime.strptime(a.day.strip(), "%Y-%m-%d")
     except ValueError:
         ap.error("--day takes YYYY-MM-DD")
-    a.day = a.day.strip()
+    a.day = d0.strftime("%Y-%m-%d")  # 2026-9-3 parses; the stamps are compared as 2026-09-03
     if a.pick_from:
         cands = [p for p in glob.glob(os.path.join(a.pick_from, "*.jsonl"))
                  if datetime.datetime.fromtimestamp(os.path.getmtime(p)) >= d0]
         # the day filter runs over the six largest touched files: a large transcript with no records on the
         # day must not push the day's session out
         cands = sorted(cands, key=os.path.getsize, reverse=True)[:6]
-        files = [p for p in cands if day_has_records(p, a.day) >= MIN_RECORDS]
+        files = [p for p in cands if readable_count(p, a.day) >= MIN_RECORDS]
         if not files:
             print("automation ? %s: no transcript with %d or more main-thread records on the day (candidates %d)"
                   % (a.day, MIN_RECORDS, len(cands)))
             return 3
     elif a.jsonl:
         files = [a.jsonl]
-    elif a.session:
-        files = glob.glob(os.path.join(a.profile, "projects", a.project or "*", a.session + "*.jsonl"))
+    elif a.session is not None:
+        if not a.session.strip():
+            ap.error("--session takes a session id prefix")
+        files = glob.glob(os.path.join(a.profile, "projects", a.project or "*", a.session.strip() + "*.jsonl"))
         if len(files) != 1:
-            sys.exit("session file not unique: %s" % files)
+            sys.exit("session file %s: %s" % ("not found" if not files else "not unique", files))
     else:
         sys.exit("give --session, --jsonl or --pick-from")
     lanes = lanes_delivered(a.day, a.evidence_root) if a.ledger else []
+    code = 0
     for fp in files:
         session_id = os.path.basename(fp)[:8]
-        x = analyze(fp, a.day)
+        try:
+            x = analyze(fp, a.day)
+        except OSError as e:
+            sys.stderr.write("turn-typing: cannot read %s: %s\n" % (fp, e.strerror or e))
+            code = 1
+            continue
         total = sum(x["tool_n"].values())
         if a.ledger:
             sf, sl = shell_written(a.day, session_id, a.scratch_root, a.evidence_root)
@@ -260,7 +277,7 @@ def main():
         print("  Write by target: " + ", ".join("%s %d (%dk)" % (k, wn[k], v // 1000) for k, v in wc.most_common()))
         print("  shell by category: " + ", ".join("%s %d (%dk)" % (k, bn[k], v // 1000) for k, v in bc.most_common()))
         print("  Agent prompts: %d, %dk chars, mean %d" % (len(pr), sum(pr) // 1000, sum(pr) // max(1, len(pr))))
-    return 0
+    return code
 
 
 if __name__ == "__main__":

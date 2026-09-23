@@ -103,6 +103,18 @@ class ColdRewritesTest(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertIn(": 1 events", out)
 
+    def test_a_transcript_that_cannot_be_opened_is_said_on_stderr(self):
+        self.agent("g", "implementer", "x", [turn("m1", 1, "10:00"),
+                                              said("<task-notification>x</task-notification>"), turn("m2", 60000, "10:10")])
+        d = os.path.join(self.root, "sess0003", "subagents")
+        os.makedirs(os.path.join(d, "agent-dir.jsonl"))                   # a folder where a transcript belongs
+        with open(os.path.join(d, "agent-dir.meta.json"), "w", encoding="utf-8") as f:
+            json.dump({"agentType": "implementer", "description": "x"}, f)
+        code, out, err = self.window("--row")
+        self.assertEqual(code, 0, err)
+        self.assertIn(": 1 events", out)
+        self.assertIn("1 subagent transcript(s) could not be opened", err)
+
     def test_a_stamp_with_no_offset_leaves_its_turn_out_and_the_run_reads(self):
         naive = turn("m3", 60000, "10:20")
         naive["timestamp"] = naive["timestamp"].rstrip("Z")                # parses, carries no offset
