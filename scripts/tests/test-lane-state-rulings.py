@@ -221,8 +221,10 @@ class RenderCase(unittest.TestCase):
         for one in self.rows:
             self.assertIn(one, lines)
         last = lines.index(self.rows[-1])
-        self.assertTrue(lines[last + 1].startswith("## Gates"),
-                        "a cut marker or another line follows the rulings: %r" % lines[last + 1])
+        # The next section follows the last row directly: no cut marker sits inside the
+        # rulings. The owner reports section prints between them and the gates.
+        self.assertEqual(lines[last + 1], lane_state.reports_heading(self.config),
+                         "a cut marker or another line follows the rulings: %r" % lines[last + 1])
         cut_markers = [line for line in lines if line.endswith(" lines cut]")]
         self.assertTrue(cut_markers, "no cuttable section was cut at max_lines=40")
         lane_rows = [line for line in lines if line.startswith("lanes/lane-")]
@@ -255,7 +257,7 @@ class RenderCase(unittest.TestCase):
         self.assertIn("wrote " + target, out)
         with open(target, encoding="utf-8") as handle:
             text = handle.read()
-        self.assertEqual(6, len([ln for ln in text.splitlines() if ln.startswith("## ")]))
+        self.assertEqual(7, len([ln for ln in text.splitlines() if ln.startswith("## ")]))
         return text
 
     def test_a_config_that_is_not_valid_json_is_ignored_and_the_sheet_renders(self):
@@ -334,6 +336,52 @@ class RenderCase(unittest.TestCase):
                          config["landings_file"].replace("\\", "/"))
         self.assertEqual(self.tmp + "/lanes/*.md", config["lanes_glob"].replace("\\", "/"))
         self.assertEqual(self.tmp + "/briefs/*.md", config["briefs_glob"].replace("\\", "/"))
+
+
+
+class RowShapesCase(unittest.TestCase):
+    """A row-writing helper appends register rows with no leading "- ", beside the hand
+    rows that carry it. The sheet reads both shapes, and sorts them on the same key the
+    recovery hook uses, so the two never disagree on which ruling is the newest."""
+
+    REGISTER = (
+        "# Rulings register\n"
+        "2026-09-16 08:0x [decision] EARLY bare row, older than every dash row.\n"
+        "- 2026-09-17 14:2x [process] OLDEST dash row.\n"
+        "2026-09-20 09:1x [process] MIDDLE bare row, as a helper writes it.\n"
+        "- 2026-09-17 14:0x [owner] OLDER dash row written after a later one.\n"
+        "not a row, a note line\n"
+        "2026-09-22 18:3x [owner] NEWEST bare row. (source)\n"
+    )
+
+    def setUp(self):
+        import tempfile
+        import shutil
+        self.tmp = tempfile.mkdtemp(prefix="lane-state-row-shapes-").replace("\\", "/")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.register = self.tmp + "/rulings.md"
+        with open(self.register, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(self.REGISTER)
+
+    def test_both_shapes_are_rows_sorted_by_stamp(self):
+        rows = lane_state.rulings_rows(self.register)
+        self.assertEqual(len(rows), 5, rows)
+        self.assertIn("EARLY bare row", rows[0])
+        self.assertIn("OLDER dash row", rows[1])
+        self.assertIn("MIDDLE bare row", rows[-2])
+        self.assertIn("NEWEST bare row", rows[-1])
+
+    def test_the_sheet_and_the_recovery_hook_read_one_key_from_either_shape(self):
+        import importlib.util
+        path = os.path.join(ROOT, "claude", "hooks", "compact-recover.py")
+        spec = importlib.util.spec_from_file_location("compact_recover_row_shapes", path)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        dash, bare = "- 2026-09-20 09:1x [x] dash", "2026-09-20 09:1x [x] bare"
+        expected = ("2026-09-20", "09:1x")
+        for key in (lane_state.ruling_key, hook.ruling_key):
+            self.assertEqual(key(dash), expected)
+            self.assertEqual(key(bare), expected)
 
 
 if __name__ == "__main__":

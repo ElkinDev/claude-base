@@ -93,6 +93,9 @@ class CompactionHooksTest(unittest.TestCase):
             env.pop(name, None)
         env["CLAUDE_CODE_DISABLE_1M_CONTEXT"] = "1"
         env["CLAUDE_CHECKPOINT_DIR"] = self.ckpt
+        # the open asks block reads ~/.claude/decisions by default; a glob that matches nothing
+        # keeps what the machine holds out of the caps these cases measure
+        env["CLAUDE_DECISIONS_GLOB"] = os.path.join(self.tmp, "no-decisions", "owner-decisions-*.md")
         for name, value in extra.items():
             if value is None:
                 env.pop(name, None)

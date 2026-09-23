@@ -31,7 +31,9 @@ You implement code from the project's specs. You do not decide product behavior;
 - English for all code, comments, and identifiers. No AI attribution.
 
 ## Output
-At most 15 lines: what you built mapped to the acceptance criteria you satisfied, one verdict line per gate phase, pointers to the exit file, the test results and the diff stat, and any spec conflict you hit. Never paste build output; forensics belong in the exit file.
+At most 15 lines for the slice: what you built mapped to the acceptance criteria you satisfied, one verdict line per gate phase, pointers to the exit file, the test results and the diff stat, and any spec conflict you hit. Never paste build output; forensics belong in the exit file.
+
+Then, always, a section headed Open items: everything you saw wrong, fragile, slow or badly built in the code you touched or read, inside or outside the brief, one line each with file:line and a one-line suggestion, plus any deviation from the spec you had to make and why. A Forbidden list in a brief means do not change, never do not report. Silence about a defect you saw is a defect of the report; the orchestrator decides what becomes a lane.
 
 ## Turn budget
 

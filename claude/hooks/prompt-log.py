@@ -1,4 +1,4 @@
-"""UserPromptSubmit hook, plus a --recover mode for SessionStart (matcher: compact). Appends
+"""UserPromptSubmit hook, plus a --recover mode for SessionStart (every source). Appends
 every prompt a person types to <checkpoints>/<session8>-prompts.md the moment it is submitted,
 and reads the last ones back, verbatim, right after a compaction. A compaction summary
 paraphrases what was asked; this file does not, so an order given at the start of a session is
@@ -9,7 +9,9 @@ subagent is the one submitting). Append mode prints nothing at all for most of t
 UserPromptSubmit whatever the hook writes to stdout is added to the model's context, so a hook
 whose job is to write a file has no business paying for a line in the window. The exception is
 the closing round of a seated session, one line saying the day ends and what it owes before it
-does. --recover prints the block, capped, since there its stdout is the point.
+does. --recover prints the block, capped, since there its stdout is the point. It is wired to
+every SessionStart source, not only compact, so a resumed, cleared or forked session gets the
+same block back; it prints nothing for an agent, whose brief is all it reads.
 
 Never blocks a prompt: every failure exits 0 in silence. Slash commands, the harness tags
 (task notifications, system reminders, local command output) and a subagent's prompt are not
@@ -183,10 +185,18 @@ def append(data):
 
 
 def recover(data):
+    # An agent never gets the session's typed prompts at its own start: its brief is all it
+    # reads, and append() refuses agents the same way.
+    if data.get("agent_id") or data.get("agent_type"):
+        return 0
     path = log_path(data)
     if not path:
         return 0
     if not os.path.isfile(path):
+        # A fresh session has no log yet, and only a compaction is worth saying so: startup,
+        # resume, clear and fork run this too, and a line there would be noise.
+        if str(data.get("source") or "compact") != "compact":
+            return 0
         write(f"No prompt log for this session at {path}.")
         return 0
     try:

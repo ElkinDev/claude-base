@@ -7,7 +7,8 @@ Two subcommands:
           lane reports and briefs) written atomically to the sheet path.
 
 Sources are the gate exit files a gate runner writes, read-only git in the worktrees of
-the configured repository, the tail of the landings file, the last rows of the rulings
+the configured repository and in the merges its main branch took, the tail of the landings
+file, the last rows of the rulings
 register, and the mtimes of the lane reports and briefs. A source that is missing or
 unreadable never fails the render: its section prints one line saying why. That matters
 because the compaction recovery hook prints the Gates section at every compaction.
@@ -61,11 +62,21 @@ SUBJECT_CLIP = 90
 FIRST_LINE_CLIP = 100
 REPORTS_CLIP = 320
 REPORT_WORDS_CLIP = 120
+MERGES_CLIP = 320
 
 PHASE_RE = re.compile(r"^PHASE_(?P<name>.+?)_EXIT=(?P<code>-?\d+)(?:\s+secs=(?P<secs>\d+))?\s*$")
 LANDING_ROW_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2} ")
-# A register row: the time is xx:xx when it is not on record, so both halves take x.
-RULING_ROW_RE = re.compile(r"^- \d{4}-\d{2}-\d{2} [0-9x]{2}:[0-9x]{2} \[")
+# A register row: the time is xx:xx when it is not on record, so both halves take x. Two row
+# shapes are both rows: "- YYYY-MM-DD HH:MM [scope]" as a list item, the shape written by hand,
+# and the same row with no leading "- ", the shape a row-writing helper appends. A reader that
+# knows only one of them silently drops every row of the other, newest included.
+RULING_ROW_RE = re.compile(r"^(?:- )?\d{4}-\d{2}-\d{2} [0-9x]{2}:[0-9x]{2} \[")
+# A lane merge on main, in the subjects scripts/train-wait.py reads: "Merge lane <token> (...) into
+# <branch>", "Merge lane <token> into <branch>" and "merge(train): <sha> into <branch>, <token>: <topic>"
+# ("<token> [skip ci]" with no colon before 2026-09-20). The last names the lane's commit first, so when the
+# first word is a commit the word after the comma is the token.
+LANE_MERGE_RE = re.compile(r"^(?:Merge lane|merge\(train\):) (\S+) (?:.*? )?into ([^\s,]+)(?:, ([\w.-]+)(?=[:\s]|$))?")
+COMMIT_WORD_RE = re.compile(r"^[0-9a-f]{7,40}$")
 
 STAMP_RE = re.compile(r"^\[(?P<h>\d{2}):(?P<m>\d{2}):(?P<s>\d{2})\]")
 LOCK_TAKEN_RE = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] LOCK taken")
@@ -360,15 +371,55 @@ def last_landings(path, count=LANDINGS_ROWS, clip=LANDINGS_CLIP):
     return rows[-count:]
 
 
+def main_merges(repo, hours=RECENT_HOURS, clip=MERGES_CLIP):
+    """The merges main took in the window, from git, newest first: one line per train (the
+    lane merges naming the same "into <branch>" target, lanes in merge order) and one line
+    per other merge. There is no row cap: a cap of eight hid most of a busy day's merges.
+    A landings file kept by hand reads "none" on a day that landed trains once landings stop
+    being written there, and git is the record of what landed. No repository configured
+    means no line; a git failure is one line and never sinks the sheet.
+    """
+    if not repo:
+        return []
+    try:
+        out = run_git(["-C", repo, "log", "--merges", "--since=%d hours ago" % int(hours),
+                       "--format=%h|%ci|%s", "main"])
+    except Exception as error:  # a git failure never sinks the sheet
+        return ["git log failed: %s" % error]
+    rows, trains = [], {}
+    for line in out.splitlines():  # newest first
+        if not line.strip():
+            continue
+        sha, when, subject = line.split("|", 2)
+        match = LANE_MERGE_RE.match(subject)
+        if not match:
+            rows.append((when, clip_text("%s %s %s" % (sha, when[:16], subject), clip)))
+            continue
+        first = match.group(1)
+        lane = match.group(3) if match.group(3) and COMMIT_WORD_RE.match(first) else first
+        target = match.group(2)
+        train = trains.setdefault(target, {"lanes": [], "last": sha, "when": when})
+        train["lanes"].append(lane)
+        train["first"] = sha
+    for target, train in trains.items():
+        rows.append((train["when"], clip_text("%s %s %d lanes %s..%s: %s" % (
+            target, train["when"][:16], len(train["lanes"]), train["first"], train["last"],
+            " ".join(reversed(train["lanes"]))), clip)))
+    rows.sort(key=lambda item: item[0], reverse=True)
+    return [text for _, text in rows]
+
+
 def ruling_key(row):
     """The sort key of a register row: its date, then its hour as written.
 
     The hour is compared as text, which is what the x of an unrecorded minute needs:
     x sorts after every real digit of its position, so 12:1x lands after 12:19 and
     before 12:20, and xx:xx sits at the end of its day, which is all that is known
-    about it. The row shape is fixed width, so the two slices are exact.
+    about it. The row shape is fixed width once the optional leading "- " is set aside,
+    so the two slices are exact for both shapes.
     """
-    return (row[2:12], row[13:18])
+    bare = row[2:] if row.startswith("- ") else row
+    return (bare[0:10], bare[11:16])
 
 
 def rulings_rows(path, count=RULINGS_ROWS):
@@ -545,6 +596,10 @@ def apply_max_lines(sections, max_lines, title_lines=1):
     return sections
 
 
+LANDINGS_HEADING = ("## Last landings (every merge on main in the last %d h from git, one line "
+                    "per train, then the landings file's prose rows)" % RECENT_HOURS)
+
+
 def build_sections(config, now=None):
     dirs = gate_dirs(config)
     return [
@@ -564,8 +619,9 @@ def build_sections(config, now=None):
         section("## Gates (last 24 h)",
                 lambda: gates_lines(dirs, RECENT_HOURS, None, now),
                 cuttable=False, empty="no gate exit file in the last 24 h"),
-        section("## Last landings",
-                lambda: last_landings(config["landings_file"])),
+        section(LANDINGS_HEADING,
+                lambda: main_merges(config.get("project_repo") or "")
+                + last_landings(config["landings_file"])),
         section("## Lane reports and briefs (last 24 h)",
                 lambda: recent_files([(config["lanes_glob"], "lanes", True),
                                       (config["briefs_glob"], "briefs", False)], now=now)),

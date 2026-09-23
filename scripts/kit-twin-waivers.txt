@@ -1,0 +1,4 @@
+# kit-twin-waivers.txt: live tools that stay private by design and never get a twin in this kit.
+# One basename per line, then its reason; kit-twin-drift.py leaves a listed basename out of its no-twin column.
+# Add a line only with its reason, for example:
+# deploy-prod.ps1  names this machine's hosts and credentials store

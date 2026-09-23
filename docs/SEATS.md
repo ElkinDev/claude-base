@@ -119,6 +119,10 @@ CLAUDE_ROLE=orchestrator claude --append-system-prompt-file "$seat"
 
 The check is not decoration: a missing append file is a hard launch failure, `Error: Append system prompt file not found`, and nothing starts. The POSIX installer and the launcher twin are deferred to their own item. Nothing here fails without them, because a session launched with no seat is a plain session.
 
+## Scripts the seat text names
+
+A seat file is prompt, so a script it names has to exist on the machine for that law to run. Both seats write their register rows through `scripts/row.sh` and, before any question to the owner, search what the owner already answered with `scripts/owner-asked.py`, in the language the owner writes in and in English; a hit is applied and cited instead of asking. The orchestrator writes every review, fix and notes brief of a lane round with `scripts/brief-gen.py` and checks a hand-written brief of any other shape with `scripts/brief-check.py`. The analyst runs eight hostile-input probes on every script it wrote or changed before that script goes to review, puts the table of results in the review brief, and reads whether the practice pays with `scripts/tooling-block-rate.py`. A machine without one of these scripts still gets the seat; the law that names the missing script is the one to adapt in the local copy of the seat file.
+
 ## What a seat is not
 
 It is not an agent. Agents launched from a seat keep their own definitions and are never the seat: no chair, no register, no merge right. It is not memory either. A resumed session carries its seat in its own conversation, which is why a resume keeps working when the flag is forgotten, and why the seat block prints what the chair is on every start rather than assuming it.

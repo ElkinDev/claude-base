@@ -29,6 +29,11 @@
             "type": "command",
             "command": "python \"%USERPROFILE%/.claude/hooks/compact-recover.py\" --rulings",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/prompt-log.py\" --recover",
+            "timeout": 10
           }
         ]
       },
@@ -39,6 +44,22 @@
             "type": "command",
             "command": "python \"%USERPROFILE%/.claude/hooks/compact-recover.py\"",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/prompt-log.py\" --recover",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/prompt-log.py\"",
+            "timeout": 10
           }
         ]
       }

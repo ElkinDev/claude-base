@@ -3,10 +3,12 @@ tends to drop: the newest checkpoint written by precompact-checkpoint.py (path p
 disk-truth section), the last rows of the rulings register, the head of the worktree's
 NOTES.md, the newest brief in CLAUDE_BRIEFS_DIR and the tail of CLAUDE_LANDINGS_FILE.
 No model runs. Both modes open with the seat block: which chair the pane holds, the loud line
-when nothing launched the session, and the newest resume brief of that seat. With --rulings it
-prints the seat block and the rulings block and nothing else, which is what a SessionStart on
-startup, resume, clear or fork wires; stdin is read there too, because the payload is what tells
-a subagent from the session that launched it.
+when nothing launched the session, and the newest resume brief of that seat. Both then print the
+open owner asks of the newest dated decisions file, before the rulings: a full block at a session
+start, the count and the last written ask after a compaction, and nothing to a subagent. With
+--rulings it prints the seat block, the asks and the rulings block and nothing else, which is what
+a SessionStart on startup, resume, clear or fork wires; stdin is read there too, because the
+payload is what tells a subagent from the session that launched it.
 
 Both modes are gated on the board: a session whose folder is not under CLAUDE_BOARD_ROOT
 (and, when prefixes are configured, not under one of them) is handed nothing of the board,
@@ -37,7 +39,9 @@ from datetime import datetime
 # brief line, the notes line and the end of the gates listing; the rulings block prints
 # before all of them, so a ruling is never what a cap takes. Claude Code truncated hook
 # stdout above about 10,000 characters (measured 2026-08-27 on 2.1.248, not re-measured
-# since); 9,000 keeps a margin of 1,000 under it.
+# since); 9,000 keeps a margin of 1,000 under it. The open-asks block prints before the rulings
+# after a compaction too, at most ASKS_COMPACT_CAP, so on a full day what the cap takes first is
+# still the tail: the notes line and the brief line, before any gate or ruling.
 CAP = 9000
 CAP_MARKER = "\n[recovery output capped]"
 DISK_TRUTH_CAP = 900
@@ -139,13 +143,19 @@ def on_board(cwd):
 
 RULINGS_FILE = os.path.join(os.path.expanduser("~"), ".claude", "rulings.md")
 RULINGS_ROWS = 30
-# The 26 rows the register opens with measure 7,275 characters with their heading, so a
-# smaller cap cuts the seed itself. The block prints before the state sheet, so what CAP
-# trims from the tail of a long run is the sheet and the notes line, never a ruling.
-RULINGS_CAP = 7600
+# The block prints before the state sheet, so what CAP trims from the tail of a long run is
+# the sheet and the notes line, never a ruling. After a compaction the open-asks block (up to
+# ASKS_COMPACT_CAP, 450) prints before this one, and rows written by a helper run longer than
+# hand rows, so 7,200 plus the 450 of the asks comes to 7,650, fifty characters over the room
+# the rulings alone had at 7,600; a bigger block pushed the whole output past CAP and cut the
+# state sheet.
+RULINGS_CAP = 7200
 RULINGS_MARKER = "\n[rulings cut, open the file]"
-# A register row: the time is xx:xx when it is not on record, so both halves take x.
-RULING_ROW_RE = re.compile(r"^- \d{4}-\d{2}-\d{2} [0-9x]{2}:[0-9x]{2} \[")
+# A register row: the time is xx:xx when it is not on record, so both halves take x. Two row
+# shapes are both rows: "- YYYY-MM-DD HH:MM [scope]" as a list item, the shape written by hand,
+# and the same row with no leading "- ", the shape a row-writing helper appends. A reader that
+# knows only one of them silently drops every row of the other, newest included.
+RULING_ROW_RE = re.compile(r"^(?:- )?\d{4}-\d{2}-\d{2} [0-9x]{2}:[0-9x]{2} \[")
 
 
 def ruling_key(row):
@@ -154,9 +164,11 @@ def ruling_key(row):
     The hour is compared as text, which is what the x of an unrecorded minute needs:
     x sorts after every real digit of its position, so 12:1x lands after 12:19 and
     before 12:20, and xx:xx sits at the end of its day, which is all that is known
-    about it. The row shape is fixed width, so the two slices are exact.
+    about it. The row shape is fixed width once the optional leading "- " is set aside,
+    so the two slices are exact for both shapes.
     """
-    return (row[2:12], row[13:18])
+    bare = row[2:] if row.startswith("- ") else row
+    return (bare[0:10], bare[11:16])
 
 
 def rulings_block():
@@ -197,6 +209,79 @@ def rulings_block():
         kept = kept[1:]
         dropped = True
     return heading + RULINGS_MARKER
+
+
+# Open owner asks, printed before the rulings at both entry points. The prompt log carries what
+# the owner typed, not the questions the session put to the owner, so an unanswered ask is in
+# neither the prompts nor, after a compaction, reliably in the summary. Source: the newest dated
+# file the glob matches (<prefix>-YYYY-MM-DD.md; an undated sibling such as a template is never
+# read), where every ask to the owner is written as a row; an ask that stays open across days is
+# restated in the new day's file. An ask row opens "- HH:MM" (x for an unrecorded minute) and
+# stays open until one of the shut words is written on it in capitals, so a row nobody marked
+# keeps printing until its writer marks it: a reader keyed on an open marker misses the row that
+# carries none. Rows print last written first, so a cap drops the earliest written; write order,
+# not the stamp, because a restated ask is appended at the end. Each row is clipped: the block
+# names the asks and the file holds them whole. A session start has room for ASKS_CAP; after a
+# compaction the output already runs close to CAP, so there the block is the count and the last
+# written ask, ASKS_COMPACT_CAP. A subagent gets no asks: its brief is all it reads.
+# CLAUDE_DECISIONS_GLOB moves the source.
+DECISIONS_GLOB = os.path.join(os.path.expanduser("~"), ".claude", "decisions", "owner-decisions-*.md")
+DATED_NAME_RE = re.compile(r"-\d{4}-\d{2}-\d{2}\.md$")
+ASK_ROW_RE = re.compile(r"^- \d\d:[0-9x]{2}\b")
+SHUT_ASK_RE = re.compile(r"\b(DECIDED|DONE|RULED|APPLIED|LAPSED|CLOSED)\b")
+ASKS_CAP = 1200
+ASKS_COMPACT_CAP = 450
+ASK_CLIP = 200
+ASKS_MORE = "\n[older open asks in the file]"
+
+
+def open_asks(data, cap=ASKS_CAP):
+    """The open ask rows of the newest dated decisions file, counted in the heading, last
+    written first, each clipped to ASK_CLIP, the block at most cap characters with its marker;
+    "" for a subagent's payload, with no file or with no open ask. Never raises: it prints at
+    every start.
+
+    The count and the last written ask always survive the smaller cap: when the file's path
+    leaves no room for that row the heading names the file alone, and a row that still does
+    not fit prints clipped to the room left.
+    """
+    if data.get("agent_id") or data.get("agent_type"):
+        return ""
+    try:
+        pattern = os.environ.get("CLAUDE_DECISIONS_GLOB") or DECISIONS_GLOB
+        # the newest by the date in the name, then by path: a glob over several prefixes
+        # (asks-*.md beside notes-*.md) must not pick by prefix
+        files = sorted((f for f in glob.glob(pattern) if DATED_NAME_RE.search(f)),
+                       key=lambda f: (DATED_NAME_RE.search(f).group(0), f))
+        if not files:
+            return ""
+        path = files[-1].replace("\\", "/")
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            rows = [line.strip() for line in handle if ASK_ROW_RE.match(line) and not SHUT_ASK_RE.search(line)]
+    except OSError:
+        return ""
+    if not rows:
+        return ""
+    clipped = [row if len(row) <= ASK_CLIP else row[:ASK_CLIP - 6] + " [cut]" for row in reversed(rows)]
+
+    def heading(where):
+        return ("Open owner asks (%d) in %s, last written first; rows clipped: read the row in the file"
+                " and restate an ask whole, never by number:" % (len(rows), where))
+    def marker_room(i):  # the marker prints only when rows older than row i exist
+        return len(ASKS_MORE) if i < len(clipped) - 1 else 0
+    text = heading(path)
+    if len(text) + 1 + len(clipped[0]) + marker_room(0) > cap:
+        text = heading(os.path.basename(path))  # a long path would leave no room for the newest ask
+    for i, row in enumerate(clipped):
+        room = cap - len(text) - 1 - marker_room(i)
+        if len(row) > room:
+            if i == 0:  # the last written ask always prints, clipped to the room left
+                text += "\n" + row[:max(room - 6, 0)] + " [cut]"
+            if len(clipped) > 1:
+                text += ASKS_MORE
+            break
+        text += "\n" + row
+    return text
 
 
 LANE_STATE_SCRIPT = os.path.join(os.path.expanduser("~"), ".claude", "tools", "lane-state.py")
@@ -424,6 +509,9 @@ def main():
         if not board:
             return 0
         text = rulings_block()
+        asks = open_asks(data)
+        if asks:
+            text = asks + "\n\n" + text
         if block:
             text = block + "\n\n" + text
         sys.stdout.buffer.write(text.encode("utf-8"))
@@ -446,6 +534,9 @@ def main():
     if live:
         out.insert(1 if block else 0, live)
     if board:
+        asks = open_asks(data, ASKS_COMPACT_CAP)
+        if asks:
+            out.append(asks)
         out.append(rulings_block())
         sheet = state_sheet()
         if sheet:
