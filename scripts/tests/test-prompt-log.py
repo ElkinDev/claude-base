@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for claude/hooks/prompt-log.py: the line every typed prompt appends on submit, the
 prompts it refuses to log, the caps on an entry and on the file, and the block it prints back
-at a compaction.
+at every session start: a compaction, a resume, a clear and a fork.
 
 Run:
     python test-prompt-log.py
@@ -219,6 +219,35 @@ class PromptLogTest(unittest.TestCase):
         self.assertEqual(len([line for line in out.split("\n") if line]), 1)
         self.assertFalse(os.path.exists(self.log), "--recover writes nothing")
 
+    def test_recover_on_a_fresh_start_without_a_file_prints_nothing(self):
+        """--recover runs at every session start; a new session has no log yet, and only a
+        compaction is worth a line saying so."""
+        for source in ("startup", "resume", "clear", "fork"):
+            code, out, err = run_hook(self.payload("", source=source), self.checkpoints, args=["--recover"])
+            self.assertEqual(code, 0, err)
+            self.assertEqual(out, "", "a %s with no log printed a line" % source)
+        code, out, err = run_hook(self.payload("", source="compact"), self.checkpoints, args=["--recover"])
+        self.assertEqual(code, 0, err)
+        self.assertIn("No prompt log", out, "a compaction with no log no longer says so")
+
+    def test_recover_on_a_resume_prints_the_last_prompts(self):
+        self.append("orden del principio")
+        code, out, err = run_hook(self.payload("", source="resume"), self.checkpoints, args=["--recover"])
+        self.assertEqual(code, 0, err)
+        lines = [line for line in out.split("\n") if line]
+        self.assertEqual(lines[0], HEADER + self.log + ":")
+        self.assertEqual(self.text_of(lines[1]), "orden del principio")
+
+    def test_recover_prints_nothing_for_an_agent_even_with_a_log(self):
+        """An agent's brief is all it reads; the session's typed prompts are not its input."""
+        self.append("orden del asiento")
+        for extra in ({"agent_type": "reviewer"}, {"agent_id": "a0000000000000000"}):
+            for source in ("compact", "startup"):
+                code, out, err = run_hook(self.payload("", source=source, **extra), self.checkpoints,
+                                          args=["--recover"])
+                self.assertEqual(code, 0, err)
+                self.assertEqual(out, "", "an agent payload %r got the prompts at %s" % (extra, source))
+
     # --------------------------------------------------------------- never blocks a prompt
     def test_malformed_stdin_exits_zero_and_prints_nothing(self):
         for raw in [b"", b"not json at all", b"{", b'{"prompt": "hola"}', b'{"session_id": null}']:
@@ -229,6 +258,34 @@ class PromptLogTest(unittest.TestCase):
     def test_malformed_stdin_in_recover_mode_exits_zero(self):
         code, out, err = run_hook(b"not json", self.checkpoints, args=["--recover"])
         self.assertEqual(code, 0, err)
+
+
+class SettingsWiringTest(unittest.TestCase):
+    """The user settings the installer copies wire the hook where its two modes need it."""
+
+    def setUp(self):
+        with open(os.path.join(ROOT, "claude", "settings.json"), encoding="utf-8") as handle:
+            self.hooks = json.load(handle).get("hooks", {})
+
+    def commands(self, event, source=None):
+        found = []
+        for entry in self.hooks.get(event, []):
+            matcher = entry.get("matcher", "")
+            if source is not None and matcher and source not in matcher.split("|"):
+                continue
+            found += [hook.get("command", "") for hook in entry.get("hooks", [])]
+        return found
+
+    def test_every_typed_prompt_is_logged(self):
+        wired = [c for c in self.commands("UserPromptSubmit") if "prompt-log.py" in c and "--recover" not in c]
+        self.assertEqual(len(wired), 1, "prompt-log.py is not wired once on UserPromptSubmit")
+
+    def test_the_prompts_come_back_at_every_session_start(self):
+        """A compaction paraphrases the prompts, and a resume, a clear or a fork opens a window
+        without them, so --recover runs on all five sources."""
+        for source in ("compact", "startup", "resume", "clear", "fork"):
+            wired = [c for c in self.commands("SessionStart", source) if "prompt-log.py" in c and "--recover" in c]
+            self.assertEqual(len(wired), 1, "--recover is not wired once for " + source)
 
 
 if __name__ == "__main__":

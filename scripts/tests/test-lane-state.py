@@ -126,21 +126,21 @@ class GateLineTest(unittest.TestCase):
 
     def test_green_line_is_exact(self):
         expected = (
-            "pwp pwp-g7-merge %s 7862dd1 exit=0 lock=0 moved=0 ok phases=4 secs=875"
+            "pwp pwp-g7-merge %s 7862dd1 exit=0 lock=0 moved=0 ok phases=4 secs=608 hold=-"
             % hhmm(self.green)
         )
         self.assertIn(expected, self.lines())
 
     def test_running_sentinel_line_is_exact(self):
         expected = (
-            "afo afo-g1 %s 16e54ce exit=running lock=- moved=- ok phases=0 secs=0"
+            "afo afo-g1 %s 16e54ce exit=running lock=- moved=- ok phases=0 secs=0 hold=-"
             % hhmm(self.sentinel)
         )
         self.assertIn(expected, self.lines())
 
     def test_ktlint_failure_line_is_exact(self):
         expected = (
-            "bud68 bud68-g1 %s - exit=1 lock=- moved=- failed=ktlint:1 phases=2 secs=50"
+            "bud68 bud68-g1 %s - exit=1 lock=- moved=- failed=ktlint:1 phases=2 secs=40 hold=-"
             % hhmm(self.failed)
         )
         self.assertIn(expected, self.lines())
@@ -230,6 +230,9 @@ class RenderTest(unittest.TestCase):
             "## Rulings (last %d of %s, append there in the same turn the owner rules)"
             % (lane_state.RULINGS_ROWS,
                self.config["rulings_file"].replace("\\", "/")))
+        self.landings_heading = (
+            "## Last landings (every merge on main in the last 24 h from git, one line per "
+            "train, then the landings file's prose rows)")
 
     def render(self, max_lines=120):
         return lane_state.render_law(self.config, max_lines=max_lines)
@@ -244,7 +247,8 @@ class RenderTest(unittest.TestCase):
         headings = [ln for ln in lines if ln.startswith("## ")]
         self.assertEqual(
             ["## Fixed lines", "## Worktrees", self.rulings_heading,
-             "## Gates (last 24 h)", "## Last landings",
+             lane_state.reports_heading(self.config),
+             "## Gates (last 24 h)", self.landings_heading,
              "## Lane reports and briefs (last 24 h)"],
             headings,
         )
@@ -252,7 +256,7 @@ class RenderTest(unittest.TestCase):
     def test_a_missing_source_never_fails_the_render(self):
         self.config["landings_file"] = os.path.join(self.tmp, "gone.md")
         body = self.render()
-        self.assertIn("## Last landings\nsection unavailable: ", body)
+        self.assertIn(self.landings_heading + "\nsection unavailable: ", body)
         self.assertIn(self.rulings_heading + "\n", body)
 
     def test_a_missing_worktree_repo_says_so_and_the_sheet_still_renders(self):
@@ -262,8 +266,9 @@ class RenderTest(unittest.TestCase):
 
     def test_the_cut_spares_the_fixed_lines_and_the_gates(self):
         full = self.render()
-        cut = self.render(max_lines=16)
-        self.assertLessEqual(len(cut.splitlines()), 16)
+        # 18, not 16: the owner reports section is not cuttable either and adds its two lines.
+        cut = self.render(max_lines=18)
+        self.assertLessEqual(len(cut.splitlines()), 18)
         self.assertIn("Fixed one.", cut)
         self.assertIn("Fixed two.", cut)
         for line in full.splitlines():
@@ -341,7 +346,7 @@ class PublicDefaultsCase(unittest.TestCase):
                          config["rulings_file"].replace("\\", "/"))
         body = fresh.render_law(config)
         headings = [ln for ln in body.splitlines() if ln.startswith("## ")]
-        self.assertEqual(6, len(headings))
+        self.assertEqual(7, len(headings))
         self.assertIn("## Fixed lines\nno fixed lines configured\n", body)
         self.assertIn("## Worktrees\nno repository configured\n", body)
         self.assertIn("## Gates (last 24 h)\nno gate exit file in the last 24 h\n", body)
@@ -385,6 +390,41 @@ class ConfigEncodingCase(unittest.TestCase):
         with open(target, encoding="utf-8") as handle:
             text = handle.read()
         self.assertIn("## Fixed lines\n" + fixed + "\n", text)
+
+
+class MainMergesTest(unittest.TestCase):
+    """The landings section reads the merges main took from git, one line per train. git is
+    replaced by a canned log here, so no repository is read and no git runs."""
+
+    LOG = "\n".join([
+        "c3c3c3c|2026-09-22 18:40:00 +0000|Merge lane bb2 (two commits) into train-a1",
+        "b2b2b2b|2026-09-22 18:30:00 +0000|Merge branch 'hotfix' into main",
+        "a1a1a1a|2026-09-22 18:20:00 +0000|Merge lane aa1 (one commit) into train-a1",
+    ]) + "\n"
+
+    def setUp(self):
+        self.saved = lane_state.run_git
+        self.addCleanup(setattr, lane_state, "run_git", self.saved)
+
+    def test_lane_merges_fold_into_one_train_line_newest_first(self):
+        lane_state.run_git = lambda args, cwd=None: self.LOG
+        rows = lane_state.main_merges("some-repo")
+        self.assertEqual(rows, [
+            "train-a1 2026-09-22 18:40 2 lanes a1a1a1a..c3c3c3c: aa1 bb2",
+            "b2b2b2b 2026-09-22 18:30 Merge branch 'hotfix' into main",
+        ])
+
+    def test_no_repository_means_no_line_and_no_git(self):
+        def refuse(args, cwd=None):
+            raise AssertionError("git ran with no repository configured")
+        lane_state.run_git = refuse
+        self.assertEqual(lane_state.main_merges(""), [])
+
+    def test_a_git_failure_is_one_line(self):
+        def fail(args, cwd=None):
+            raise RuntimeError("not a git repository")
+        lane_state.run_git = fail
+        self.assertEqual(lane_state.main_merges("some-repo"), ["git log failed: not a git repository"])
 
 
 if __name__ == "__main__":

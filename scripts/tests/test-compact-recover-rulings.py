@@ -82,6 +82,10 @@ class RulingsBlockCase(unittest.TestCase):
         # and no run of this suite can render a sheet a live session reads.
         env["CLAUDE_LANE_STATE_SCRIPT"] = self.renderer
         env["CLAUDE_LANE_STATE_SHEET"] = self.sheet
+        # A decisions glob that matches nothing, so the open-asks block never prints here and
+        # the exact outputs below stay the rulings alone. The asks have their own suite,
+        # test-compact-recover-asks.py.
+        env["CLAUDE_DECISIONS_GLOB"] = self.tmp + "/no-decisions-*.md"
         for name in ("CLAUDE_BRIEFS_DIR", "CLAUDE_LANDINGS_FILE", "CLAUDE_ROLE",
                      "CLAUDE_CODE_AUTO_COMPACT_WINDOW"):
             env.pop(name, None)
@@ -163,6 +167,33 @@ class RulingsBlockCase(unittest.TestCase):
         out = self.run_hook(self.write_register([second, first]), args=("--rulings",))
         self.assertLess(out.index(second), out.index(first))
 
+    # --- the two row shapes ----------------------------------------------
+    def test_a_row_without_the_leading_dash_is_a_ruling_and_sorts_by_its_stamp(self):
+        """A row-writing helper appends rows with no leading "- ", beside the hand rows
+        that carry it. A reader that knows one shape drops every row of the other, and
+        the newest rulings are then the ones missing."""
+        rows = [
+            "2026-09-16 08:0x [decision] EARLY bare row, older than every dash row.",
+            "- 2026-09-17 14:2x [process] OLDEST dash row.",
+            "2026-09-20 09:1x [process] MIDDLE bare row, as a helper writes it.",
+            "- 2026-09-17 14:0x [owner] OLDER dash row written after a later one.",
+            "not a row, a note line",
+            "2026-09-22 18:3x [owner] NEWEST bare row. (source)",
+        ]
+        out = self.run_hook(self.write_register(rows), args=("--rulings",))
+        printed = out[len(LANE_BLOCK):].splitlines()[1:]
+        self.assertEqual(len(printed), 5, printed)
+        self.assertIn("EARLY bare row", printed[0])
+        self.assertIn("OLDER dash row", printed[1])
+        self.assertIn("MIDDLE bare row", printed[-2])
+        self.assertIn("NEWEST bare row", printed[-1])
+        self.assertNotIn("not a row", out)
+
+    def test_the_sort_key_reads_date_and_hour_from_either_shape(self):
+        dash, bare = "- 2026-09-20 09:1x [x] dash", "2026-09-20 09:1x [x] bare"
+        self.assertEqual(hook.ruling_key(dash), ("2026-09-20", "09:1x"))
+        self.assertEqual(hook.ruling_key(bare), ("2026-09-20", "09:1x"))
+
     # --- the register that is not there -----------------------------------
     def test_a_missing_register_is_one_line_and_not_a_dropped_paragraph(self):
         missing = self.tmp + "/gone.md"
@@ -177,7 +208,7 @@ class RulingsBlockCase(unittest.TestCase):
     # --- the defaults of a public hook ------------------------------------
     def test_the_hook_carries_no_path_of_one_machine(self):
         """The kit is installed on any home, so a default that names a drive letter
-        and somebody's folder is a default that works on one machine only. The three
+        and somebody's folder is a default that works on one machine only. The four
         defaults are home-relative and the env seams move them from there."""
         with open(HOOK, encoding="utf-8") as handle:
             lines = handle.read().splitlines()
@@ -187,7 +218,7 @@ class RulingsBlockCase(unittest.TestCase):
                   if "C:/" in line or "C:\\" in line]
         self.assertEqual(guilty, [], "the hook names a path of one machine")
         home = os.path.expanduser("~")
-        for name in ("RULINGS_FILE", "LANE_STATE_SCRIPT", "LANE_STATE_SHEET"):
+        for name in ("RULINGS_FILE", "LANE_STATE_SCRIPT", "LANE_STATE_SHEET", "DECISIONS_GLOB"):
             value = getattr(hook, name)
             self.assertTrue(os.path.normcase(value).startswith(os.path.normcase(home)),
                             "%s is not under the home dir: %s" % (name, value))
