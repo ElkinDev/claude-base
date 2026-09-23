@@ -323,8 +323,105 @@ def main():
                     and bad.returncode == 2 and "--no-git" in bad.stderr)
         check("--no-git: a notes and a review brief name no worktree, tip or run, the notes brief passes brief-check "
               "tier 3, and --tests with it is refused", nogit_shape)
+
+        # Stacked lanes: a temp repo whose base branch is trunk (set by the config), lane-a (A1 on trunk), lane-b
+        # (B1, B2 on lane-a) checked out in the repo, lane-c (C1 on trunk) in its own worktree.
+        ev = os.path.join(tmp, "ev-stack")
+        for sub in ("lanes", "briefs", "reviews"):
+            os.makedirs(os.path.join(ev, sub))
+        repo = os.path.join(tmp, "stack-repo").replace("\\", "/")
+        wtc = os.path.join(tmp, "stack-wtc").replace("\\", "/")
+        os.makedirs(repo)
+        git(repo, "init", "-q", "-b", "trunk")
+        git(repo, "commit", "-q", "--allow-empty", "-m", "root")
+        git(repo, "checkout", "-q", "-b", "lane-a")
+        git(repo, "commit", "-q", "--allow-empty", "-m", "A1 the parent lane")
+        git(repo, "checkout", "-q", "-b", "lane-b")
+        for s in ("B1 the stacked lane", "B2 the stacked lane"):
+            git(repo, "commit", "-q", "--allow-empty", "-m", s)
+        git(repo, "branch", "lane-c", "trunk")
+        git(repo, "worktree", "add", "-q", wtc, "lane-c")
+        git(wtc, "commit", "-q", "--allow-empty", "-m", "C1 a plain lane")
+        rev = lambda ref: subprocess.run(["git", "-C", repo, "rev-parse", ref], capture_output=True, text=True,
+                                         check=True, timeout=60).stdout.strip()
+        a1, root, head = rev("lane-a"), rev("trunk"), rev("lane-b")
+        for tok, wt in (("stk", repo), ("pln", wtc)):
+            with open(os.path.join(ev, "lanes", "%s-lane-%s.md" % (tok, today)), "w", encoding="utf-8") as f:
+                f.write("# Lane %s (ABC-7): a stacked topic\n\nWorktree %s, branch as git says.\n" % (tok, wt))
+            with open(os.path.join(ev, "briefs", "%s-lane-%s.md" % (tok, today)), "w", encoding="utf-8") as f:
+                f.write("# the lane brief\n")
+        scfg = os.path.join(tmp, "stack.json")
+        with open(scfg, "w", encoding="utf-8") as f:
+            json.dump({"base_branch": "trunk"}, f)
+        senv = dict(os.environ, BRIEF_GEN_CONFIG=scfg, EVIDENCE_ROOT=ev)
+
+        def sgen(*argv):
+            return subprocess.run([sys.executable, SCRIPT] + list(argv), capture_output=True, text=True, env=senv, timeout=60)
+
+        def lane_line(path):
+            body = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
+            return body.split("## The lane", 1)[1].split("##", 1)[0] if "## The lane" in body else ""
+
+        def stacked():
+            warn, given = os.path.join(tmp, "stk-warn.md"), os.path.join(tmp, "stk-base.md")
+            r = sgen("review", "stk", "--out", warn)
+            g = sgen("review", "stk", "--base", " lane-a ", "--out", given)
+            lw, lg = lane_line(warn), lane_line(given)
+            return (r.returncode == 0 and "base %s (merge-base with trunk; branch lane-a at %s is below the tip" % (root[:9], a1[:9]) in lw
+                    and "--base %s" % a1[:9] in lw and "A1 the parent lane" in lw and "warning" in r.stderr
+                    and g.returncode == 0 and "base %s (given by --base" % a1[:9] in lg and "B1 the stacked lane" in lg
+                    and "A1 the parent lane" not in lg and "warning" not in g.stderr)
+        check("stacked lane: with no --base the parent branch is named with the --base to pass; --base lists only the "
+              "lane's own commits", stacked)
+
+        def plain_and_merged_in():
+            out, out2 = os.path.join(tmp, "pln.md"), os.path.join(tmp, "pln-merged.md")
+            r = sgen("review", "pln", "--out", out)
+            git(repo, "branch", "lane-d", "trunk")
+            wtd = os.path.join(tmp, "stack-wtd").replace("\\", "/")
+            git(repo, "worktree", "add", "-q", wtd, "lane-d")
+            git(wtd, "commit", "-q", "--allow-empty", "-m", "D1 a sibling")
+            git(wtc, "merge", "-q", "--no-ff", "-m", "merge lane-d", "lane-d")
+            r2 = sgen("review", "pln", "--out", out2)
+            l1, l2 = lane_line(out), lane_line(out2)
+            return (r.returncode == 0 and "base %s (merge-base with trunk)" % root[:9] in l1 and "warning" not in r.stderr
+                    and r2.returncode == 0 and "below the tip" not in l2 and "warning" not in r2.stderr and "D1 a sibling" in l2)
+        check("a lane cut from the base branch, and one that merged a sibling in, get no stacked warning", plain_and_merged_in)
+
+        def base_refused():
+            out = os.path.join(tmp, "stk-bad.md")
+            cases = [(sgen("review", "stk", "--base", "lane-c", "--out", out), 1, "is not below the tip"),
+                     (sgen("review", "stk", "--base", "nosuchref", "--out", out), 1, "is not a commit"),
+                     (sgen("review", "stk", "--base", head, "--out", out), 1, "is the tip itself"),
+                     (sgen("review", "stk", "--base", "  ", "--out", out), 2, "--base is blank"),
+                     (sgen("notes", "stk", "--review", review, "--base", a1, "--out", out), 2, "review kind's"),
+                     (sgen("review", "stk", "--no-git", "--base", a1, "--out", out), 2, "--no-git")]
+            return all(r.returncode == code and why in r.stderr for r, code, why in cases) and not os.path.exists(out)
+        check("--base is refused when not strictly below the tip, unknown, the tip, blank, on another kind or with "
+              "--no-git", base_refused)
+
+        def long_lists_bounded():
+            stream = "".join("commit refs/heads/lane-b\ncommitter f <f@example.com> %d +0000\ndata %d\n%s\n%s"
+                             % (1767000000 + i, len("B%d bulk" % (i + 3)), "B%d bulk" % (i + 3), "from %s\n" % head if i == 0 else "")
+                             for i in range(105))
+            subprocess.run(["git", "-C", repo, "fast-import", "--quiet"], input=stream.encode(), check=True, timeout=60)  # bytes: no CRLF
+            refused = sgen("review", "stk", "--base", a1, "--out", os.path.join(tmp, "stk-long-base.md"))
+            out = os.path.join(tmp, "stk-long.md")
+            plain = sgen("review", "stk", "--attack", "1. a point", "--purpose", "quality, the pins", "--out", out)
+            return (refused.returncode == 1 and "107 commits above it, more than a lane's 40" in refused.stderr
+                    and not os.path.exists(os.path.join(tmp, "stk-long-base.md")) and plain.returncode == 0
+                    and "(8 more commits above the base: git log --oneline %s.." % root[:9] in lane_line(out)
+                    and ", 0 placeholders" in plain.stdout)
+        check("above the base: more than 40 refused under --base, more than 100 cut with a pointer that is no "
+              "placeholder", long_lists_bounded)
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        def unlock(fn, path, _exc):  # git writes read-only pack files
+            try:
+                os.chmod(path, 0o700)
+                fn(path)
+            except OSError:
+                pass
+        shutil.rmtree(tmp, onerror=unlock)
     print("%d of %d OK" % (sum(results), len(results)))
     return 0 if all(results) else 1
 
