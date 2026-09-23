@@ -85,6 +85,7 @@ import collections
 import csv
 import datetime as dt
 import glob
+import importlib.util
 import hashlib
 import json
 import os
@@ -159,6 +160,19 @@ DEFAULT_PROJECTS_DIR = os.path.join(
 DEFAULT_REPO = CONFIG.get("repo")
 DEFAULT_BRANCH = CONFIG.get("branch") or "main"
 DEFAULT_ANALYZER = find_analyzer()
+QUALITY_SCRIPT = os.path.join(HERE, "quality.py")
+
+# A landing is a move of `main`, and the reflog is where those moves are
+# written. Rows read `<sha> main@{2026-09-05 19:25:34 -0500}: merge <sha>:
+# Fast-forward`, so the sha, the local timestamp and the message are taken
+# apart here and the message decides whether the row is a landing.
+REFLOG_ROW_RE = re.compile(r"^(\S+)\s+\S+@\{([^}]+)\}:\s*(.*)$")
+
+# Subject prefixes counted as landings when the merges arrive through
+# `--git-log-file` and there is no reflog to read. The train writes `merge: `
+# and `merge(train): ` since 2026-08-27; `Merge branch '` is what the older
+# `--no-ff` landings wrote. Compared in lower case.
+MERGE_SUBJECT_PREFIXES = ("merge branch '", "merge: ", "merge(")
 
 # A turn that does any of this is work, never waste.
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Artifact"}
@@ -690,42 +704,124 @@ def points_climbed(rows, start, end):
 
 
 def read_merges(repo, start, end, git_log_file, branch=None):
-    """Merge commits on the main branch inside the window, features and others."""
-    branch = branch or DEFAULT_BRANCH
-    lines = []
-    source = None
+    """Landings of the main branch inside the window, split into features and others.
+
+    A landing is a move of `main`, not a subject that reads like one. Since the
+    train lands lanes by fast-forward the merge subjects carry every shape
+    (`merge: main into ...`, `merge(train): ...`, `merge: feature-...`), and a
+    merge commit created inside a lane branch rides onto main with the
+    fast-forward without being a landing of its own. The reflog of `main`
+    separates the two: every landing writes exactly one row there, a merge
+    commit that only travelled inside a branch writes none.
+
+    So the primary source is `git reflog show <branch>`, and the rows whose message
+    starts with `merge ` (both `: Fast-forward` and `: Merge made by ...`) are
+    the features. Rows of any other kind inside the window (`reset:`,
+    `checkout:`, `commit:`) are returned as others, listed and not counted.
+
+    The subject classifier survives only for the `--git-log-file` input, which
+    has no reflog to read; its source string says so, because that count is an
+    approximation of the landings and the reflog count is not.
+    """
     if git_log_file:
-        source = "file %s" % git_log_file
+        source = "subjects from file %s" % git_log_file
         with open(git_log_file, encoding="utf-8", errors="ignore") as fh:
             lines = [l.strip() for l in fh if l.strip()]
-    elif repo and os.path.isdir(os.path.join(repo, ".git")):
-        source = "git log %s %s" % (repo, branch)
-        cmd = ["git", "-C", repo, "log", "--merges",
-               "--since", start.strftime("%Y-%m-%d %H:%M:%S"),
-               "--until", end.strftime("%Y-%m-%d %H:%M:%S"),
-               "--format=%h|%ad|%s", "--date=iso", branch]
-        try:
-            out = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
-                                 encoding="utf-8", errors="replace")
-            lines = [l.strip() for l in (out.stdout or "").splitlines() if l.strip()]
-        except (OSError, subprocess.SubprocessError) as exc:
-            return [], [], "git failed: %s" % exc
-    elif repo:
-        return [], [], "no repository at %s" % repo
-    else:
+        features, others = [], []
+        for line in lines:
+            parts = line.split("|", 2)
+            if len(parts) != 3:
+                continue
+            subject = parts[2]
+            entry = {"sha": parts[0], "date": parts[1], "subject": subject}
+            low = subject.lower()
+            if any(low.startswith(p) for p in MERGE_SUBJECT_PREFIXES):
+                features.append(entry)
+            else:
+                others.append(entry)
+        return features, others, source
+    if not repo:
         return [], [], "no repository configured, set `repo` in ledger-config.json"
+    if not os.path.isdir(os.path.join(repo, ".git")):
+        return [], [], "no repository at %s" % repo
+    branch = branch or DEFAULT_BRANCH
+    source = "reflog %s %s" % (branch, repo)
+    cmd = ["git", "-C", repo, "reflog", "show", branch, "--date=iso"]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
+                             encoding="utf-8", errors="replace")
+        rows = (out.stdout or "").splitlines()
+    except (OSError, subprocess.SubprocessError) as exc:
+        return [], [], "git failed: %s" % exc
+    features, others = parse_reflog_rows(rows, start, end)
+    fill_reflog_subjects(repo, features + others)
+    return features, others, source
+
+
+def parse_reflog_rows(rows, start, end):
+    """Split `git reflog show main --date=iso` rows into landings and the rest.
+
+    A row reads `<sha> main@{2026-09-05 19:25:34 -0500}: merge <sha>: Fast-forward`.
+    Only the rows inside [start, end] are kept; the timestamp is read as local
+    time, the same clock the window is expressed in.
+    """
     features, others = [], []
-    for line in lines:
-        parts = line.split("|", 2)
-        if len(parts) != 3:
+    for row in rows:
+        m = REFLOG_ROW_RE.match(row.strip())
+        if not m:
             continue
-        subject = parts[2]
-        entry = {"sha": parts[0], "date": parts[1], "subject": subject}
-        if subject.startswith("Merge branch 'vc") or subject.startswith("Merge branch 'spec-"):
+        sha, stamp, message = m.group(1), m.group(2), m.group(3)
+        try:
+            when = dt.datetime.strptime(stamp[:19], "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+        if not (start <= when <= end):
+            continue
+        entry = {"sha": sha, "date": stamp, "subject": message,
+                 "reflog": message}
+        if message.lower().startswith("merge "):
             features.append(entry)
         else:
             others.append(entry)
-    return features, others, source
+    return features, others
+
+
+def fill_reflog_subjects(repo, entries):
+    """Replace the reflog message of each entry with the subject of its tip.
+
+    One `git log --no-walk` call for every sha, so a day of landings costs one
+    process. A sha that git cannot read keeps its reflog message.
+    """
+    shas = sorted({e["sha"] for e in entries})
+    if not shas:
+        return
+    def subject_lines(revs):
+        cmd = ["git", "-C", repo, "log", "--no-walk", "--format=%H|%s"] + revs
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
+                                 encoding="utf-8", errors="replace")
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if out.returncode != 0:
+            return None
+        return [l.strip() for l in (out.stdout or "").splitlines() if l.strip()]
+
+    lines = subject_lines(shas)
+    if lines is None:
+        # git refuses the whole call on the first sha it cannot read (a tip a reset dropped and gc removed),
+        # so the shas are asked one at a time and only the unreadable one keeps its reflog message
+        lines = []
+        for sha in shas:
+            lines.extend(subject_lines([sha]) or [])
+    subjects = {}
+    for line in lines:
+        full, _sep, subject = line.partition("|")
+        subjects[full.strip()] = subject
+    for entry in entries:
+        for full, subject in subjects.items():
+            if full.startswith(entry["sha"]):
+                entry["subject"] = subject
+                break
 
 
 def run_analyzer(analyzer, start, notes):
@@ -899,6 +995,46 @@ def project_context(sessions):
     }
 
 
+def quality_landings(repo):
+    """The landings file the quality numbers read: `landings` of the compare block in ledger-config.json, else
+    EVIDENCE_ROOT, else the evidence folder beside the repository; "" when none is known (reported unavailable)."""
+    given = (CONFIG.get("compare") or {}).get("landings")
+    if given:
+        return given
+    root = os.environ.get("EVIDENCE_ROOT") or (
+        os.path.join(os.path.dirname(os.path.abspath(repo)), "evidence") if repo else None)
+    return os.path.join(root, "landings.md") if root else ""
+
+
+def load_quality():
+    """The quality module, or None and the reason. A missing module is a note,
+    never an exception: the spend numbers of the run stand on their own."""
+    try:
+        spec = importlib.util.spec_from_file_location("quality", QUALITY_SCRIPT)
+        if spec is None or spec.loader is None:
+            return None, "no loader for %s" % QUALITY_SCRIPT
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module, None
+    except (ImportError, OSError, SyntaxError, AttributeError) as exc:
+        return None, "quality.py did not load: %s" % exc
+
+
+def quality_report(quality_mod, start, end, landings_path, defects_path,
+                   features, now):
+    """The quality numbers of the window, and the reason they are missing.
+
+    The spend numbers of a run must reach the daily file and the ledger row even
+    when the quality module breaks, so this is the one place a failure inside
+    `compute` is turned into an unavailable field and a note."""
+    try:
+        return quality_mod.compute(start, end, landings_path, defects_path,
+                                   features, now=now), None
+    except Exception as exc:  # any failure inside quality.py, never a lost run
+        note = "quality.compute failed: %s: %s" % (type(exc).__name__, exc)
+        return {"unavailable": note}, note
+
+
 def build_report(args, start, end, now):
     """Collect every source and compute the per-project rows."""
     notes = []
@@ -1058,6 +1194,23 @@ def build_report(args, start, end, now):
     if merge_source:
         sources.append("merges from %s" % merge_source)
 
+    # 6. quality numbers of the same window
+    # a caller that builds its own args (the tests) may carry no ledger folder: the default one then
+    defects_path = os.path.join(getattr(args, "ledger_dir", None) or DEFAULT_LEDGER_DIR, "defects.md")
+    quality_mod, quality_note = load_quality()
+    if quality_mod is None:
+        quality_rep = {"unavailable": quality_note}
+        notes.append(quality_note)
+    else:
+        quality_rep, quality_failure = quality_report(
+            quality_mod, start, end, quality_landings(getattr(args, "repo", None)), defects_path,
+            features, now)
+        if quality_failure:
+            notes.append(quality_failure)
+        else:
+            sources.append("quality from %s, %s and the gate exit files"
+                           % (quality_landings(getattr(args, "repo", None)), defects_path))
+
     # rows
     total_tokens = sum(p["tokens"] for p in projects.values()) or 1
     out_rows = []
@@ -1115,6 +1268,7 @@ def build_report(args, start, end, now):
         "account_points": round(account_points, 1), "accounts": accounts,
         "quota_samples": samples, "resets": resets, "weekly_col": weekly_col,
         "features": features, "other_merges": other_merges,
+        "quality": quality_rep,
         "sources": sources, "notes": notes, "skipped": skipped,
         "cross": cross, "cache_measurable": cache_measurable,
         "total_tokens": sum(p["tokens"] for p in projects.values()),
@@ -1313,6 +1467,62 @@ def render_daily(rep):
             "point(s) were counted after it."
             % (when.isoformat(sep=" "), before, after, after))
     add("")
+    add("## Quality")
+    add("")
+    q = rep.get("quality") or {}
+    if "unavailable" in q:
+        add("Not measured: %s" % q["unavailable"])
+    else:
+        gates, review, defects = q["gates"], q["review"], q["defects"]
+        landings = q["landings"]
+        add("Three numbers over the same window as the spend above. An "
+            "optimization holds only if the cost per landing falls and none of "
+            "these rises, read week over week, never day over day.")
+        add("")
+        if "unavailable" in gates:
+            add("- red gates: not measured, %s" % gates["unavailable"])
+        else:
+            add("- red gates: %d red, %d green, %d aborted over %d gate file(s); "
+                "red share %s."
+                % (gates["red"], gates["green"], gates["aborted"], gates["total"],
+                   "-" if gates["red_share"] is None
+                   else "%.1f%%" % (100.0 * gates["red_share"])))
+            add("- red by cause: %s."
+                % ", ".join("%s %d" % (name, gates["by_cause"][name])
+                            for name in sorted(gates["by_cause"])))
+            add("- gate runs per landing: %s, %d gate file(s) over %d landing(s)."
+                % ("-" if gates["per_landing"] is None
+                   else "%.2f" % gates["per_landing"], gates["total"], landings))
+        if "unavailable" in review:
+            add("- review blocks: not measured, %s" % review["unavailable"])
+        else:
+            add("- review blocks: %d block(s) and %d clear(s), block share %s."
+                % (review["block"], review["clear"],
+                   "-" if review["block_share"] is None
+                   else "%.1f%%" % (100.0 * review["block_share"])))
+        if "unavailable" in defects:
+            add("- declared defects: not measured, %s" % defects["unavailable"])
+        else:
+            add("- declared defects: %d row(s) of defects.md inside the window."
+                % defects["declared"])
+        add("- fix landings: %d of %d landing(s), %s."
+            % (defects["fix_landings"], landings,
+               "-" if defects["fix_share"] is None
+               else "%.1f%%" % (100.0 * defects["fix_share"])))
+        for title, items in (("Gate files counted", gates.get("rows")),
+                             ("Review rows counted", review.get("heads")),
+                             ("Review rows with no verdict in the head, listed "
+                              "and not counted", review.get("unclassified")),
+                             ("Defects declared inside the window",
+                              defects.get("rows")),
+                             ("Fix landings", defects.get("fix_subjects"))):
+            if not items:
+                continue
+            add("")
+            add("%s (%d):" % (title, len(items)))
+            for item in items:
+                add("- %s" % item)
+    add("")
     add("## Merges")
     add("")
     if rep["features"]:
@@ -1375,6 +1585,15 @@ def main(argv=None):
         with open(daily_path, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(daily)
         append_ledger(os.path.join(args.ledger_dir, "ledger.md"), rep)
+        quality_mod, quality_note = load_quality()
+        quality_rep = rep.get("quality") or {}
+        if quality_mod is not None and "unavailable" not in quality_rep:
+            quality_path = os.path.join(args.ledger_dir, "quality.md")
+            quality_mod.append_quality(quality_path, now, start, end, quality_rep)
+            print("quality ledger: %s" % quality_path)
+        else:
+            print("quality row not appended: %s"
+                  % (quality_note or "no quality numbers"), file=sys.stderr)
         print("daily breakdown: %s" % daily_path)
     if args.json_out:
         with open(args.json_out, "w", encoding="utf-8", newline="\n") as fh:

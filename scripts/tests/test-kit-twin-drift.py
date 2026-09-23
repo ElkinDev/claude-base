@@ -23,7 +23,7 @@ SCRIPT = os.environ.get("KIT_TWIN_DRIFT_PY") or os.path.join(HERE, "..", "kit-tw
 SCRUBBED = ("KIT_TWIN_KIT", "KIT_TWIN_LIVE", "KIT_TWIN_WAIVERS", "KIT_TWIN_SINCE", "KIT_HOME")
 NOW = time.time()
 DAY = 24 * 3600
-LIVE_NAMES = ("hooks", "hooks/tests", "seats", "other", "scripts", "briefs", "skills/**")
+LIVE_NAMES = ("hooks", "hooks/tests", "tools/tests", "seats", "other", "scripts", "briefs", "skills/**")
 SINCE = dt.datetime.fromtimestamp(NOW - 3 * DAY - 120).strftime("%Y-%m-%d %H:%M")
 KIT_FILES = ("claude/hooks/h.py", "claude/hooks/same.py", "claude/seats/analyst.md", "claude/agents/analyst.md",
              "scripts/s.py", "docs/notes.md", "claude/hooks/tests/run-tests.py", "claude/tools/tests/run-tests.py",
@@ -66,10 +66,11 @@ def clean_env():
     return {k: v for k, v in os.environ.items() if k not in SCRUBBED}
 
 
-def run(root, kit, args, waivers=None):
+def run(root, kit, args, waivers=None, carried=None):
     live = os.pathsep.join(os.path.join(root, "live", d) for d in LIVE_NAMES)
     env = dict(clean_env(), KIT_TWIN_KIT=kit, KIT_TWIN_LIVE=live, KIT_TWIN_SINCE=SINCE,
-               KIT_TWIN_WAIVERS=waivers or os.path.join(root, "no-waivers.txt"))
+               KIT_TWIN_WAIVERS=waivers or os.path.join(root, "no-waivers.txt"),
+               KIT_TWIN_CARRIED=carried or os.path.join(root, "no-carried.txt"))
     r = subprocess.run([sys.executable, SCRIPT] + args, capture_output=True, text=True, timeout=120, env=env)
     return r.returncode, r.stdout, r.stderr
 
@@ -182,7 +183,7 @@ def main():
                                             KIT_TWIN_LIVE=os.path.join(root, "live", "hooks"))).returncode == 2
         shutil.rmtree(os.path.join(root, "live", "other"))
         rc, out, err = run(root, kit, ["--row"])
-        return bogus and env_since and rc == 2 and "1 of 7 live folders do not exist" in err and out == ""
+        return bogus and env_since and rc == 2 and "1 of %d live folders do not exist" % len(LIVE_NAMES) in err and out == ""
     check("an unknown flag, a bad KIT_TWIN_SINCE and a live folder that does not exist are exit 2, never a 0 reading",
           usage)
 
@@ -259,6 +260,75 @@ def main():
         return (r.returncode == 0 and row_numbers(r.stdout) == (2, 1, 0) and r2.returncode == 2
                 and "no default live folder" in r2.stderr)
     check("with no KIT_TWIN_LIVE the kit home folders that exist are read, and none existing is exit 2", default_live)
+
+    def carried_by_verdict(root):
+        kit = world(root)
+        h = os.path.join(root, "live", "hooks", "h.py")
+        rc, line, _ = run(root, kit, ["--carry-line", h, "  a machine   setting "])
+        c = os.path.join(root, "carried.txt")
+        put(c, "# verdicts\n\nzz claude/hooks/h.py not a hash\n123 claude/hooks/h.py too short\n"
+            + line.split(" ", 1)[0].upper() + line[12:])  # an upper-case hash still reads
+        rc2, out, _ = run(root, kit, ["--row"], carried=c)
+        rc3, table, _ = run(root, kit, [], carried=c)
+        return (rc == 0 and re.match(r"^[0-9a-f]{12} claude/hooks/h\.py a machine setting\n$", line) and rc2 == 0
+                and row_numbers(out) == (4, 1, 4) and out.rstrip().endswith("carried by verdict: 1")
+                and "1 carried by verdict" in table and "claude/hooks/h.py" not in table)
+    check("a carried verdict takes its pair out of trailing and owed and is counted apart; bad lines are skipped",
+          carried_by_verdict)
+
+    def carry_expires(root):
+        kit = world(root)
+        h = os.path.join(root, "live", "hooks", "h.py")
+        c = os.path.join(root, "carried.txt")
+        put(c, run(root, kit, ["--carry-line", h, "judged"])[1])
+        put(h, "live line changed after the verdict\n", age=2 * DAY)
+        rc, out, _ = run(root, kit, ["--row"], carried=c)
+        return rc == 0 and row_numbers(out) == (5, 2, 4) and out.rstrip().endswith("carried by verdict: 0")
+    check("a change to the live file after its verdict trails again", carry_expires)
+
+    def carry_line_usage(root):
+        kit = world(root)
+        runs = [run(root, kit, ["--carry-line", p, why]) for p, why in (
+            (os.path.join(root, "live", "hooks", "none.py"), "why"), (os.path.join(root, "live", "hooks"), "why"),
+            (os.path.join(root, "live", "hooks", "h.py"), "   "))]
+        lone = os.path.join(root, "live", "scripts", "lone.py")  # in the live set, no kit twin
+        put(lone)
+        outside = os.path.join(root, "outside.py")  # a file no live folder holds
+        put(outside)
+        rc_lone, _, err_lone = run(root, kit, ["--carry-line", lone, "why"])
+        rc_out, _, err_out = run(root, kit, ["--carry-line", outside, "why"])
+        return (all(rc == 2 and "takes a readable live file and a reason" in err for rc, _, err in runs)
+                and rc_lone == 2 and "has no kit twin" in err_lone and rc_out == 2 and "not in the live set" in err_out)
+    check("--carry-line refuses a missing file, a folder, a blank reason, a file with no twin and one outside the set",
+          carry_line_usage)
+
+    def carry_is_per_pair(root):
+        # two live run-tests.py with the same bytes pair with two kit twins; a verdict on one never carries the other
+        kit = world(root)
+        put(os.path.join(root, "live", "tools", "tests", "run-tests.py"), "live\n", age=2 * DAY + 100)
+        c = os.path.join(root, "carried.txt")
+        rc, line, _ = run(root, kit, ["--carry-line", os.path.join(root, "live", "hooks", "tests", "run-tests.py"),
+                                      "judged for the hooks copy only"])
+        put(c, line)
+        rc2, out, _ = run(root, kit, [], carried=c)
+        return (rc == 0 and line.split()[1] == "claude/hooks/tests/run-tests.py" and rc2 == 0
+                and "1 carried by verdict" in out and "claude/tools/tests/run-tests.py" in out
+                and "claude/hooks/tests/run-tests.py" not in out)
+    check("a verdict carries its own pair only, never a same-named, same-bytes pair of another twin", carry_is_per_pair)
+
+    def carried_file_edges(root):
+        # an editor's byte order mark never hides the first verdict; a carried path that is a folder says so
+        kit = world(root)
+        h = os.path.join(root, "live", "hooks", "h.py")
+        c = os.path.join(root, "carried.txt")
+        with open(c, "w", encoding="utf-8-sig") as f:
+            f.write(run(root, kit, ["--carry-line", h, "judged"])[1])
+        rc, out, _ = run(root, kit, ["--row"], carried=c)
+        rc2, out2, err2 = run(root, kit, ["--row"], carried=root)
+        return (rc == 0 and out.rstrip().endswith("carried by verdict: 1") and rc2 == 0
+                and out2.rstrip().endswith("carried by verdict: 0") and "cannot be read, no verdict applied" in err2)
+    check("a byte order mark keeps the first verdict; an unreadable carried file is named on stderr",
+          carried_file_edges)
 
     print("%d of %d OK" % (sum(results), len(results)))
     return 0 if all(results) else 1
