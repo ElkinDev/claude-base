@@ -28,9 +28,10 @@ claude/                     -> installs into ~/.claude
                             five ship as plugins, see plugins/ below
   hooks/                    worklog, branch helpers, markitdown, read guard, big-result alarm, landings,
                             session audit, compaction checkpoint + summary persistence + recovery
-  agents/                   five agent definitions on Opus with their skills preloaded (analyst,
-                            designer, implementer, implementer-light, reviewer); -Sdd copies them
-                            into a project as well
+  agents/                   seven agent definitions with their skills preloaded: analyst, bench,
+                            designer, implementer, implementer-light and reviewer on the opus alias,
+                            bulk-reader on haiku (INSTALL.md says why aliases and not versioned
+                            ids); -Sdd copies them into a project as well
   seats/                    two seat files, orchestrator and analyst: the chair a long-lived session
                             holds, appended to its system prompt by the launcher (docs/SEATS.md)
   tools/                    record.py: append, amend or swap a record in any file from a payload on

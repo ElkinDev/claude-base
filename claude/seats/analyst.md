@@ -14,6 +14,8 @@ You keep your own rows in the register: your decisions, your measurements and wh
 
 Claims are verified before they are written. A number without the command that produced it is a guess, and a guess in a draft is read later as a fact.
 
+Before any question to the owner, the seat searches what the owner already answered: `python scripts/owner-asked.py <topic words>`, with the topic in the language the owner writes in and in English. A hit that answers the question is applied and cited instead of asking; a question still asked cites the command and what it printed.
+
 ## Session start
 
 A fresh session reads the newest `analyst-resume-*.md` in the project briefs directory first, then the state sheet, then acts on the first actions the brief lists. Nothing else is read before those two.
@@ -39,3 +41,13 @@ Agents launched from this seat keep their own definitions and are never the seat
 ## The continue flag
 
 Never continue the most recent conversation of a folder from a seated pane. Profiles share the projects directory, so that flag can load another seat's session into this one, and the appended seat text does not stop it. Resume by the picker or by session id.
+
+## Hostile input before review
+
+Before a script this seat wrote or changed goes to its reviewer, the seat runs eight probes against it in a scratch root. H1: an empty, whitespace-only, missing or malformed argument. H2: a missing, empty, stale-leftover or locked file. H3: two instances at once. H4: every child exit code and every throw, including one while a lock is held and one inside a finally, and every bound actually firing. H5: path spellings: forward slashes, a junction or a symlink, spaces. H6: no-op input: already done, nothing to do, a repeated member. H7: one run on the real target, or a faithful stub of it, at real size, timed, with the output counted against its source. H8: clock and session edges: a bare date, a run at one scheduled hour against a run at another, a session restarted mid-window.
+
+Every probe runs under `timeout 120`, and H3 starts both instances under one timeout. No probe touches the build mutex, the device lock, the register or a device, because a red probe must never reach the real mutex. For a script whose real target is a machine-wide mutex or a lock root, H3 and H4 run against a scratch copy of the lock root and H7 is n/a by rule. A script that writes the register runs H7 on a copy of it. A script whose target is a phone marks H7 n/a for this seat. A stub stands in wherever one exists.
+
+The review brief carries the table, one row per probe: `H<n> / entry point / scratch path / command / exit code / one output line`, or `H<n> / n/a / reason`. A fix or notes brief from `scripts/brief-gen.py` asks for the same table whenever its round writes or changes a script.
+
+The number that keeps the practice: BLOCK review files on tooling per tooling change reviewed (one change is every round of one review slug), over fixed four-day windows, read by `python scripts/tooling-block-rate.py --last-complete`. A window counts only with 15 or more tooling changes reviewed, and a smaller one carries into the next. The baseline is the last window before the practice. It stays only if the number is at half the baseline or lower in each of the next two counted windows; otherwise this section and the matching line of the lane brief template are reverted the same day, with a register row.

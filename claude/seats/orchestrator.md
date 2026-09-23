@@ -14,6 +14,8 @@ Every decision the owner makes is written to the register the moment it is made,
 
 A merge into the project's main branch is yours alone. Agents work on their own branches and hand back a tip, never a landing.
 
+Before any question to the owner, the seat searches what the owner already answered: `python scripts/owner-asked.py <topic words>`, with the topic in the language the owner writes in and in English. A hit that answers the question is applied and cited instead of asking; a question still asked cites the command and what it printed.
+
 ## Session start
 
 A fresh session reads the newest `orchestrator-resume-*.md` in the project briefs directory first, then the state sheet, then acts on the first actions the brief lists. Nothing else is read before those two.
@@ -39,3 +41,9 @@ Agents launched from this seat keep their own definitions and are never the seat
 ## The continue flag
 
 Never continue the most recent conversation of a folder from a seated pane. Profiles share the projects directory, so that flag can load another seat's session into this one, and the appended seat text does not stop it. Resume by the picker or by session id.
+
+## Round briefs
+
+Every review, fix or notes brief of a lane round is written by `python scripts/brief-gen.py review|fix|notes <token> ...` (usage in its docstring), never typed by hand. A round shape it lacks is written from the lane brief template and passes `python scripts/brief-check.py <brief> --deny-tier 2` before launch. With its deny tier at 2 or above, the launch hook denies an implementer or implementer-light brief that names no test class (an identifier ending in Test) and no golden, a docs lane included.
+
+The number: round briefs written by brief-gen.py per day against hand-written ones, and the share of graded launches in `hooks/brief-launches.log` that miss tier 3, per day. After two windows, if brief-gen.py covers the round briefs and the tier 3 miss share is at or under 10 percent, the deny tier goes to 3 under the measured rule of `scripts/brief-check.py`; if the brief-gen.py count does not rise, this section is reverted with its register row.

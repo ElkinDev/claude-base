@@ -52,16 +52,33 @@ then drive it with `/sdd` (`/delivery:sdd` from the marketplace):
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Project C:\Repo\my-app -Sdd
 ```
 
-The installer copies `claude/agents` whole, so the project gets all five definitions. The user-scope
-install already puts the same five in the kit home, where every project on the machine sees them;
+The installer copies `claude/agents` whole, so the project gets all seven definitions. The user-scope
+install already puts the same seven in the kit home, where every project on the machine sees them;
 the project copy exists for collaborators without the kit, and it shadows the kit copy, so re-run
 the project command after a kit update that changes them:
 
 - `analyst` decision-shaping analysis with file:line citations, read-only toward the repo
+- `bench` a device or emulator bench round from its brief: the lock first, the build identity
+  first, one script per cell, a per-cell report; never edits app code
+- `bulk-reader` reads large files whole on a small model and answers one orientation question
 - `designer` UI and design deliverables from the design brief and the feature specs
 - `implementer` implements a feature or sprint slice strictly from the written specs
 - `implementer-light` the same at lower effort, for mechanical slices (tests, strings, docs, renames)
 - `reviewer` adversarial review of a branch diff before merge; a disposition, never a fix
+
+Every definition names its model by alias (`opus`, `haiku`), never by a versioned id. An alias
+resolves inside the running Claude Code binary to a model that binary supports, so the kit keeps
+working on a machine that has not updated yet, and it follows a new model without a kit commit. A
+versioned id is a local choice, for instance to keep the reviewer on a different model than the
+implementers, so that a review is a second opinion and not the same model reading its own work.
+Pin it in your copy in the kit home: the installer keeps a file that differs from its record and
+lands the kit version beside it as `<name>.new` (see `docs/ADOPTION.md`). A project copy made with
+`-Sdd` carries the aliases and shadows the kit home, so pin it there as well. An id is checked
+against the binary of the session that launches the agent: a session started before the binary
+update fails the launch with a 400, `does not support this model; version <x> or newer is
+required`, while a session started after it runs. Announce a pin to every live session with the
+minimum binary it needs, and until a session relaunches, have it pass an alias in the `model`
+parameter of the Agent tool on each launch, rather than editing the definitions back.
 
 If you keep the project rules local (not committed), re-run the project command with `-LocalOnly`:
 it appends exactly the paths that run manages to the exclude file git actually reads, which is not

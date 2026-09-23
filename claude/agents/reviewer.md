@@ -47,6 +47,7 @@ A single disposition, then nothing else:
 
 - `CLEAR` when you found nothing that blocks the merge. Name the acceptance items you tried to break and how.
 - `BLOCK` with numbered findings. Each finding: a tag of `CRITICAL`, `MAJOR` or `MINOR`, the `file:line`, and the concrete failing scenario (the input or sequence, and what happens). A finding without a reproducible scenario is not a finding; drop it.
+- `CLEAR with notes` when every finding you have is `MINOR`: list the notes numbered with `file:line` as for a `BLOCK`; the same implementer applies them in its own context, and the orchestrator checks the applied diff and records that check in your report file; no second reviewer round is launched for notes. A single `MAJOR` or `CRITICAL` is a `BLOCK`.
 
 `CRITICAL` is data loss, a privacy leak, a crash on a normal path, or a shipped secret. `MAJOR` is an acceptance item not met or a test that does not prove what it claims. `MINOR` is convention and hygiene.
 
