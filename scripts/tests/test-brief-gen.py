@@ -258,6 +258,46 @@ def main():
         check("a first run on an evidence root with no briefs folder creates it, no traceback",
               fresh_root_gets_its_briefs_folder)
 
+        def out_folder_refused():
+            ev = os.path.join(tmp, "ev-out")
+            os.makedirs(os.path.join(ev, "lanes"), exist_ok=True)
+            with open(os.path.join(ev, "lanes", "e2e-lane-2026-01-22.md"), "w", encoding="utf-8") as f:
+                f.write("# Lane e2e (ABC-12): parser keeps the last key, 2026-01-22\n")
+            env = dict(os.environ, BRIEF_GEN_CONFIG=os.path.join(tmp, "e2e.json"), EVIDENCE_ROOT=ev)
+            a_dir = os.path.join(tmp, "a folder")
+            os.makedirs(a_dir, exist_ok=True)
+            r = subprocess.run([sys.executable, SCRIPT, "review", "e2e", "--out", a_dir, "--force", "--force-review"],
+                               capture_output=True, text=True, timeout=60, env=env)
+            typo = os.path.join(tmp, "breifs", "x.md")
+            r2 = subprocess.run([sys.executable, SCRIPT, "review", "e2e", "--out", typo, "--force-review"],
+                                capture_output=True, text=True, timeout=60, env=env)
+            return (r.returncode == 1 and "--out is a folder" in r.stderr and "Traceback" not in r.stderr
+                    and os.path.isdir(a_dir) and r2.returncode == 1 and "the folder of --out does not exist" in r2.stderr
+                    and "Traceback" not in r2.stderr and not os.path.exists(os.path.dirname(typo)))
+        check("an --out that is a folder, or whose folder is missing, is refused with one line and no folder made; "
+              "only the default path creates the briefs folder", out_folder_refused)
+
+        def review_names_its_lane_on_line_1():
+            # train-due.py and train-wait.py find a review's lane on its line 1
+            configure()
+            _, body = mod.review_brief(dict(FX), args)
+            _, delta = mod.review_brief(dict(FX), argparse.Namespace(**dict(vars(args), delta=2, review="r.md")))
+            want = "`Disposition: <CLEAR, CLEAR with notes or BLOCK>, lane %s`" % FX["token"]
+            return want in body and want in delta
+        check("a review brief asks for the verdict and the lane token on the review's first line",
+              review_names_its_lane_on_line_1)
+
+        def disposition_drops_the_lane():
+            p = os.path.join(tmp, "disp.md")
+            got = []
+            for first in ("Disposition: BLOCK, lane demo\n", "Disposition: CLEAR with notes, lane demo\n",
+                          "Disposition: BLOCK (1 MAJOR)\n"):
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(first)
+                got.append(mod.disposition(p))
+            return got == ["BLOCK", "CLEAR with notes", "BLOCK (1 MAJOR)"]
+        check("the quoted disposition drops the lane the review's first line names", disposition_drops_the_lane)
+
         # The review guards and the no-git shape, on a temp evidence root with no config (the defaults).
         ev = os.path.join(tmp, "ev-guards")
         for sub in ("lanes", "briefs", "reviews"):
