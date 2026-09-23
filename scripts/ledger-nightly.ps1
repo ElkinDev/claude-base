@@ -500,7 +500,8 @@ if (Test-Path $errorsPy) {
     $txRoot = $ProjectsRoot
     if (-not $txRoot) { $txRoot = Join-Path (Join-Path ([Environment]::GetFolderPath('UserProfile')) '.claude') 'projects' }
     $txFiles = @(Get-ChildItem -Path $txRoot -Filter '*.jsonl' -File -Recurse -ErrorAction SilentlyContinue |
-        Where-Object { $_.LastWriteTime -ge $since } | Sort-Object Length -Descending | Select-Object -First 2)
+        Where-Object { $_.LastWriteTime -ge $since -and $_.DirectoryName -notmatch '\\subagents$' } |
+        Sort-Object Length -Descending | Select-Object -First 2)
     if ($txFiles.Count -gt 0) {
         foreach ($tx in $txFiles) {
             $sid = $tx.BaseName.Substring(0, [Math]::Min(8, $tx.BaseName.Length))
@@ -520,6 +521,107 @@ if (Test-Path $errorsPy) {
 } else {
     Write-Log 'tool-errors | tool-errors.py not found, skipped'
 }
+
+# 3c. the token shape of the two largest main transcripts touched in the window (over 5 MB, which in practice
+# are the seats), one line each appended to token-shape.log: where the window's tokens went by kind. A
+# transcript is read once by python, never opened here.
+$shapePy  = Join-Path $scriptDir 'token-shape.py'
+$shapeLog = Join-Path $ledgerDir 'token-shape.log'
+if (Test-Path $shapePy) {
+    $shapeRoot = $ProjectsRoot
+    if (-not $shapeRoot) { $shapeRoot = Join-Path (Join-Path ([Environment]::GetFolderPath('UserProfile')) '.claude') 'projects' }
+    $shapeFiles = @(Get-ChildItem -Path $shapeRoot -Filter '*.jsonl' -File -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -ge $since -and $_.Length -gt 5MB -and $_.DirectoryName -notmatch '\\subagents$' } |
+        Sort-Object Length -Descending | Select-Object -First 2)
+    if ($shapeFiles.Count -gt 0) {
+        $sinceUtc = $since.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss')
+        $untilUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss')
+        foreach ($c in $shapeFiles) {
+            $sid = $c.BaseName.Substring(0, [Math]::Min(8, $c.BaseName.Length))
+            $shape = Invoke-Step -Name "shape-$sid" -ArgLine ('"{0}" "{1}" --since {2} --until {3} --row' -f $shapePy, $c.FullName, $sinceUtc, $untilUtc) -KeepOutput -TimeoutMs 300000
+            $line = $shape.Lines | Where-Object { $_ -match '^token-shape ' } | Select-Object -Last 1
+            if ($shape.Code -eq 0 -and $line) {
+                [System.IO.File]::AppendAllText($shapeLog, (('{0} {1} {2}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm'), $sid, $line) + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+                Write-Log "shape | $sid $line"
+            } else {
+                Write-Log "shape | no line for $sid, exit code $($shape.Code)"
+            }
+        }
+    } else {
+        Write-Log 'shape | no main transcript over 5 MB touched in the window'
+    }
+} else {
+    Write-Log 'shape | token-shape.py not found, skipped'
+}
+
+# 3d. the rework shape of the window (gate runs, reds by phase, BLOCK and delta rows, lanes at three gates or
+# three review rounds), one line appended to rework-shape.log. Local times, the clock the register is stamped in;
+# the paths it reads come from its own config (rework-shape.py --config).
+$reworkPy  = Join-Path $scriptDir 'rework-shape.py'
+$reworkLog = Join-Path $ledgerDir 'rework-shape.log'
+if (Test-Path $reworkPy) {
+    $sinceLocal = $since.ToString('yyyy-MM-dd HH:mm')
+    $untilLocal = (Get-Date).ToString('yyyy-MM-dd HH:mm')
+    $rw = Invoke-Step -Name 'rework-shape' -ArgLine ('"{0}" --since "{1}" --until "{2}"' -f $reworkPy, $sinceLocal, $untilLocal) -KeepOutput -TimeoutMs 120000
+    $rline = $rw.Lines | Where-Object { $_ -match '^rework-shape ' } | Select-Object -Last 1
+    if ($rw.Code -eq 0 -and $rline) {
+        [System.IO.File]::AppendAllText($reworkLog, (('{0} {1}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm'), $rline) + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+        Write-Log "rework | $rline"
+    } else {
+        Write-Log ('rework | no line, exit code {0}; tail: {1}' -f $rw.Code, ((@($rw.Lines) | Select-Object -Last 3) -join ' / '))
+    }
+} else {
+    Write-Log 'rework | rework-shape.py not found, skipped'
+}
+
+# 3e. the BLOCK rate of tooling reviews over the newest complete window, the number that keeps or reverts the
+# hostile-input practice, one line per window appended to tooling-block-rate.log: the morning and evening runs
+# repeat the same complete window for days, so a line whose window (the text up to the first colon) matches the
+# log's last line is not appended again.
+$tbrPy  = Join-Path $scriptDir 'tooling-block-rate.py'
+$tbrLog = Join-Path $ledgerDir 'tooling-block-rate.log'
+$tbrRoot = $env:TOOLING_BLOCK_ROOT
+if (-not $tbrRoot) { $tbrRoot = $env:EVIDENCE_ROOT }
+if ((Test-Path $tbrPy) -and -not $tbrRoot) {
+    Write-Log 'tooling | neither TOOLING_BLOCK_ROOT nor EVIDENCE_ROOT names the folder holding reviews/, skipped'
+} elseif ((Test-Path $tbrPy) -and -not ($env:TOOLING_BLOCK_ANCHOR -or $env:TOOLING_BLOCK_FIRST_DECISION)) {
+    Write-Log 'tooling | no practice day set (TOOLING_BLOCK_ANCHOR or TOOLING_BLOCK_FIRST_DECISION), skipped'
+} elseif (Test-Path $tbrPy) {
+    $tb = Invoke-Step -Name 'tooling-block-rate' -ArgLine ('"{0}" --last-complete --root "{1}"' -f $tbrPy, $tbrRoot) -KeepOutput -TimeoutMs 120000
+    $tline = $tb.Lines | Where-Object { $_ -match '^tooling-block-rate ' } | Select-Object -Last 1
+    $tlast = $null
+    if (Test-Path $tbrLog) { $tlast = Get-Content -Path $tbrLog -Tail 1 -ErrorAction SilentlyContinue }
+    $twin = if ($tline) { ($tline -split ':')[0] } else { '' }
+    if ($tb.Code -eq 0 -and $tline -and $tlast -and $tlast.Contains($twin)) {
+        Write-Log "tooling | same window as the last line, not appended: $tline"
+    } elseif ($tb.Code -eq 0 -and $tline) {
+        [System.IO.File]::AppendAllText($tbrLog, (('{0} {1}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm'), $tline) + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+        Write-Log "tooling | $tline"
+    } else {
+        Write-Log ('tooling | no line, exit code {0}; tail: {1}' -f $tb.Code, ((@($tb.Lines) | Select-Object -Last 3) -join ' / '))
+    }
+} else {
+    Write-Log 'tooling | tooling-block-rate.py not found, skipped'
+}
+
+# 3f. the kit drift: the twins of this kit that trail what the machine runs, the ones owed (live change older
+# than 24 h), the pairs carried by verdict and the live tools with no twin, one line per run appended to
+# kit-drift.log. Exit 2 is a live folder that does not exist, never a 0 reading.
+$ktdPy  = Join-Path $scriptDir 'kit-twin-drift.py'
+$ktdLog = Join-Path $ledgerDir 'kit-drift.log'
+if (Test-Path $ktdPy) {
+    $kd = Invoke-Step -Name 'kit-twin-drift' -ArgLine ('"{0}" --row' -f $ktdPy) -KeepOutput -TimeoutMs 120000
+    $kline = $kd.Lines | Where-Object { $_ -match '^kit-twin-drift ' } | Select-Object -Last 1
+    if ($kd.Code -eq 0 -and $kline) {
+        [System.IO.File]::AppendAllText($ktdLog, (('{0} {1}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm'), $kline) + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+        Write-Log "kit | $kline"
+    } else {
+        Write-Log ('kit | no line, exit code {0}; tail: {1}' -f $kd.Code, ((@($kd.Lines) | Select-Object -Last 3) -join ' / '))
+    }
+} else {
+    Write-Log 'kit | kit-twin-drift.py not found, skipped'
+}
+
 # 4. retention, morning only, after the three steps
 if ($sweepDue) {
     Invoke-RetentionSweep
