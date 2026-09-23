@@ -19,15 +19,24 @@ the word LANDED in capitals or the phrase `main <sha> to <sha>` (seven hex digit
 more each), and which names one of the row's tokens. Nothing else counts: a build row
 that states a train and its tip says a train was built, not that the main branch moved,
 a correction or a review narrative that quotes a commit is neither, and a row that
-says NOT MERGED landed nothing however loudly it says LANDED. A token is a word
-of the lane-and-commit cell that is at least three characters long and carries a digit, so
-a lane id (F33.13, 86.8.11b, 7.1) and a commit are tokens and prose is not; it is matched
+says NOT MERGED landed nothing however loudly it says LANDED. A token is a word of
+the lane-and-commit cell that is at least three characters long, carries a digit and is
+not itself a date or a time by shape (a year, a year-month or a full date, `2026`,
+`2026-09`, `2026-09-10`, or `H:MM`/`HH:MM`, `15:11`), so a lane id (F33.13, 86.8.11b,
+7.1), a commit and a branch name are tokens while prose and a date or a time written
+there are not. Digits alone is not the rule: a short sha with no hex letter (547557281,
+about one in 65 at nine characters) is a commit and stays a token. Dots, colons and
+hyphens are stripped from the two ends of a word and kept inside it, so `-86.8.11`,
+`86.8.11:` and `86.8.11` are the same token; a hyphenated word is one token, so the
+branch of one lane does not match the branch of another through a shared prefix; it is matched
 with dots and alphanumerics as boundaries, so 7.1 does not match 86.7.1 and 90.8 does not
 match 90.8b. Keep the lane-and-commit cell to lane ids and commits: a figure written
 there (an amount, a train number) would be read as a token.
 
-The cells live in the session files and nowhere else, which is the glob `sessions_glob`
-(`lanes/*-session-*.md`). A lane report that quotes a row id is not evidence that anyone
+The cells live in the session files and nowhere else, which is `sessions_glob`: one glob
+(`lanes/*-session-*.md` by default) or a list of globs, for a project whose rounds write
+their cells under other names too (`--sessions-glob` repeats on the command line; a file
+named by two globs is read once). A lane report that quotes a row id is not evidence that anyone
 ran it, and reading a whole folder let one such report silence two of the three flags for
 every row at once. A row has a cell when either a session file names the row id as a
 whole word (punctuation of the id included, so OR-1 is never read inside OR-10), or the
@@ -75,7 +84,10 @@ LANDED_WORD_RE = re.compile(r"\bLANDED\b")  # capitals only: prose says landed, 
 MAIN_MOVE_RE = re.compile(r"\bmain\s+[0-9a-fA-F]{7,}\s+to\s+[0-9a-fA-F]{7,}\b", re.IGNORECASE)
 NOT_MERGED_RE = re.compile(r"NOT\s+MERGED", re.IGNORECASE)
 SEPARATOR_RE = re.compile(r":?-{2,}:?$")
-TOKEN_RE = re.compile(r"[0-9A-Za-z][0-9A-Za-z.]*")
+TOKEN_RE = re.compile(r"[0-9A-Za-z][0-9A-Za-z.:-]*")
+# The SHAPE of a date or a time, not "digits alone": a nine-digit short sha (547557281) is a
+# commit and stays a token. 2026, 2026-09, 2026-09-10, 15:11, 9:05.
+DATE_OR_TIME_TOKEN_RE = re.compile(r"(?:\d{4}(?:-\d{2}){0,2}|\d{1,2}:\d{2})$")
 DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})(?: (\d{2}:\d{2}))?")
 YEAR_RE = re.compile(r"(\d{4})-\d{2}-\d{2}")
 SESSION_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])(\d{2})(\d{2})([a-z]{1,2})(?![0-9A-Za-z])")
@@ -159,8 +171,12 @@ def lane_tokens(cell):
     """The lane ids and commits of the lane-and-commit cell, in the order written."""
     tokens = []
     for raw in TOKEN_RE.findall(cell or ""):
-        token = raw.strip(".")
+        token = raw.strip(".:-")
         if len(token) < 3 or not any(char.isdigit() for char in token):
+            continue
+        if DATE_OR_TIME_TOKEN_RE.match(token):
+            # A bare year, a date or a time written in the cell is never a lane id, and
+            # a year matches the stamp of every landing row.
             continue
         if token not in tokens:
             tokens.append(token)
@@ -348,10 +364,19 @@ def read_text(path):
         return handle.read()
 
 
-def session_files_of(pattern):
-    """(name, text) of every bench session file the glob names, unreadable ones skipped."""
+def session_files_of(patterns):
+    """(name, text) of every session file the globs name, unreadable ones skipped.
+
+    One glob string or a list of them (the `sessions_glob` key takes either). A file named
+    by two globs is read once.
+    """
+    if isinstance(patterns, str) or patterns is None:
+        patterns = [patterns or ""]
+    paths = set()
+    for pattern in patterns:
+        paths.update(glob.glob(pattern or ""))
     files = []
-    for path in sorted(glob.glob(pattern or "")):
+    for path in sorted(paths):
         if not os.path.isfile(path):
             continue
         try:
@@ -383,7 +408,8 @@ def main(argv=None):
                              "~/.claude/lane-state.json")
     parser.add_argument("--ledger", default=None)
     parser.add_argument("--landings", default=None)
-    parser.add_argument("--sessions-glob", default=None)
+    parser.add_argument("--sessions-glob", action="append",
+                        help="session file glob, repeatable; the config's sessions_glob when not given")
     parser.add_argument("--lines", action="store_true",
                         help="print the state sheet lines to stdout and exit 0")
     args = parser.parse_args(argv)
