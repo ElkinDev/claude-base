@@ -124,6 +124,15 @@ class GateLineTest(unittest.TestCase):
         kwargs.setdefault("now", self.now)
         return lane_state.gates_lines([self.tmp], **kwargs)
 
+    @unittest.skipUnless(os.name == "nt", "a junction is a Windows folder link")
+    def test_a_junction_and_its_target_are_one_gates_folder(self):
+        import subprocess
+        link = tempfile.mkdtemp(prefix="lane-state-link-")
+        os.rmdir(link)
+        self.addCleanup(lambda: os.path.isdir(link) and os.rmdir(link))
+        subprocess.run(["cmd", "/c", "mklink", "/J", link, self.tmp], capture_output=True, timeout=60, check=True)
+        self.assertEqual(len(lane_state.find_exit_files([self.tmp, link])), 3)
+
     def test_green_line_is_exact(self):
         expected = (
             "pwp pwp-g7-merge %s 7862dd1 exit=0 lock=0 moved=0 ok phases=4 secs=608 hold=-"
