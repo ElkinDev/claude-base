@@ -115,12 +115,30 @@ def main():
             configure(**CONFIGURED)
             _, body = mod.fix_or_notes_brief(dict(FX, wt="C:/src/myapp-demo"), args, "fix")
             checks = body.split("## Checks", 1)[1].split("## Report", 1)[0]
+            steps = [ln for ln in checks.splitlines() if ln.startswith("- ")]
             return ("`bash scripts/run-own-tests.sh /c/src/myapp-demo demo-fix1 '<<the test selection" in checks
-                    and "END YOUR TURN with /c/src/myapp-demo/build/runs/demo-fix1.done as your last line" in checks
-                    and "`bash scripts/precheck.sh /c/src/myapp-demo` on the new tip" in checks
+                    and "END YOUR TURN with one line naming /ev/lanes/demo-lane-2026-01-22.md and "
+                        "/c/src/myapp-demo/build/runs/demo-fix1.done" in checks
+                    and "A green run is not resumed" in checks
+                    and "`bash scripts/precheck.sh /c/src/myapp-demo` on the committed tip" in checks
+                    # the order: commit, precheck, report, then the launch as the last step
+                    and len(steps) == 4 and steps[0].startswith("- First the commit") and "precheck.sh" in steps[1]
+                    and steps[2].startswith("- Then the report") and steps[3].startswith("- Last, the own-tests run")
                     and "## Change, one commit, subject ending `[skip ci]`" in body
-                    and "Laws: /ev/laws.md." in body and "the precheck line" in report_of(body))
-        check("configured commands, done path, precheck, suffix and laws are filled in", configured_rendered)
+                    and "Laws: /ev/laws.md." in body and "the precheck line" in report_of(body)
+                    and "before the own-tests launch" in report_of(body))
+        check("configured commands, done path, precheck, suffix and laws are filled in; the launch is the last step "
+              "and the report comes before it", configured_rendered)
+
+        def no_done_keeps_the_foreground_run():
+            configure(**dict(CONFIGURED, own_tests_done=None))
+            _, body = mod.fix_or_notes_brief(dict(FX), args, "fix")
+            checks = body.split("## Checks", 1)[1].split("## Report", 1)[0]
+            return ("- Green, on the committed tip: `bash scripts/run-own-tests.sh" in checks
+                    and "the report names the tag and the exit" in checks and "END YOUR TURN" not in checks
+                    and "the test run tag and exit" in report_of(body))
+        check("with no done file the run stays a foreground step and the report names its exit",
+              no_done_keeps_the_foreground_run)
 
         def tier_three():
             configure(**CONFIGURED)
@@ -147,7 +165,8 @@ def main():
                      "type.json": (json.dumps({"review_tools": "14"}), "whole number"),
                      "blank.json": (json.dumps({"base_branch": " "}), "not blank"),
                      "brace.json": (json.dumps({"precheck_command": "run {wt}"}), "does not fill"),
-                     "broken.json": ("{\"laws\": ,}", "cannot be read")}
+                     "broken.json": ("{\"laws\": ,}", "cannot be read"),
+                     "doneonly.json": (json.dumps({"own_tests_done": "/w/{tag}.done"}), "needs own_tests_command")}
             ok = 0
             for name, (text, why) in cases.items():
                 path = os.path.join(tmp, name)
@@ -238,6 +257,72 @@ def main():
                     and any(n.startswith("e2e-lane-review-") for n in os.listdir(briefs)))
         check("a first run on an evidence root with no briefs folder creates it, no traceback",
               fresh_root_gets_its_briefs_folder)
+
+        # The review guards and the no-git shape, on a temp evidence root with no config (the defaults).
+        ev = os.path.join(tmp, "ev-guards")
+        for sub in ("lanes", "briefs", "reviews"):
+            os.makedirs(os.path.join(ev, sub))
+        today = mod.TODAY
+        with open(os.path.join(ev, "lanes", "gd-lane-%s.md" % today), "w", encoding="utf-8") as f:
+            f.write("# Lane gd (ABC-9): a guard topic\n\nNo worktree, no branch, no commit.\n")
+        genv = dict(os.environ, BRIEF_GEN_CONFIG=os.path.join(tmp, "e2e.json"), EVIDENCE_ROOT=ev)
+
+        def gen(*argv):
+            return subprocess.run([sys.executable, SCRIPT] + list(argv), capture_output=True, text=True, env=genv,
+                                  timeout=60)
+
+        def round_and_delta_guards():
+            out = os.path.join(tmp, "guard.md")
+            rs = [gen("review", "gd", "--round", "2", "--out", out),
+                  gen("notes", "gd", "--review", review, "--round", "2", "--out", out),
+                  gen("fix", "gd", "--review", review, "--round", "1", "--out", out),
+                  gen("notes", "gd", "--review", review, "--delta", "5", "--out", out),
+                  gen("review", "gd", "--delta", "1", "--out", out)]
+            return (all(r.returncode == 2 for r in rs) and "--delta N" in rs[0].stderr and "--round" in rs[2].stderr
+                    and "--delta" in rs[3].stderr and not os.path.exists(out))
+        check("--round only on fix and 2 or more; --delta only on review and 2 or more; no brief is written",
+              round_and_delta_guards)
+
+        def review_never_overwrites():
+            r1 = os.path.join(ev, "reviews", "gd-lane-%s.md" % today)
+            with open(r1, "w", encoding="utf-8") as f:
+                f.write("Disposition: BLOCK (1 MAJOR)\n")
+            out, out2, out3 = (os.path.join(tmp, n) for n in ("rv.md", "rv2.md", "rv3.md"))
+            again = gen("review", "gd", "--out", out)
+            none_written = not os.path.exists(out)
+            delta = gen("review", "gd", "--delta", "2", "--review", r1, "--out", out2)
+            body2 = open(out2, encoding="utf-8").read() if os.path.exists(out2) else ""
+            plain_force = gen("review", "gd", "--force", "--out", out3)
+            refused_too = plain_force.returncode == 1 and "--force-review" in plain_force.stderr and not os.path.exists(out3)
+            forced = gen("review", "gd", "--force-review", "--out", out3)
+            body3 = open(out3, encoding="utf-8").read() if os.path.exists(out3) else ""
+            guard = "already exists when you start, write nothing"
+            return (again.returncode == 1 and "gd-lane-%s.md exists" % today in again.stderr and none_written
+                    and delta.returncode == 0 and "/reviews/gd-lane-fix1-%s.md" % today in body2 and guard in body2
+                    and refused_too and forced.returncode == 0 and guard not in body3
+                    and open(r1, encoding="utf-8").read() == "Disposition: BLOCK (1 MAJOR)\n")
+        check("a review whose deliverable exists is refused; a delta review names its own file and tells its reviewer "
+              "to stop if that file exists; --force alone does not pass it, --force-review does and drops the line", review_never_overwrites)
+
+        def nogit_shape():
+            n, rv = os.path.join(tmp, "nogit-notes.md"), os.path.join(tmp, "nogit-review.md")
+            notes = gen("notes", "gd", "--review", review, "--no-git", "--pins", "- DemoReadingTest, red on the live file",
+                        "--out", n)
+            rev = gen("review", "gd", "--no-git", "--delta", "3", "--review", review, "--out", rv)
+            nb = open(n, encoding="utf-8").read() if os.path.exists(n) else ""
+            rb = open(rv, encoding="utf-8").read() if os.path.exists(rv) else ""
+            chk = subprocess.run([sys.executable, CHECKER, n, "--deny-tier", "3"], capture_output=True, text=True,
+                                 timeout=60)
+            bad = gen("fix", "gd", "--review", review, "--no-git", "--tests", "SomeTest", "--out", os.path.join(tmp, "x.md"))
+            return (notes.returncode == 0 and rev.returncode == 0 and chk.returncode == 0
+                    and not any(w in nb + rb for w in ("<<branch>>", "<<tip>>", "<<base>>", "<<worktree", "rev-parse"))
+                    and "## Change, in the staged .new files" in nb and "Never a live file" in nb
+                    and "reading and running the live file for the red pin is allowed" in nb
+                    and MARK in report_of(nb) and "B.kt:4 reads badly." in nb and "`.new` file as it is on disk" in rb
+                    and "no live file touched" in rb and all(ord(c) < 128 for c in nb + rb)
+                    and bad.returncode == 2 and "--no-git" in bad.stderr)
+        check("--no-git: a notes and a review brief name no worktree, tip or run, the notes brief passes brief-check "
+              "tier 3, and --tests with it is refused", nogit_shape)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("%d of %d OK" % (sum(results), len(results)))
