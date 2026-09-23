@@ -609,7 +609,10 @@ def main():
         sys.exit("brief-gen: %s exists; pass --force to overwrite" % out)
     if os.path.isdir(out):  # --force never writes over a folder, and a folder is never a traceback
         sys.exit("brief-gen: refused, --out is a folder, not a file: %s" % out.replace("\\", "/"))
-    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)  # a fresh evidence root has no briefs folder yet
+    folder = os.path.dirname(os.path.abspath(out))
+    if a.out and not os.path.isdir(folder):  # a mistyped --out is refused, never a stray folder (S16 H2)
+        sys.exit("brief-gen: refused, the folder of --out does not exist: %s" % folder.replace("\\", "/"))
+    os.makedirs(folder, exist_ok=True)  # the default path: a fresh evidence root has no briefs folder yet
     with open(out, "w", encoding="utf-8", newline="\n") as f:
         f.write(body)
     sys.stdout.write(body)

@@ -259,15 +259,23 @@ def main():
               fresh_root_gets_its_briefs_folder)
 
         def out_folder_refused():
-            ev = os.path.join(tmp, "ev-fresh")
+            ev = os.path.join(tmp, "ev-out")
+            os.makedirs(os.path.join(ev, "lanes"), exist_ok=True)
+            with open(os.path.join(ev, "lanes", "e2e-lane-2026-01-22.md"), "w", encoding="utf-8") as f:
+                f.write("# Lane e2e (ABC-12): parser keeps the last key, 2026-01-22\n")
+            env = dict(os.environ, BRIEF_GEN_CONFIG=os.path.join(tmp, "e2e.json"), EVIDENCE_ROOT=ev)
             a_dir = os.path.join(tmp, "a folder")
             os.makedirs(a_dir, exist_ok=True)
             r = subprocess.run([sys.executable, SCRIPT, "review", "e2e", "--out", a_dir, "--force", "--force-review"],
-                               capture_output=True, text=True, timeout=60,
-                               env=dict(os.environ, BRIEF_GEN_CONFIG=os.path.join(tmp, "e2e.json"), EVIDENCE_ROOT=ev))
+                               capture_output=True, text=True, timeout=60, env=env)
+            typo = os.path.join(tmp, "breifs", "x.md")
+            r2 = subprocess.run([sys.executable, SCRIPT, "review", "e2e", "--out", typo, "--force-review"],
+                                capture_output=True, text=True, timeout=60, env=env)
             return (r.returncode == 1 and "--out is a folder" in r.stderr and "Traceback" not in r.stderr
-                    and os.path.isdir(a_dir))
-        check("an --out that is a folder is refused with one line, no traceback, even with --force", out_folder_refused)
+                    and os.path.isdir(a_dir) and r2.returncode == 1 and "the folder of --out does not exist" in r2.stderr
+                    and "Traceback" not in r2.stderr and not os.path.exists(os.path.dirname(typo)))
+        check("an --out that is a folder, or whose folder is missing, is refused with one line and no folder made; "
+              "only the default path creates the briefs folder", out_folder_refused)
 
         def review_names_its_lane_on_line_1():
             # train-due.py and train-wait.py find a review's lane on its line 1
