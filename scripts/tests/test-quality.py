@@ -371,11 +371,16 @@ class QualityCase(unittest.TestCase):
                      None)
         self.assertIsNotNone(first, "the register carries no row at all")
         # A "## " heading opens a prose section (a state note between rows); its lines are documentation
-        # until the next row, and only a line outside such a section must be a row.
+        # until the next row, and only a line outside such a section must be a row. A line that opens with a date
+        # ends the section and must be a row, so a malformed row right after a note is still reported.
         malformed, prose = [], False
         for number, line in enumerate(lines[first:], first + 1):
+            dated = line[2:] if line.startswith("- ") else line
             if quality.ROW_RE.match(line):
                 prose = False
+            elif dated[:4].isdigit() and dated[4:5] == "-":
+                prose = False
+                malformed.append("%d: %s" % (number, line))
             elif line.startswith("## "):
                 prose = True
             elif line.strip() and not prose:

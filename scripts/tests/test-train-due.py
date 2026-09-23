@@ -307,6 +307,33 @@ class TrainDueTest(unittest.TestCase):
         self.assertIn("apart: lnaa: CLEAR (lnaa-2026-09-23.md) but no green gate found on its tip", out)
         self.assertIn("quiet: lnbb: no review in 3 days", out)
 
+    def test_the_kit_finds_the_evidence_and_the_holds_beside_the_repo_or_by_flag(self):
+        # the kit's own paths (kit-twins-0923k finding 3): no EVIDENCE_ROOT and no TRAIN_HOLDS set, so the evidence is
+        # <repo parent>/evidence and the holds file is train-holds.txt inside it; --evidence moves both
+        beside = os.path.join(self.tmp, "evidence")
+        shutil.copytree(self.ev, beside)
+        for t in ("lnaa", "lnbb"):
+            self.review(t, "2026-09-23 11:30")
+            self.gate(t, "2026-09-23 11:40")
+        shutil.rmtree(os.path.join(beside, "reviews"))
+        shutil.copytree(os.path.join(self.ev, "reviews"), os.path.join(beside, "reviews"))
+        with open(os.path.join(beside, "train-holds.txt"), "w", encoding="utf-8") as f:
+            f.write("lnaa held beside the repo\n")
+        env = dict((k, v) for k, v in os.environ.items() if k not in ("EVIDENCE_ROOT", "TRAIN_HOLDS"))
+        base = [sys.executable, SCRIPT, "--repo", self.repo, "--scratch-glob",
+                os.path.join(self.tmp, "scratch", "*", "scratchpad"), "--now", NOW]
+        r = subprocess.run(base, capture_output=True, text=True, env=env, timeout=120)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)  # lnaa held, so lnbb waits alone, 20 min of 60
+        self.assertIn("lanes lnbb 20 min; held lnaa (held beside the repo)", r.stdout)
+        r = subprocess.run(base + ["--evidence", self.ev], capture_output=True, text=True, env=env, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("train DUE: 2 lanes CLEAR and green", r.stdout)  # the flag's folder holds no holds file
+        self.assertIn("held none", r.stdout)
+        r = subprocess.run(base + ["--evidence", os.path.join(self.tmp, "nowhere")], capture_output=True, text=True,
+                           env=env, timeout=120)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("has no reviews/ folder", r.stderr)
+
     def test_usage_errors_are_exit_2(self):
         broken = os.path.join(self.tmp, "broken")
         os.makedirs(os.path.join(broken, ".git"))  # a checkout git cannot read: a failure to read, never "not due"
@@ -328,6 +355,18 @@ class TrainDueTest(unittest.TestCase):
                            env=dict(os.environ, EVIDENCE_ROOT=self.ev, TRAIN_HOLDS=os.path.join(self.tmp, "x")))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("train DUE: 2 lanes CLEAR and green; lanes lnaa 20 min, lnbb 20 min", r.stdout)
+
+    def test_an_evidence_folder_without_reviews_is_a_failure_to_read(self):
+        # kit-twins-0923k finding 2: zero reviews read from a wrong folder must never print "not due"
+        for t in ("lnaa", "lnbb"):
+            self.review(t, "2026-09-23 11:30")
+            self.gate(t, "2026-09-23 11:40")
+        r = subprocess.run([sys.executable, SCRIPT, "--repo", self.repo, "--now", NOW], capture_output=True, text=True,
+                           timeout=120, env=dict(os.environ, EVIDENCE_ROOT=os.path.join(self.tmp, "nowhere"),
+                                                 TRAIN_HOLDS=os.path.join(self.tmp, "x")))
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertEqual(r.stdout, "")
+        self.assertIn("has no reviews/ folder", r.stderr)
 
     def test_nothing_is_due_before_eight(self):
         for t in ("lnaa", "lnbb"):

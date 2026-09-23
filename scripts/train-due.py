@@ -38,7 +38,7 @@ the line lists every waiting lane, so it is one read away.
 The evidence folder holds landings.md, queue.md and reviews/: --evidence, else EVIDENCE_ROOT, else <repo
 parent>/evidence (train-wait.py's rule). Exit 0 when due, 1 when not due, 2 on a usage error, a repository that is
 not a checkout, or any failure to read (a git call that fails or passes its 60 s bound, a train-wait.py that does not
-load): 1 always means read and not due.
+load, an evidence folder with no reviews/ folder): 1 always means read and not due.
 """
 import argparse
 import datetime
@@ -234,6 +234,10 @@ def main(argv):
         return 2
     tw = load_train_wait()
     ev = tw.evidence_root(a.repo, a.evidence)
+    if not os.path.isdir(os.path.join(ev, "reviews")):
+        # a mistyped --evidence or a stale EVIDENCE_ROOT reads zero reviews, which would print "not due" forever
+        raise RuntimeError("the evidence folder %s has no reviews/ folder (--evidence, EVIDENCE_ROOT, or <repo "
+                           "parent>/evidence)" % ev)
     revs = tw.reviews(ev, tw.landings(ev))
     qst = tw.queue_stems(ev)
     unmerged = set(git(a.repo, "branch", "--no-merged", "main", "--format=%(refname:short)").split())
