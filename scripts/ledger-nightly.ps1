@@ -500,7 +500,8 @@ if (Test-Path $errorsPy) {
     $txRoot = $ProjectsRoot
     if (-not $txRoot) { $txRoot = Join-Path (Join-Path ([Environment]::GetFolderPath('UserProfile')) '.claude') 'projects' }
     $txFiles = @(Get-ChildItem -Path $txRoot -Filter '*.jsonl' -File -Recurse -ErrorAction SilentlyContinue |
-        Where-Object { $_.LastWriteTime -ge $since } | Sort-Object Length -Descending | Select-Object -First 2)
+        Where-Object { $_.LastWriteTime -ge $since -and $_.DirectoryName -notmatch '\\subagents$' } |
+        Sort-Object Length -Descending | Select-Object -First 2)
     if ($txFiles.Count -gt 0) {
         foreach ($tx in $txFiles) {
             $sid = $tx.BaseName.Substring(0, [Math]::Min(8, $tx.BaseName.Length))
