@@ -14,18 +14,22 @@ Pass the two values with "=": a value that starts with "-" and holds no space (-
 option otherwise, which ends as a usage error (exit 2), never as a wrong write.
 
 The backup is deleted once the read-back passes (a copy of a password file is not left behind; the revert is the
-swapped call, which needs no backup); --keep-backup keeps it, and any failure keeps it. The file is read as
-ISO-8859-1, the properties encoding. A line continued with a trailing backslash, and a value or expected value
-ending in one, are refused.
+swapped call, which needs no backup); --keep-backup keeps it then. A refusal or a failure before any byte is written
+deletes it too, since the file did not change; a failure after the write started keeps it and names it. The file is
+read as ISO-8859-1, the properties encoding. A line continued with a trailing backslash, and a value or expected
+value ending in one, are refused.
 
 Exit 0 changed, or already at the new value (nothing written); 2 a usage error, or the file cannot be read; 3 refused
 (the key missing or present more than once, the current value not the expected one, a line break, a continuation, a
-character outside ISO-8859-1, or no backup could be written: nothing written in every case); 4 the write or its
-read-back failed (the file may be partly written; the backup is kept and named).
+character outside ISO-8859-1, no backup could be written, or the file changed between the first read and the write:
+nothing written in every case); 4 the write or its read-back failed (before any byte was written the line says
+nothing changed; otherwise the file may be partly written, and the backup is kept and named); 5 the line was changed
+and read back but the backup could not be removed (it is named: delete it).
 """
 import argparse
 import os
 import shutil
+import stat
 import sys
 import time
 
@@ -40,6 +44,23 @@ def continued(text):
 
 def lines_of(raw):
     return raw.split(b"\n")  # the \r of a CRLF file stays on each line, so the endings survive untouched
+
+
+def drop(backup):
+    """Delete the backup; returns None, or the error text. copy2 keeps the source's mode, so a read-only file gives a
+    read-only backup, which Windows refuses to delete until it is made writable."""
+    try:
+        os.chmod(backup, stat.S_IREAD | stat.S_IWRITE)
+        os.remove(backup)
+    except OSError as e:
+        return e.strerror or str(e)
+    return None
+
+
+def stray(backup, shown):
+    """For a run that wrote nothing: the backup is only a stray copy of the file, so it goes; the tail names it if not."""
+    err = drop(backup)
+    return "" if err is None else "; delete %s (%s)" % (shown, err)
 
 
 def main():
@@ -107,26 +128,47 @@ def main():
     except OSError as e:
         print("gradle-prop-line: refused, no backup could be written (%s); nothing changed" % (e.strerror or e))
         return 3
+    shown = backup.replace("\\", "/")
+    started = moved = False
     try:
         with open(a.file, "r+b") as f:  # in place: the same file, its owner and its permissions
-            f.seek(0)
-            f.write(out)
-            f.truncate()
+            moved = f.read() != raw  # a write by someone else since the first read is never overwritten
+            if not moved:
+                f.seek(0)
+                started = True
+                f.write(out)
+                f.truncate()
     except OSError as e:
-        print("gradle-prop-line: WRITE FAILED (%s); the file may be partly written, restore from %s"
-              % (e.strerror or e, backup.replace("\\", "/")))
+        if started:
+            print("gradle-prop-line: WRITE FAILED (%s); the file may be partly written, restore from %s"
+                  % (e.strerror or e, shown))
+            return 4
+        print("gradle-prop-line: WRITE FAILED (%s) before any byte was written; nothing changed%s"
+              % (e.strerror or e, stray(backup, shown)))
         return 4
-    with open(a.file, "rb") as f:
-        back = lines_of(f.read())
-    diff = [j for j in range(max(len(back), len(lines))) if j >= len(back) or j >= len(lines) or back[j] != lines[j]]
-    if diff != [i] or back[i] != new_line:
-        print("gradle-prop-line: READ-BACK FAILED, lines differing: %s; restore from %s" % (diff[:5], backup))
+    if moved:
+        print("gradle-prop-line: refused, the file changed since it was read; nothing written%s" % stray(backup, shown))
+        return 3
+    try:
+        with open(a.file, "rb") as f:
+            back = f.read()
+    except OSError as e:
+        print("gradle-prop-line: READ-BACK FAILED (%s); restore from %s" % (e.strerror or e, shown))
+        return 4
+    if back != out:  # against the bytes just written, never the lines read before the write
+        b, o = lines_of(back), lines_of(out)
+        diff = [j for j in range(max(len(b), len(o))) if j >= len(b) or j >= len(o) or b[j] != o[j]]
+        print("gradle-prop-line: READ-BACK FAILED, lines differing: %s; restore from %s" % (diff[:5], shown))
         return 4
     if a.keep_backup:
-        print("gradle-prop-line: changed line %d, backup %s" % (i + 1, backup.replace("\\", "/")))
-    else:
-        os.remove(backup)  # the read-back passed; the revert is the swapped call
-        print("gradle-prop-line: changed line %d, read back, backup removed" % (i + 1))
+        print("gradle-prop-line: changed line %d, backup %s" % (i + 1, shown))
+        return 0
+    err = drop(backup)  # the read-back passed; the revert is the swapped call
+    if err:  # a held backup is named, never a traceback
+        print("gradle-prop-line: changed line %d and read back, but the BACKUP WAS NOT REMOVED (%s): delete %s"
+              % (i + 1, err, shown))
+        return 5
+    print("gradle-prop-line: changed line %d, read back, backup removed" % (i + 1))
     return 0
 
 
