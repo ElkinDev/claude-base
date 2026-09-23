@@ -81,6 +81,10 @@ REAL_SHEET_MTIME = os.path.getmtime(REAL_SHEET) if os.path.isfile(REAL_SHEET) el
 class RulingsBlockCase(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
+        # Armed on the kit's own hook only: an installed hook's default sheet may be one its sessions rewrite
+        # while the suite runs, and every case here points CLAUDE_LANE_STATE_SHEET at a temp path anyway.
+        if os.path.normcase(os.path.abspath(HOOK)) != os.path.normcase(os.path.abspath(KIT_HOOK)):
+            return
         now = os.path.getmtime(REAL_SHEET) if os.path.isfile(REAL_SHEET) else None
         if now != REAL_SHEET_MTIME:
             raise AssertionError("the suite rewrote or created the real state sheet %s" % REAL_SHEET)
