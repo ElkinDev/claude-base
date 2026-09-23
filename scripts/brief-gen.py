@@ -7,9 +7,9 @@ findings verbatim for a fix or notes brief, and leaves the architect's part (the
 pins) to one argument or to a marked placeholder. One shell call replaces one long Write; the reasoning stays typed
 by the orchestrator.
 
-  python brief-gen.py review <token> [--delta N --review <path>] [--attack "1. ...\\n2. ..."] [--tools 14] [--out <path>]
-  python brief-gen.py fix    <token> --review <path> [--round N] [--change "..."] [--pins "..."] [--tests "..."] [--out <path>]
-  python brief-gen.py notes  <token> --review <path> [--change "..."] [--pins "..."] [--tests "..."] [--out <path>]
+  python brief-gen.py review <token> [--delta N --review <path>] [--attack "1. ...\\n2. ..."] [--tools 14] [--no-git] [--out <path>]
+  python brief-gen.py fix    <token> --review <path> [--round N] [--change "..."] [--pins "..."] [--tests "..." | --no-git] [--out <path>]
+  python brief-gen.py notes  <token> --review <path> [--change "..."] [--pins "..."] [--tests "..." | --no-git] [--out <path>]
 
 Facts: the newest <lanes>/<slug>-<date>.md whose title starts with "# Lane <token>" gives the slug, the item (an id
 in brackets such as (ABC-12), (item 7) or (3.2)) and the topic; the worktree is the configured pattern with the token
@@ -20,6 +20,18 @@ printed to stdout as well, so the caller reads what it launched. Placeholders ar
 brief goes to an implementer, whose launches the hook grades with brief-check.py (Report section present, a test
 class name under Pins): fill --pins, or a deny tier of 2 or more refuses it. A review brief goes to a reviewer,
 which the hook never grades (claude/hooks/guard-delegate.py, LOGGED_TARGETS), so it carries no Pins section.
+
+With own_tests_command and own_tests_done set, a lane ends when it launches its own-tests run: the commit, the
+precheck, the report, and the launch as the last tool call; a green run is not resumed (the review and the gate read
+the report and the done file), a red one comes back as the next round. A resume and a fresh fix lane cost about
+the same, so only the green share saves, and no lane waits for a verdict.
+
+Guards. A review refuses --round (a review of round N is --delta N, 2 or more; --delta is refused on the other
+kinds) and refuses a deliverable already under the reviews folder (--force writes over it); since the reviewer, not
+this script, writes that file, the review brief also tells the reviewer to write nothing when it exists at its
+start. --no-git is the shape of a lane whose files are in no git repository (tooling kept in a plain folder): it
+edits staged .new files beside the live ones and never a live file, runs its pins under timeout 120 against the
+.new and once against the live file, and writes no commit, precheck or test run; it is refused with --tests.
 
 Configuration: brief-gen.json beside this script, or the file BRIEF_GEN_CONFIG names; copy brief-gen.example.json
 and edit it. Every key is optional and the defaults write a brief that names no build tool and no machine path:
@@ -189,7 +201,8 @@ def lane_facts(token):
 def git_facts(fx):
     wt = fx["wt"]
     if not os.path.isdir(wt):
-        fx.update(branch="<<branch>>", tip="<<tip>>", base="<<base>>", commits=["<<commits: worktree %s not found>>" % wt])
+        fx.update(branch="<<branch>>", tip="<<tip>>", base="<<base>>",
+                  commits=["<<commits: worktree %s not found; a lane with no git repository takes --no-git>>" % wt])
         return fx
     if not git(wt, "rev-parse", "HEAD"):
         why = "<<%s is not a git worktree (directory present, worktree pruned)>>" % wt
@@ -250,7 +263,8 @@ def disposition(review_path):
 
 
 def own_tests_line(fx, tag, tests):
-    """The Checks line that runs the lane's own test classes on its committed tip."""
+    """The Checks line that runs the lane's own test classes on its committed tip. With a done file the launch is the
+    round's last act: the report is written before it and a green run is not resumed (the lane ends at its launch)."""
     tests = tests or "<<the test selection: your own test classes, never a whole suite>>"
     cmd = CFG["own_tests_command"]
     if not cmd:
@@ -259,41 +273,66 @@ def own_tests_line(fx, tag, tests):
     line = "`%s`" % fill(cmd, fx["wt"], tag=tag, tests=tests)
     if CFG["own_tests_done"]:
         done = fill(CFG["own_tests_done"], fx["wt"], tag=tag, tests=tests)
-        line += (", then END YOUR TURN with %s as your last line: no watcher, no polling, no sleep; the launch is a "
-                 "FOREGROUND tool call that returns at once, never run_in_background. The orchestrator resumes you "
-                 "with the verdict." % done)
+        line += (" as the LAST tool call of the round, then END YOUR TURN with one line naming %s and %s: no watcher, "
+                 "no polling, no sleep; the launch is a FOREGROUND tool call that returns at once, never "
+                 "run_in_background. A green run is not resumed: the review and the gate read the report and the done "
+                 "file. A red run comes back as the next round with the run's reading." % (fx["report"], done))
     else:
         line += "; the report names the tag and the exit."
     return line
 
 
+NOGIT_WHERE = ("No worktree, no branch, no commit: the lane's files are in no git repository. They are the staged "
+               "`.new` files the report names, each beside its live file with a `.bak` of it")
+
+
+def review_deliverable(fx, delta):
+    """The file a review of this round writes: <reviews>/<slug>-<date>.md, or <slug>-fix<N-1>-<date>.md for --delta N."""
+    name = "%s-fix%d-%s.md" % (fx["slug"], delta - 1, TODAY) if delta else "%s-%s.md" % (fx["slug"], TODAY)
+    return "%s/%s" % (under_root(CFG["reviews_dir"]), name)
+
+
 def review_brief(fx, a):
     delta = a.delta
     kind = "Delta review of lane %s round %d" % (fx["token"], delta) if delta else "Review of lane %s" % fx["token"]
+    nogit = getattr(a, "no_git", False)
     out_name = "%s-fix%d-review-%s.md" % (fx["slug"], delta - 1, TODAY) if delta else "%s-review-%s.md" % (fx["slug"], TODAY)
-    reviews = under_root(CFG["reviews_dir"])
-    report = ("%s/%s-fix%d-%s.md" % (reviews, fx["slug"], delta - 1, TODAY) if delta
-              else "%s/%s-%s.md" % (reviews, fx["slug"], TODAY))
+    report = review_deliverable(fx, delta)
     lane_word = "The delta" if delta else "The lane"
     tools = a.tools or CFG["review_tools"]
-    commits = "; ".join(fx["commits"])
+    commits = "; ".join(fx.get("commits") or [])
     suffix = "subjects end %s, " % CFG["subject_suffix"] if CFG["subject_suffix"] else ""
+    hygiene = ("no live file touched, a .bak beside each staged file, no git command, only the named paths touched"
+               if nogit else "%sno attribution, no amend, only the named paths touched" % suffix)
     attack = (a.attack.replace("\\n", "\n") if a.attack else
-              "1. <<what must be true at the tip, with file:line; three to six numbered points, the last one hygiene: "
-              "%sno attribution, no amend, only the named paths touched>>" % suffix)
-    prev = ("Previous review: %s (read it first; every MAJOR must be closed at the new tip, every MINOR answered or "
-            "carried).\n\n" % a.review) if delta and a.review else ""
+              "1. <<what must be true at the %s, with file:line; three to six numbered points, the last one hygiene: "
+              "%s>>" % ("staged .new files" if nogit else "tip", hygiene))
+    prev = ("Previous review: %s (read it first; every MAJOR must be closed at the new %s, every MINOR answered or "
+            "carried).\n\n" % (a.review, "files" if nogit else "tip")) if delta and a.review else ""
     runs = ""
-    if CFG["own_tests_done"]:
+    if CFG["own_tests_done"] and not nogit:
         runs = " Test runs under %s/." % os.path.dirname(fill(CFG["own_tests_done"], fx["wt"], tag="x", tests=""))
     purpose = a.purpose or "<<one of quality, optimization, automation, token reduction, and the number it proves>>"
+    at = "the `.new` file as it is on disk when you start" if nogit else fx["tip"]
+    if nogit:
+        where = ("%s; read `diff <live> <live>.new` for the change. Brief: %s. Report: %s (read it whole, Open items "
+                 "included)." % (NOGIT_WHERE, fx["brief"], fx["report"]))
+    else:
+        where = ("Worktree %s, branch %s, base %s (merge-base with %s), tip %s, commits above the base: %s. Brief: %s. "
+                 "Report: %s (read it whole, Open items included).%s" % (fx["wt"], fx["branch"], fx["base"],
+                 CFG["base_branch"], fx["tip"], commits, fx["brief"], fx["report"], runs))
+    # the reviewer writes the file, so a brief generated while an earlier reviewer of the round still runs passes the
+    # existence check in main(); the reviewer checks again when it starts
+    guard = ("" if getattr(a, "force", False) else
+             " If %s already exists when you start, write nothing and end with one line naming it: a review of this "
+             "round is already on disk." % report)
     body = f"""# {kind} ({fx['item']}): {fx['topic']}, {TODAY}
 
 Your reader is a session, never a person. Write in English. The deliverable is {report}; your last message is one line naming that path, no summary. Role: reviewer (read only toward the repo: no build, no lock, no git write; if your tools carry no Write tool, write the report through Bash with a quoted heredoc). Plan for {tools} tool uses and write the report by turn {max(4, tools - 2)}. Purpose: {purpose}.
 
 ## {lane_word}
 
-Worktree {fx['wt']}, branch {fx['branch']}, base {fx['base']} (merge-base with {CFG['base_branch']}), tip {fx['tip']}, commits above the base: {commits}. Brief: {fx['brief']}. Report: {fx['report']} (read it whole, Open items included).{runs}
+{where}
 
 {prev}## Attack
 
@@ -301,7 +340,7 @@ Worktree {fx['wt']}, branch {fx['branch']}, base {fx['base']} (merge-base with {
 
 ## Report
 
-{report}, at most 40 lines: Disposition (CLEAR, CLEAR with notes, BLOCK) on the first line, then MAJOR, MINOR, Verified sound, Not covered. Every finding with file:line at {fx['tip']}.
+{report}, at most 40 lines: Disposition (CLEAR, CLEAR with notes, BLOCK) on the first line, then MAJOR, MINOR, Verified sound, Not covered. Every finding with file:line at {at}.{guard}
 """
     return out_name, body
 
@@ -326,29 +365,81 @@ def fix_or_notes_brief(fx, a, kind):
     pins = a.pins or "<<the test class names that prove it, one per line; a red-by-mutation line when the review asked for one>>"
     purpose_kind = ("blocked round %d (%s)" % (rnd - 1, disp)) if kind == "fix" else ("is %s" % disp)
     laws = " Laws: %s." % CFG["laws"] if CFG["laws"] else ""
-    if CFG["precheck_command"]:
-        precheck = ("- Then `%s` on the new tip; paste its line. No commit after it. Never poll in a loop of tool "
-                    "calls, never tail -f.\n" % fill(CFG["precheck_command"], fx["wt"]))
-        precheck_report = ", the precheck line"
+    lines = '40' if kind == 'fix' else '25'
+    nobody = "the delta review" if kind == "fix" else "the train"
+    if getattr(a, "no_git", False):
+        if not a.change:
+            change = "<<the change per item, in the staged .new files the report names; every other file stays>>"
+        on = "the staged .new files"
+        where = ("%s. Edit those `.new` files in place; a file the change needs that has none gets `cp -p <live> "
+                 "<live>.<stamp>.bak` and `cp -p <live> <live>.new` first. Never a live file: the files are swapped "
+                 "into place after the review. No build, no git." % NOGIT_WHERE)
+        change_head = "## Change, in the staged .new files"
+        checks = ("In this order (the lane ends with its report; the swap into place is the orchestrator's):\n\n"
+                  "- First the change, in the `.new` files only.\n"
+                  "- Then each pin under Pins, under `timeout 120`, against the `.new` file (the suite's variable naming "
+                  "the script under test) and once against the live file; paste the green line and the red one. Never "
+                  "poll in a loop of tool calls, never tail -f.\n"
+                  "- Last, the report, appended whole as the Report section says; then END YOUR TURN with one line "
+                  "naming %s." % fx["report"])
+        report_what = ("each `.new` file with the line count of `diff <live> <live>.new`, the changes at their `.new` "
+                       "line numbers, the pin lines green on the `.new` and red on the live file, the hostile-input "
+                       "table when a script changed (below), and Open items LAST")
+        report_when = ""
+        forbidden = ("Any file outside the ones the review names; any edit of a live file (a file without the .new "
+                     "suffix) or of a .bak, beyond the two cp -p copies the Where section orders (reading and running "
+                     "the live file for the red pin is allowed); any git command; any worktree; a shared build lock, a "
+                     "device lock, any scratchpad of another session.")
     else:
-        precheck, precheck_report = "- Never poll in a loop of tool calls, never tail -f.\n", ""
+        on = fx["tip"]
+        where = ("Worktree %s, branch %s, tip %s (verify with git rev-parse; commit on top, never amend or rebase). No "
+                 "build run except the one under Checks." % (fx["wt"], fx["branch"], fx["tip"]))
+        change_head = "## Change, one commit%s" % (", subject" + ending if ending else "")
+        pre = fill(CFG["precheck_command"], fx["wt"]) if CFG["precheck_command"] else None
+        forbidden = ("Any file outside the ones the review names; any amend or rebase; any worktree other than %s."
+                     % fx["wt"])
+        if CFG["own_tests_command"] and CFG["own_tests_done"]:
+            # a lane ends when it launches its own-tests run: the report first, the launch last, no resume on green
+            done = fill(CFG["own_tests_done"], fx["wt"], tag=tag, tests=a.tests or "")
+            checks = ("In this order (a lane ends when it launches its own-tests run; the gate and %s are the "
+                      "orchestrator's):\n\n- First the commit of the Change section, on top of %s.\n" % (nobody, fx["tip"]))
+            if pre:
+                checks += ("- Then `%s` on the committed tip; paste its line. No commit after it. Never poll in a loop "
+                           "of tool calls, never tail -f.\n" % pre)
+            checks += ("- Then the report, appended whole as the Report section says, before the run it names.\n"
+                       "- Last, the own-tests run on the committed tip: %s" % own_tests_line(fx, tag, a.tests))
+            report_what = ("the new tip and the commit subject, the changes, the own-tests tag %s and its done file %s "
+                           "with the words \"verdict in the done file\"%s, the hostile-input table when a script "
+                           "changed (below), and Open items LAST" % (tag, done, ", the precheck line" if pre else ""))
+            report_when = " before the own-tests launch"
+        else:
+            if pre:
+                precheck = ("- Then `%s` on the new tip; paste its line. No commit after it. Never poll in a loop of "
+                            "tool calls, never tail -f.\n" % pre)
+            else:
+                precheck = "- Never poll in a loop of tool calls, never tail -f.\n"
+            checks = ("- Green, on the committed tip: %s\n%s- The gate and %s are the orchestrator's."
+                      % (own_tests_line(fx, tag, a.tests), precheck, nobody))
+            report_what = ("the new tip and the commit subject, the changes, the test run tag and exit%s, and Open items "
+                           "if any" % (", the precheck line" if pre else ""))
+            report_when = ""
     body = f"""# {title} ({fx['item']}): {fx['topic']}, {TODAY}
 
 Your reader is a session, never a person. Write in English. The deliverable is a "{section}" section appended to {fx['report']}; your last message is one line naming that path, no summary. No attribution lines in commits or reports. Role: implementer-light.{laws} Budget {budget} tool uses.
 
 ## Purpose
 
-Quality. The review {a.review or '<<review path>>'} {purpose_kind} on {fx['tip']}. The number: <<the count that proves it, one today, zero after>>.
+Quality. The review {a.review or '<<review path>>'} {purpose_kind} on {on}. The number: <<the count that proves it, one today, zero after>>.
 
 ## Where
 
-Worktree {fx['wt']}, branch {fx['branch']}, tip {fx['tip']} (verify with git rev-parse; commit on top, never amend or rebase). No build run except the one under Checks.
+{where}
 
 ## The review, quoted
 
 {quoted_text}
 
-## Change, one commit{', subject' + ending if ending else ''}
+{change_head}
 
 {change}
 
@@ -358,18 +449,17 @@ Worktree {fx['wt']}, branch {fx['branch']}, tip {fx['tip']} (verify with git rev
 
 ## Checks
 
-- Green, on the committed tip: {own_tests_line(fx, tag, a.tests)}
-{precheck}- The gate and the {'delta review' if kind == 'fix' else 'train'} are the orchestrator's.
+{checks}
 
 ## Report
 
-Append "{section}" to {fx['report']}, at most {'40' if kind == 'fix' else '25'} lines: the new tip and the commit subject, the changes, the test run tag and exit{precheck_report}, and Open items if any.
+Append "{section}" to {fx['report']}{report_when}, at most {lines} lines: {report_what}.
 
 {hostile_line()}
 
 ## Forbidden
 
-Any file outside the ones the review names; any amend or rebase; any worktree other than {fx['wt']}.
+{forbidden}
 """
     return out_name, body
 
@@ -381,18 +471,31 @@ def main():
     ap.add_argument("token")
     ap.add_argument("--review", help="the review file the fix or notes brief quotes (or the previous review of a delta review)")
     ap.add_argument("--delta", type=int, default=0, help="review: the round this delta review reads (2 for the first fix)")
-    ap.add_argument("--round", type=int, default=2, help="fix: the round the implementer opens")
+    ap.add_argument("--round", type=int, default=None, help="fix: the round the implementer opens, 2 or more (2 by default); refused on the other kinds")
     ap.add_argument("--attack", help="review: the numbered attack points (\\n separated)")
     ap.add_argument("--change", help="fix or notes: the change section")
     ap.add_argument("--pins", help="fix or notes: the pins section; name a test class (ending in Test) or a golden")
     ap.add_argument("--tests", help="fix or notes: the test selection of the own-tests run")
     ap.add_argument("--purpose", help="review: the purpose line (one of the four and its number)")
     ap.add_argument("--tools", type=int, default=None, help="the tool budget (review_tools and fix_tools by default)")
+    ap.add_argument("--no-git", action="store_true", help="a lane with no git repository: staged .new files, no branch, tip, commit or test run")
     ap.add_argument("--out")
-    ap.add_argument("--force", action="store_true")
+    ap.add_argument("--force", action="store_true", help="overwrite an existing brief, or a review deliverable that already exists")
     a = ap.parse_args()
     if not a.token.strip():  # a blank token would write a brief of placeholders
         ap.error("give a lane token that is not blank")
+    if a.delta and a.kind != "review":  # --delta was dropped silently on the other kinds
+        ap.error("--delta is the review kind's; a fix opens its round with --round N")
+    if a.delta and a.delta < 2:
+        ap.error("--delta N is the round the review reads, 2 or more (the first fix is round 2)")
+    if a.round is not None and a.kind != "fix":  # a review of round N is --delta N
+        ap.error("--round is the fix kind's; a review of round N takes --delta N")
+    if a.kind == "fix":
+        a.round = 2 if a.round is None else a.round
+        if a.round < 2:
+            ap.error("--round is the round the fix opens, 2 or more")
+    if a.no_git and a.tests:
+        ap.error("--tests names the own-tests run, which a --no-git lane does not launch; its pins run under timeout 120")
     try:
         CFG = load_config()
     except ConfigError as e:
@@ -402,8 +505,14 @@ def main():
         a.review = os.path.abspath(a.review).replace("\\", "/")
         if not os.path.exists(a.review):
             sys.exit("brief-gen: review file not found: %s" % a.review)
-    fx = git_facts(lane_facts(a.token))
+    fx = lane_facts(a.token)
+    if not a.no_git:
+        fx = git_facts(fx)
     if a.kind == "review":
+        deliverable = review_deliverable(fx, a.delta)
+        if os.path.exists(deliverable) and not a.force:
+            sys.exit("brief-gen: refused, %s exists: a review of this round already wrote it; a review of round N "
+                     "takes --delta N, and --force writes over it" % deliverable)
         name, body = review_brief(fx, a)
     else:
         if not a.review:
