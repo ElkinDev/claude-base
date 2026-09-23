@@ -106,6 +106,8 @@ def pair(live, cands):
         folder = os.path.basename(os.path.dirname(t))
         if folder in PAIRED_FOLDERS and os.path.basename(os.path.dirname(live)) != folder:
             return None
+        if t.startswith("project-template/") and tail_len(live, t) < 2:
+            return None  # a template file pairs by folder and name, never by name alone (README.md, CLAUDE.md)
         return t
     scored = sorted(((tail_len(live, t), t) for t in cands), reverse=True)
     best = scored[0][0]
