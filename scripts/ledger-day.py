@@ -174,19 +174,6 @@ REFLOG_ROW_RE = re.compile(r"^(\S+)\s+\S+@\{([^}]+)\}:\s*(.*)$")
 # `--no-ff` landings wrote. Compared in lower case.
 MERGE_SUBJECT_PREFIXES = ("merge branch '", "merge: ", "merge(")
 
-# Version of the `--json` payload. Bumped when a field changes meaning, never
-# when one is added; `ledger-compare.py` reads it to say which side is stale.
-JSON_SCHEMA = 2
-
-LEDGER_HEADER = ("| Time | Window | Project | Tokens (in+out, k) | Quota points "
-                 "| Merged features | Points per feature | Waste % "
-                 "| forks / status / narration / probes / cache (k) "
-                 "| Compactions (n, per h, peak k, floor k) "
-                 "| Writing (launches, own k, notif k, results k chars) |")
-LEDGER_SEP = ("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- "
-              "| --- |")
-LEDGER_TITLE = "## Waste ledger, 08:00 and 18:00"
-
 # A turn that does any of this is work, never waste.
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Artifact"}
 LAUNCH_TOOLS = {"Agent", "Task"}
@@ -808,13 +795,24 @@ def fill_reflog_subjects(repo, entries):
     shas = sorted({e["sha"] for e in entries})
     if not shas:
         return
-    cmd = ["git", "-C", repo, "log", "--no-walk", "--format=%H|%s"] + shas
-    try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
-                             encoding="utf-8", errors="replace")
-        lines = [l.strip() for l in (out.stdout or "").splitlines() if l.strip()]
-    except (OSError, subprocess.SubprocessError):
-        return
+    def subject_lines(revs):
+        cmd = ["git", "-C", repo, "log", "--no-walk", "--format=%H|%s"] + revs
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
+                                 encoding="utf-8", errors="replace")
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if out.returncode != 0:
+            return None
+        return [l.strip() for l in (out.stdout or "").splitlines() if l.strip()]
+
+    lines = subject_lines(shas)
+    if lines is None:
+        # git refuses the whole call on the first sha it cannot read (a tip a reset dropped and gc removed),
+        # so the shas are asked one at a time and only the unreadable one keeps its reflog message
+        lines = []
+        for sha in shas:
+            lines.extend(subject_lines([sha]) or [])
     subjects = {}
     for line in lines:
         full, _sep, subject = line.partition("|")

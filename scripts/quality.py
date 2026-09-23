@@ -71,6 +71,7 @@ def lane_state_path():
             return path
     return None
 
+
 ROW_RE = re.compile(r"^(?:- )?(\d{4}-\d{2}-\d{2} \d{2}:\d{2}) ")
 HEAD_END_RE = re.compile(r":|\.(?=\s|$)")
 WINDOW_RE = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}) to "
@@ -217,8 +218,11 @@ def gate_numbers(start, end, gate_dirs, now, landings):
         dirs = list(gate_dirs)
     elif hasattr(lane_state, "gate_dirs") and hasattr(lane_state, "load_config"):
         dirs = lane_state.gate_dirs(lane_state.load_config())
-    else:
+    elif hasattr(lane_state, "default_gate_dirs"):
         dirs = lane_state.default_gate_dirs()
+    else:
+        out["unavailable"] = "%s names no gate folders (no gate_dirs, no default_gate_dirs)" % path
+        return out
     existing = [d for d in dirs if os.path.isdir(d)]
     if not existing:
         out["unavailable"] = ("no gate directory exists (%d looked at)" % len(dirs))
