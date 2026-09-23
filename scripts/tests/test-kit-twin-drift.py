@@ -224,6 +224,15 @@ def main():
         return rc == 0 and "Traceback" not in err and row_numbers(out) == (0, 0, 0)
     check("a tie between two template files pairs none and never crashes", two_template_files_tie)
 
+    def template_name_alone_never_pairs(root):
+        kit = make_kit(root)
+        put(os.path.join(kit, "project-template", "docs", "README.md"), "template readme\n")
+        commit(kit, 3 * DAY)
+        put(os.path.join(root, "live", "scripts", "README.md"), "an unrelated readme\n", age=2 * DAY)
+        rc, out, _ = run(root, kit, ["--row"])
+        return rc == 0 and row_numbers(out)[0] == 0
+    check("a file the template holds pairs by folder and name, never by name alone", template_name_alone_never_pairs)
+
     def default_kit_and_floor(root):
         kit = world(root)
         copy = os.path.join(kit, "scripts", "kit-twin-drift.py")
