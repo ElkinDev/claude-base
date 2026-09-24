@@ -67,6 +67,10 @@ and edit it. Every key is optional and the defaults write a brief that names no 
                      in the folder of own_tests_done, grouped by the tag before the first dot, so its file name must
                      start with {tag}. A run is on the tip when its done file names tip=<sha> of HEAD, or when the
                      HEAD reflog entry in force at its start names HEAD. Default null, no check
+  guard_log          a file the check appends one line to per review brief it read, `<stamp> review <token>
+                     green|refused|allowed <why>`, relative to the evidence root unless absolute, for example
+                     "ledger/brief-gen-guard.log"; written only while its folder exists, and a write that fails
+                     never stops the brief. It needs run_verdict_line. Default null, no log
 A config file that is not a JSON object, or a key of the wrong type, is exit 2 with the reason: a brief written on
 a half-read config would carry the wrong commands.
 """
@@ -84,7 +88,7 @@ DEFAULTS = {
     "evidence_root": None, "lanes_dir": "lanes", "briefs_dir": "briefs", "reviews_dir": "reviews",
     "template": "briefs/TEMPLATE-lane-brief.md", "worktree": None, "base_branch": "main", "laws": None,
     "subject_suffix": "", "own_tests_command": None, "own_tests_done": None, "precheck_command": None,
-    "review_tools": 14, "fix_tools": 20, "run_verdict_line": None,
+    "review_tools": 14, "fix_tools": 20, "run_verdict_line": None, "guard_log": None,
 }
 INT_KEYS = ("review_tools", "fix_tools")
 REQUIRED_STR = ("lanes_dir", "briefs_dir", "reviews_dir", "template", "base_branch")
@@ -137,6 +141,10 @@ def load_config(path=None):
     if cfg["run_verdict_line"] and "{tag}" in os.path.dirname(cfg["own_tests_done"].replace("\\", "/")):
         raise ConfigError("%s: run_verdict_line reads one runs folder, so {tag} may appear only in the file name of "
                           "own_tests_done, not in its folder" % path)
+    if cfg["guard_log"] is not None and not cfg["guard_log"].strip():
+        raise ConfigError("%s: guard_log is blank; give the log file, or null" % path)
+    if cfg["guard_log"] and not cfg["run_verdict_line"]:  # a log of a check that never runs would stay empty
+        raise ConfigError("%s: guard_log needs run_verdict_line, the check whose verdicts it logs" % path)
     for k in TEMPLATE_KEYS:  # a stray brace would otherwise fail at render time, after the facts were read
         if cfg[k]:
             try:
@@ -299,6 +307,24 @@ def red_run(wt):
     if any(c.strip() != "0" for c in m.group(1).split(",")):
         return "the newest run on the tip %s is red: %s reads %s%s" % (head[:9], r["path"], prefix, m.group(1).strip())
     return None
+
+
+def guard_log(token, verdict, why=None):
+    """One line in the guard_log file per review brief the run check read, `<stamp> review <token> green|refused|
+    allowed <why>`, so a reader can tell the check ran and what it said. Written only while the log's folder exists;
+    a write that fails never stops the brief or changes its exit code."""
+    if not CFG["guard_log"]:
+        return
+    path = under_root(CFG["guard_log"].strip())
+    if not os.path.isdir(os.path.dirname(path)):
+        return
+    line = "%s review %s %s %s\n" % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), " ".join(token.split()),
+                                     verdict, " ".join((why or "-").split())[:300])
+    try:
+        with open(path, "a", encoding="utf-8", newline="\n") as f:
+            f.write(line)
+    except OSError:
+        pass
 
 
 MAX_BASE_COMMITS = 40  # a --base with more commits above it is refused: a lane has a handful, so the sha is wrong
@@ -722,6 +748,7 @@ def main():
         if not os.path.exists(a.review):
             sys.exit("brief-gen: review file not found: %s" % a.review)
     fx = lane_facts(a.token)
+    guard = None  # the run check's verdict, logged once the brief is on disk
     if not a.no_git:
         try:
             fx = git_facts(fx, a.base.strip() if a.base else None)
@@ -733,7 +760,10 @@ def main():
             sys.exit("brief-gen: refused, %s exists: a review of this round already wrote it; a review of round N "
                      "takes --delta N, and --force-review writes over it" % deliverable)
         why = None if a.no_git else red_run(fx["wt"])
+        if not a.no_git and CFG["run_verdict_line"]:
+            guard = ("allowed", why) if why else ("green", None)
         if why and not a.allow_red_run:
+            guard_log(a.token, "refused", why)
             sys.exit("brief-gen: refused, %s; a review reads a finished green run: fix the red, wait for the run or run "
                      "the tests again, or pass --allow-red-run to write the brief on purpose" % why)
         if why:
@@ -755,6 +785,8 @@ def main():
     os.makedirs(folder, exist_ok=True)  # the default path: a fresh evidence root has no briefs folder yet
     with open(out, "w", encoding="utf-8", newline="\n") as f:
         f.write(body)
+    if guard:
+        guard_log(a.token, *guard)
     sys.stdout.write(body)
     print("brief-gen wrote %s (%d chars, %d placeholders)" % (out.replace("\\", "/"), len(body), body.count("<<")))
     return 0
