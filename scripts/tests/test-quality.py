@@ -779,12 +779,12 @@ class LandingLanesCase(unittest.TestCase):
         self.git("checkout", "-q", "-b", "train")
         self.lane_branch("lanea", ["test(x): pin the refusal, red", "fix(x): refuse the empty name"])
         self.lane_branch("laneb", ["feat(y): a new door", "fix(y): the notes of the review"])
-        self.lane_branch("lanec", ["test(z): the census records the chip", "docs(z): say why"])
+        self.lane_branch("lanec", ["test(z): the sample records the row", "docs(z): say why"])
         self.git("checkout", "-q", "main")
         self.git("merge", "--ff-only", "-q", "train")
         train_tip = self.git("rev-parse", "HEAD")
-        self.commit("test(app): the census re-record")
-        straight_tip = self.commit("fix(app): the chip census follows the file")
+        self.commit("test(app): re-record a fixture")
+        straight_tip = self.commit("fix(app): the fixture follows its file")
         entries = [{"sha": straight_tip, "prev": train_tip}, {"sha": train_tip, "prev": base},
                    {"sha": base, "prev": None}]
         self.ld.fill_landing_lanes(self.repo, entries)
@@ -813,7 +813,7 @@ class LandingLanesCase(unittest.TestCase):
         self.git("merge", "--ff-only", "-q", "train")
         now = datetime.now()
         features, _others, source = self.ld.read_merges(self.repo, now - timedelta(hours=1),
-                                                        now + timedelta(hours=1), None)
+                                                        now + timedelta(hours=1), None, branch="main")
         self.assertTrue(source.startswith("reflog main"), source)
         self.assertEqual(len(features), 1)
         self.assertEqual(sorted(l["fix"] for l in features[0]["lanes"]), [False, True])
