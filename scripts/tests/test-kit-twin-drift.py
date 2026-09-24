@@ -234,6 +234,35 @@ def main():
         return rc == 0 and row_numbers(out)[0] == 0
     check("a file the template holds pairs by folder and name, never by name alone", template_name_alone_never_pairs)
 
+    def underscore_pairs_with_dash(root):
+        # the kit names tests with dashes (test-quality.py), a machine may keep underscores (test_quality.py);
+        # they read as "no twin" before. An exact name still wins over the dashed one.
+        kit = make_kit(root)
+        put(os.path.join(kit, "scripts", "tests", "test-uq.py"), "kit line\n")
+        put(os.path.join(kit, "scripts", "tests", "test_ex.py"), "kit exact\n")
+        put(os.path.join(kit, "scripts", "tests", "test-ex.py"), "kit dashed\n")
+        commit(kit, 2 * DAY)
+        put(os.path.join(root, "live", "tools", "tests", "test_uq.py"), "live line\n", age=DAY // 2)
+        put(os.path.join(root, "live", "tools", "tests", "test_ex.py"), "live exact\n", age=DAY // 2)
+        rc, out, _ = run(root, kit, ["--row"])
+        rc2, table, _ = run(root, kit, [])
+        # a waived name pairs by its exact name only: test_wv.py beside a kit test-wv.py
+        wv = os.path.join(root, "live", "tools", "tests", "test_wv.py")
+        put(wv, "live runner\n", age=DAY // 2)
+        put(os.path.join(kit, "scripts", "tests", "test-wv.py"), "kit suite\n")
+        commit(kit, 2 * DAY)
+        waivers = os.path.join(root, "waivers.txt")
+        put(waivers, "test_wv.py  a runner of the kit suite, private by design\n")
+        rc3, out3, _ = run(root, kit, ["--row"], waivers=waivers)
+        rc4, table4, _ = run(root, kit, [], waivers=waivers)
+        rc5, line5, err5 = run(root, kit, ["--carry-line", wv, "probe"], waivers=waivers)  # the same pairing
+        return (rc == 0 and row_numbers(out) == (2, 0, 0) and rc2 == 0 and "scripts/tests/test-uq.py" in table
+                and "scripts/tests/test_ex.py" in table and "scripts/tests/test-ex.py" not in table
+                and rc3 == 0 and row_numbers(out3) == (2, 0, 0) and rc4 == 0 and "test-wv.py" not in table4
+                and "test_wv.py" not in table4 and rc5 == 2 and line5 == "" and "has no kit twin" in err5)
+    check("an underscore in a live name pairs with a dash in the kit's; an exact name wins the tie; a waived name pairs "
+          "only by its exact name, in the reading and in --carry-line", underscore_pairs_with_dash)
+
     def default_kit_and_floor(root):
         kit = world(root)
         copy = os.path.join(kit, "scripts", "kit-twin-drift.py")

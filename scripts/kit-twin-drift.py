@@ -8,8 +8,9 @@ is changed where it runs and never brought back here is lost to every other proj
 twice a day from a scheduled task (automation) and names each file that has to travel (quality). Not served: tokens.
 
 Pairing. A live file pairs with a tracked kit file under claude/, scripts/, herdr/, install/ or project-template/ of
-the same basename. When one kit file has that basename it pairs, except that a seat or agent twin pairs only with a
-live folder of the same name. When several kit files share it (run-tests.py, SKILL.md, analyst.md), the live file
+the same basename, an underscore read as a dash (base_key), except that a basename the waivers file lists pairs
+by its exact name only. When one kit file has that basename it pairs, except that a seat or agent twin pairs only
+with a live folder of the same name. When several kit files share it (run-tests.py, SKILL.md, analyst.md), the live file
 pairs only with the one whose path shares the longest tail with the live path, at least its folder and name; a tie
 pairs none, except that a project-template/ file never ties with a kit file outside the template: the template
 copies some kit-home files (project-template/scripts/hooks/tests/run-tests.py beside claude/hooks/tests/run-tests.py)
@@ -190,15 +191,22 @@ def carried():
     return out
 
 
+def base_key(name):
+    """The pairing key of a basename: an underscore reads as a dash, since the kit names its tests with dashes
+    (test-quality.py) where a machine may keep test_quality.py. An exact name still wins a tie: pair() scores the
+    longest equal path tail, and the dashed name ends that tail at 0."""
+    return name.replace("_", "-")
+
+
 def kit_index():
-    """{basename: [tracked kit paths under the tool roots]}, or None when the kit is not a checkout."""
+    """{pairing key: [tracked kit paths under the tool roots]}, or None when the kit is not a checkout."""
     listed = git("ls-files")
     if listed is None:
         return None
     by_base = {}
     for t in listed.splitlines():
         if t.startswith(TRACKED):
-            by_base.setdefault(os.path.basename(t), []).append(t)
+            by_base.setdefault(base_key(os.path.basename(t)), []).append(t)
     return by_base
 
 
@@ -209,6 +217,16 @@ def first_commit():
     return min(stamps) if stamps else None
 
 
+def twin_of(f, by_base, waived):
+    """The kit twin of a live file, or None; one lookup for the reading and --carry-line. A waived basename pairs by
+    its exact name only, so a machine file the waivers list never pairs with a kit file of a similar name."""
+    base = os.path.basename(f)
+    cands = by_base.get(base_key(base))
+    if cands and base in waived:
+        cands = [t for t in cands if os.path.basename(t) == base]
+    return pair(f, cands) if cands else None
+
+
 def reading(now, since, live):
     last = git("log", "-1", "--format=%ct")
     if not last or not last.strip():
@@ -217,9 +235,9 @@ def reading(now, since, live):
     by_base = kit_index() or {}
     rows, paired, carry, kept = [], set(), carried(), 0
     files = live_files(live)  # one walk; a file gone before its mtime is read is skipped, never a crash
+    waived = waivers()
     for f, flat in files:
-        cands = by_base.get(os.path.basename(f))
-        t = pair(f, cands) if cands else None
+        t = twin_of(f, by_base, waived)
         if t is None:
             continue
         paired.add(f)
@@ -234,11 +252,10 @@ def reading(now, since, live):
             kept += 1  # judged for these exact bytes; a later change trails again
             continue
         rows.append({"twin": t, "live": f, "ct": ct, "mt": mt, "owed": now - mt > OWED_AFTER, "lines": n})
-    waived = waivers()
     orphans = []
     for f, flat in files:
         base = os.path.basename(f)
-        if (not flat or base in by_base or base in waived or not base.endswith(TOOL_EXT) or f in paired
+        if (not flat or base_key(base) in by_base or base in waived or not base.endswith(TOOL_EXT) or f in paired
                 or (mtime(f) or 0) <= since):
             continue
         if "/briefs/" in f and base != TEMPLATE:
@@ -284,8 +301,7 @@ def carry_line(path, reason, live):
     if by_base is None:
         print("kit-twin-drift: %s is not a git checkout" % KIT, file=sys.stderr)
         return 3
-    cands = by_base.get(os.path.basename(found[0]))
-    twin = pair(found[0], cands) if cands else None
+    twin = twin_of(found[0], by_base, waivers())
     if twin is None:
         print("kit-twin-drift: %s has no kit twin, so there is nothing to carry" % path, file=sys.stderr)
         return 2
