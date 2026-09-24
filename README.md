@@ -51,7 +51,10 @@ claude/                     -> installs into ~/.claude
                             under tools/tests/, run with
                             python claude/tools/tests/test-xmlframe.py
 project-template/           -> copy into each project
-  CLAUDE.md                 portable working rules (voice, persona, git, TDD, evidence, pipeline)
+  AGENTS.md                 portable working rules for every agent (voice, persona, git, TDD,
+                            evidence, pipeline, learnings), in sections scripts/agents-md.py keeps
+  CLAUDE.md                 @AGENTS.md plus what is Claude Code's own: skills, context economy,
+                            memory, the compaction summary
   CLAUDE.project.md         the active profile to fill per project
   profiles/                 examples: azure-devops-dotnet, jira-git, plain-git, personal-notes
   .claude/settings.local.json   project hook wiring (branch hooks)
@@ -169,6 +172,7 @@ an account out.
 |---|---|
 | `INSTALL.md` | full setup, another machine, Herdr, the global hotkey |
 | `docs/ADOPTION.md` | adopting the kit in a repository that already has rules: what it writes, what it never touches, how to keep it local, how to roll it back |
+| `docs/AGENTS-SUPPORT.md` | what the kit gives each coding agent (Claude Code, pi): the only place that claims support |
 | `docs/EVIDENCE.md` | where evidence lives (beside the repo, not in it), the spec grammar, and the resolver |
 | `docs/ACCOUNTS.md` | several Claude Code accounts, shortcuts, and the traps |
 | `docs/SEATS.md` | seats: the chair a long-lived session holds, how it is launched and resumed, and what the hooks print |
