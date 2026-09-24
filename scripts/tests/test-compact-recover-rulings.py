@@ -116,6 +116,9 @@ class RulingsBlockCase(unittest.TestCase):
         # the exact outputs below stay the rulings alone. The asks have their own suite,
         # test-compact-recover-asks.py.
         env["CLAUDE_DECISIONS_GLOB"] = self.tmp + "/no-decisions-*.md"
+        # A pulse script that is not a file, so a hook that prints a pulse block (a machine may wire one after
+        # the asks) prints none here either.
+        env["CLAUDE_PULSE_PY"] = self.tmp + "/no-pulse.py"
         for name in ("CLAUDE_BRIEFS_DIR", "CLAUDE_LANDINGS_FILE", "CLAUDE_ROLE",
                      "CLAUDE_CODE_AUTO_COMPACT_WINDOW"):
             env.pop(name, None)
