@@ -622,6 +622,33 @@ if (Test-Path $ktdPy) {
     Write-Log 'kit | kit-twin-drift.py not found, skipped'
 }
 
+# 3g. the pulse: which adopted mechanisms of pulse.md are silent, dark or matching nothing, and which warnings of
+# this log stand or recur, with a key per item that a decision row cites. It runs after the steps whose warnings it
+# reads, so this run's count. Read-only, no agent, under a second; its lines start with "pulse |", never "reports |"
+# or "meters |", so it never reads its own output back as a warning. Exit 1 means an input was missing or a register
+# line malformed, and the block names it. The log it reads is this run's own, handed over as PULSE_LOG.
+$toolsDir = Join-Path (Split-Path -Parent $scriptDir) 'claude\tools'
+$env:PULSE_LOG = $log
+$pulsePy = Join-Path $toolsDir 'pulse.py'
+if (Test-Path $pulsePy) {
+    $pulse = Invoke-Step -Name 'pulse' -ArgLine ('"{0}"' -f $pulsePy) -TimeoutMs 120000
+    Write-Log "pulse.py exit code $($pulse.Code)"
+} else {
+    Write-Log "pulse | pulse.py not found, skipped"
+}
+
+# 3h. the pulse's escalation: an item in both of the last two pulse runs, this run included, and cited by no decision
+# row goes into today's owner decisions file as one auto-class row with a 21:15 deadline, so it prints among the open
+# asks at the next session start. No agent, under a second; its lines start with "escalate |", which neither pulse.py
+# nor the escalation reads back. Exit 1 means an input could not be read or written, and its line says which.
+$escPy = Join-Path $toolsDir 'pulse-escalate.py'
+if (Test-Path $escPy) {
+    $esc = Invoke-Step -Name 'escalate' -ArgLine ('"{0}"' -f $escPy) -TimeoutMs 120000
+    Write-Log "pulse-escalate.py exit code $($esc.Code)"
+} else {
+    Write-Log "escalate | pulse-escalate.py not found, skipped"
+}
+
 # 4. retention, morning only, after the three steps
 if ($sweepDue) {
     Invoke-RetentionSweep
