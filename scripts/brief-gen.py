@@ -134,6 +134,9 @@ def load_config(path=None):
     if cfg["run_verdict_line"] and not os.path.basename(cfg["own_tests_done"].replace("\\", "/")).startswith("{tag}."):
         raise ConfigError("%s: run_verdict_line groups a run's files by the tag before the first dot, so the file name "
                           "of own_tests_done must start with {tag}." % path)
+    if cfg["run_verdict_line"] and "{tag}" in os.path.dirname(cfg["own_tests_done"].replace("\\", "/")):
+        raise ConfigError("%s: run_verdict_line reads one runs folder, so {tag} may appear only in the file name of "
+                          "own_tests_done, not in its folder" % path)
     for k in TEMPLATE_KEYS:  # a stray brace would otherwise fail at render time, after the facts were read
         if cfg[k]:
             try:
@@ -712,6 +715,8 @@ def main():
     except ConfigError as e:
         print("brief-gen: %s" % e, file=sys.stderr)
         return 2
+    if a.allow_red_run and not CFG["run_verdict_line"]:  # a flag that could change nothing is refused (review 0923m note 3)
+        ap.error("--allow-red-run needs run_verdict_line in the config: with no verdict line no run is read")
     if a.review:
         a.review = os.path.abspath(a.review).replace("\\", "/")
         if not os.path.exists(a.review):

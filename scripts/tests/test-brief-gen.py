@@ -583,10 +583,22 @@ def main():
             passed, body = rgen("rr", "--allow-red-run")
             bad_kind = subprocess.run([sys.executable, SCRIPT, "notes", "rr", "--review", os.path.join(tmp, "r.md"),
                                        "--allow-red-run"], capture_output=True, text=True, env=renv, timeout=60)
+            os.makedirs(os.path.join(wr, "build", "runs", "rr-lost.done"))  # a done file that cannot be read
+            with open(os.path.join(wr, "build", "runs", "rr-lost.log"), "w", encoding="utf-8") as f:
+                f.write("start\n")
+            os.utime(os.path.join(wr, "build", "runs", "rr-lost.log"), (now - 1850, now - 1850))
+            lost, _ = rgen("rr")
+            flag_misuse = [subprocess.run([sys.executable, SCRIPT, "review", "rr", "--no-git", "--allow-red-run"],
+                                          capture_output=True, text=True, env=renv, timeout=60),
+                           subprocess.run([sys.executable, SCRIPT, "review", "rr", "--allow-red-run", "--out",
+                                           os.path.join(tmp, "run-nocfg.md")], capture_output=True, text=True,
+                                          env=dict(os.environ, BRIEF_GEN_CONFIG=os.path.join(tmp, "e2e.json"),
+                                                   EVIDENCE_ROOT=ev), timeout=60)]
             errs = []
             for extra in ({"run_verdict_line": "  "}, {"run_verdict_line": "exitCodes=", "own_tests_done": None,
                                                         "own_tests_command": None},
-                          {"run_verdict_line": "exitCodes=", "own_tests_done": "{worktree_posix}/build/runs/done-{tag}.txt"}):
+                          {"run_verdict_line": "exitCodes=", "own_tests_done": "{worktree_posix}/build/runs/done-{tag}.txt"},
+                          {"run_verdict_line": "exitCodes=", "own_tests_done": "{worktree_posix}/build/{tag}/{tag}.done"}):
                 base = {"base_branch": "trunk", "own_tests_command": "bash run.sh {tag}",
                         "own_tests_done": "{worktree_posix}/build/runs/{tag}.done"}
                 base.update(extra)
@@ -598,9 +610,13 @@ def main():
                 errs.append(r.returncode == 2 and "run_verdict_line" in r.stderr and "Traceback" not in r.stderr)
             return (passed.returncode == 0 and body and "Written with --allow-red-run on purpose: the newest run on the "
                     "tip %s, rr-pre, is still running" % rr_head[:9] in body and "note, --allow-red-run" in passed.stderr
-                    and bad_kind.returncode == 2 and "--allow-red-run" in bad_kind.stderr and all(errs))
-        check("--allow-red-run writes the brief with the run named, only on a review; a blank run_verdict_line, one "
-              "with no own_tests_done, or a done file name not starting with {tag}. is a config error", allow_and_config)
+                    and bad_kind.returncode == 2 and "--allow-red-run" in bad_kind.stderr and all(errs)
+                    and lost.returncode == 1 and "rr-lost.done, cannot be read" in lost.stderr and "Traceback" not in lost.stderr
+                    and all(r.returncode == 2 and "--allow-red-run" in r.stderr for r in flag_misuse)
+                    and not os.path.exists(os.path.join(tmp, "run-nocfg.md")))
+        check("--allow-red-run writes the brief with the run named, only on a review with git and a run_verdict_line; an "
+              "unreadable done file is refused; a blank run_verdict_line, one with no own_tests_done, or a done path "
+              "whose file name does not start with {tag}. or whose folder holds {tag} is a config error", allow_and_config)
     finally:
         def unlock(fn, path, _exc):  # git writes read-only pack files
             try:
