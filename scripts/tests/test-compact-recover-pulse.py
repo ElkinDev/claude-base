@@ -117,6 +117,16 @@ def main():
             return all(outs)
         check("a missing script, an exit 2 and an empty output print no pulse and keep the rulings", missing_or_failing)
 
+        def fresh_install_no_register():
+            # review kit-twins-0924a r1 finding 1: the kit's own pulse.py, installed, with no register written
+            real = os.path.join(os.path.dirname(os.path.dirname(HERE)), "claude", "tools", "pulse.py")
+            envr = dict(base, CLAUDE_PULSE_PY=real, PULSE_REGISTER=os.path.join(tmp, "no-pulse.md"),
+                        PULSE_LOG=os.path.join(tmp, "no-nightly.log"))
+            return all("Pulse (python " not in run(hook, args, p, envr)[1] for args, p in ((["--rulings"], payload),
+                                                                                           ([], compact)))
+        check("a fresh install with the kit's pulse.py and no register prints no pulse at either entry",
+              fresh_install_no_register)
+
         def exit_one_prints():
             s1 = stub(tmp, "exit1", "import sys\nprint('pulse head')\nprint('pulse: cannot read the ledger log x "
                                     "[pulse:log-missing]')\nsys.exit(1)\n")

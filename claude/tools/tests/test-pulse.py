@@ -164,6 +164,16 @@ def main():
                     and [b.returncode for b in bad] == [2, 2, 2, 2] and all("Traceback" not in b.stderr for b in bad))
         check("a missing log or register still prints the block and exits 1 with its key; --max 1, a negative max, "
               "--hours 0 and a word are exit 2", missing_inputs_and_usage)
+
+        def if_set():
+            # review kit-twins-0924a r1 finding 1: the installer puts pulse.py on every machine, a register on none
+            env = setup(head, None)
+            gone = dict(env, PULSE_REGISTER=os.path.join(tmp, "no-register.md"))
+            quiet, loud = run(gone, "--if-set"), run(env, "--if-set")
+            return (quiet.returncode == 0 and quiet.stdout == "" and loud.returncode == 1
+                    and "[pulse:log-missing]" in loud.stdout and "CLAUDE_LEDGER_DIR" in loud.stdout)
+        check("--if-set prints nothing and exits 0 with no register; with one it prints as always, and a missing log "
+              "names CLAUDE_LEDGER_DIR", if_set)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("%d of %d OK" % (sum(results), len(results)))

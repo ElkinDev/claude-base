@@ -176,6 +176,9 @@ def main(argv):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--max", type=int, default=0, help="cut the block to this many lines (0: no cut)")
     ap.add_argument("--hours", type=float, default=24.0, help="the window for triggers and uses")
+    ap.add_argument("--if-set", action="store_true",
+                    help="print nothing and exit 0 when the register does not exist (a session start on a machine "
+                         "that never set up a pulse)")
     try:
         a = ap.parse_args(argv)
     except SystemExit as e:
@@ -183,6 +186,10 @@ def main(argv):
     if a.max < 0 or a.max == 1 or not a.hours > 0:
         print("pulse: --max takes 0 (no cut) or 2 or more, and --hours more than 0", file=sys.stderr)
         return 2
+    # The installer puts this script in ~/.claude/tools on every machine; one that never wrote a register must not
+    # see a register-missing line at every session start (review kit-twins-0924a r1 finding 1)
+    if a.if_set and not os.path.isfile(REGISTER):
+        return 0
     # ASCII only, anything else as a backslash escape: no code page kills the block, and the ledger step's reader
     # (Get-Content with the ANSI default) cannot garble what it logs (review plsl r1 finding 2)
     sys.stdout.reconfigure(encoding="ascii", errors="backslashreplace")
@@ -192,7 +199,10 @@ def main(argv):
     mitems, counts, problems = mechanisms(since, today)
     w = warnings()
     if w is None:
-        problems.append("pulse: cannot read the ledger log %s, warnings not read [pulse:log-missing]" % LOG)
+        # a session start runs this with no PULSE_LOG, so the log it finds is CLAUDE_LEDGER_DIR's or ~/.claude's; a
+        # ledger kept in the kit clone is found only when CLAUDE_LEDGER_DIR names it (review kit-twins-0924a r1 2)
+        problems.append("pulse: cannot read the ledger log %s (set CLAUDE_LEDGER_DIR to the folder the ledger writes), "
+                        "warnings not read [pulse:log-missing]" % LOG)
         witems, standing, recurring, texts, runs = [], 0, 0, 0, 0
     else:
         witems, standing, recurring, texts, runs = w

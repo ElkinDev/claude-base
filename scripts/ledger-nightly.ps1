@@ -626,11 +626,16 @@ if (Test-Path $ktdPy) {
 # this log stand or recur, with a key per item that a decision row cites. It runs after the steps whose warnings it
 # reads, so this run's count. Read-only, no agent, under a second; its lines start with "pulse |", never "reports |"
 # or "meters |", so it never reads its own output back as a warning. Exit 1 means an input was missing or a register
-# line malformed, and the block names it. The log it reads is this run's own, handed over as PULSE_LOG.
-$toolsDir = Join-Path (Split-Path -Parent $scriptDir) 'claude\tools'
-$env:PULSE_LOG = $log
+# line malformed, and the block names it. The log it reads is this run's own, handed over as PULSE_LOG for these two
+# steps only. The script is the installed copy the session-start hook runs (~/.claude/tools), so the two never
+# drift apart; a clone that was never installed falls back to its own claude/tools.
+$toolsDir = Join-Path $HOME '.claude\tools'
+if (-not (Test-Path (Join-Path $toolsDir 'pulse.py'))) {
+    $toolsDir = Join-Path (Split-Path -Parent $scriptDir) 'claude\tools'
+}
 $pulsePy = Join-Path $toolsDir 'pulse.py'
 if (Test-Path $pulsePy) {
+    $env:PULSE_LOG = $log
     $pulse = Invoke-Step -Name 'pulse' -ArgLine ('"{0}"' -f $pulsePy) -TimeoutMs 120000
     Write-Log "pulse.py exit code $($pulse.Code)"
 } else {
@@ -643,11 +648,13 @@ if (Test-Path $pulsePy) {
 # nor the escalation reads back. Exit 1 means an input could not be read or written, and its line says which.
 $escPy = Join-Path $toolsDir 'pulse-escalate.py'
 if (Test-Path $escPy) {
+    $env:PULSE_LOG = $log
     $esc = Invoke-Step -Name 'escalate' -ArgLine ('"{0}"' -f $escPy) -TimeoutMs 120000
     Write-Log "pulse-escalate.py exit code $($esc.Code)"
 } else {
     Write-Log "escalate | pulse-escalate.py not found, skipped"
 }
+Remove-Item Env:PULSE_LOG -ErrorAction SilentlyContinue
 
 # 4. retention, morning only, after the three steps
 if ($sweepDue) {

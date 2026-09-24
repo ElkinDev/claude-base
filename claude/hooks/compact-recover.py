@@ -290,8 +290,9 @@ def open_asks(data, cap=ASKS_CAP):
 # prints after the open asks. A session start has room for PULSE_MAX lines; a compaction output already runs close
 # to CAP, so there it is PULSE_COMPACT_MAX: the summary, the first item and the count of the rest. Either block is
 # also trimmed to the room its caller gives it, whole lines from the end, so it never pushes the output past CAP.
-# A subagent gets no pulse, as it gets no asks. A missing script prints nothing, so a machine that never set up a
-# pulse register sees no block. CLAUDE_PULSE_PY moves the script.
+# A subagent gets no pulse, as it gets no asks. A missing script prints nothing, and the script is run with
+# --if-set, so a machine that installed the kit and never wrote a pulse register sees no block either (review
+# kit-twins-0924a r1 finding 1). CLAUDE_PULSE_PY moves the script.
 PULSE_PY = os.path.join(os.path.expanduser("~"), ".claude", "tools", "pulse.py")
 PULSE_MAX = 10
 PULSE_COMPACT_MAX = 3
@@ -311,7 +312,7 @@ def pulse_block(data, max_lines=PULSE_MAX, room=CAP):
     try:
         if not os.path.isfile(script):
             return ""
-        run = subprocess.run([sys.executable, script, "--max", str(max_lines)], capture_output=True,
+        run = subprocess.run([sys.executable, script, "--max", str(max_lines), "--if-set"], capture_output=True,
                              timeout=PULSE_TIMEOUT, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
         if run.returncode not in (0, 1):  # 1 names a missing input or a malformed register line in the block
             return ""
