@@ -50,6 +50,12 @@ correct way with a concrete example.
 - When you ask the user a question, STOP and wait for the answer. Never assume it.
 - Propose alternatives with tradeoffs when relevant, and give a recommendation, not an exhaustive
   survey.
+- An `rm` names its target by a literal absolute path, a literal glob included
+  (`rm -f /c/work/queue/*-tag.ticket`). Claude Code 2.1.281 and later asks before an `rm` whose
+  path holds a variable that could be empty, and an unattended session denies it after about two
+  minutes. Spelling each variable `${VAR:?}` (`rm -f "${DIR:?}/${name:?}"`) passes only when the
+  variable is not set by a command substitution in the same command; one that is, such as
+  `f=$(ls dir | head -1)`, still asks and cannot be allowed by a rule, so spell that path literally.
 
 ## Deploy and status honesty
 Never say a change is "in", "live", or "in place" unless it is merged, passed the project's QA and

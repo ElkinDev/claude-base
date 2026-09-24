@@ -63,6 +63,16 @@ function New-AgedDir {
     if (-not (Test-Path -LiteralPath $Path)) { New-Item -ItemType Directory -Path $Path -Force | Out-Null }
 }
 
+# A file past 260 characters, written and stamped through the long-path prefix, the way a
+# scratchpad holding Kotlin build output carries it.
+function New-LongAgedFile {
+    param([string]$Path, [int]$Days, [int]$Size)
+    $long = '\\?\' + $Path
+    [IO.Directory]::CreateDirectory('\\?\' + (Split-Path -Parent $Path)) | Out-Null
+    [IO.File]::WriteAllText($long, ('x' * $Size), (New-Object Text.ASCIIEncoding))
+    [IO.File]::SetLastWriteTime($long, (Get-Date).AddDays(-$Days))
+}
+
 # Folder stamps are set last, because writing a file or creating a subfolder
 # touches the parent and would undo them.
 function Set-AgedDir {
@@ -239,9 +249,33 @@ try {
         -ProjectsRoot (Join-Path $base 'no-such-projects') -LogPath $log4
     Assert-Log $log4 'retention A scratchpads | root not found'
     Assert-Log $log4 'retention B subagents | root not found'
+
+    # ------------------------------------------------------------- long paths --
+    # 2026-09-24 08:06: three scratchpads holding Kotlin class files past 260 characters could
+    # not be removed, and a listing without the long-path prefix skips such files silently, so
+    # a pad could be dated by the part of it the sweep could see.
+    Write-Host "`r`nphase 5, files past 260 characters are seen, dated and removed"
+    $lroot = Join-Path $base 'long'
+    $lp = Join-Path (Join-Path $lroot 'scratch') 'C--Repo'
+    $deep = ('\segment-of-a-long-kotlin-build-path' * 8) + '\CredentialProviderBeginSignInController$resultReceiver$1.class'
+    # A11 old, its only file past the limit: the pad and its session go, no error
+    New-LongAgedFile ((Join-Path $lp 'sess-long\scratchpad') + $deep) 30 100
+    # A12 an old top file and a fresh file past the limit: the fresh one saves the pad
+    New-AgedFile (Join-Path $lp 'sess-longfresh\scratchpad\top.txt') 30 10
+    New-LongAgedFile ((Join-Path $lp 'sess-longfresh\scratchpad') + $deep) 1 10
+    foreach ($d in @('sess-long\scratchpad', 'sess-long', 'sess-longfresh\scratchpad', 'sess-longfresh')) {
+        Set-AgedDir (Join-Path $lp $d) 30
+    }
+    $log5 = Join-Path $base 'long.log'
+    & $target -RetentionOnly -ScratchRoot (Join-Path $lroot 'scratch') `
+        -ProjectsRoot (Join-Path $lroot 'no-projects') -LogPath $log5
+    Assert-Gone (Join-Path $lp 'sess-long') 'A11 an old pad whose file sits past 260 characters, and its session'
+    Assert-Kept (Join-Path $lp 'sess-longfresh\scratchpad\top.txt') 'A12 a pad whose only fresh file sits past 260 characters'
+    Assert-Log $log5 'deleted 1 scratchpads, 1 empty session folders, 1 files, 100 B, 0 errors'
 } finally {
     if (Test-Path -LiteralPath $base) {
-        Remove-Item -LiteralPath $base -Recurse -Force -ErrorAction SilentlyContinue
+        # the long-path form, since phase 5 leaves a file past 260 characters behind
+        Remove-Item -LiteralPath ('\\?\' + $base) -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 

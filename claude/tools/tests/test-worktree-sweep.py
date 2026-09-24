@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(os.path.dirname(HERE), "worktree-sweep.py")
@@ -44,6 +45,13 @@ def norm(path):
     return os.path.normcase(os.path.abspath(path))
 
 
+def own_long_path(path):
+    """The long-path form, written here and not borrowed from the script, so a fixture past
+    260 characters never depends on the code under test."""
+    full = os.path.abspath(path)
+    return "\\\\?\\" + full if os.name == "nt" else full
+
+
 def looks_like_path(token):
     return os.path.isabs(token) or "/" in token or "\\" in token
 
@@ -62,7 +70,8 @@ class WorktreeSweepTest(unittest.TestCase):
     def tearDown(self):
         # Only ever the temporary root of this test, never a path the script was pointed at.
         self.assertTrue(norm(self.root).startswith(norm(tempfile.gettempdir())))
-        shutil.rmtree(self.root, ignore_errors=True)
+        # the long-path form, since a test leaves a file past 260 characters when git cannot
+        shutil.rmtree(own_long_path(self.root), ignore_errors=True)
 
     # -- repository fixtures ------------------------------------------------------------
 
@@ -155,13 +164,33 @@ class WorktreeSweepTest(unittest.TestCase):
         self.assertTrue(tip, "no tip for " + path)
         return os.path.basename(os.path.normpath(path)) + "--" + tip
 
-    def archived(self, leaf, *parts):
-        return os.path.join(self.archive_root(), leaf, *parts)
+    def zip_path(self, leaf):
+        """The one zip the script writes for this worktree: `<leaf>.zip`."""
+        return os.path.join(self.archive_root(), leaf + ".zip")
 
-    def write_marker(self, leaf, source):
-        os.makedirs(os.path.join(self.archive_root(), leaf), exist_ok=True)
-        with open(self.archived(leaf, ".source"), "w", encoding="utf-8") as handle:
-            handle.write(source + "\n")
+    def zip_names(self, leaf):
+        with zipfile.ZipFile(self.zip_path(leaf)) as archive:
+            return sorted(archive.namelist())
+
+    def zip_has(self, leaf, *parts):
+        return "/".join(parts) in self.zip_names(leaf)
+
+    def zip_text(self, leaf, *parts):
+        with zipfile.ZipFile(self.zip_path(leaf)) as archive:
+            return archive.read("/".join(parts)).decode("utf-8")
+
+    def zip_children(self, leaf, *parts):
+        """Names one level under a folder of the zip, the way os.listdir reads a folder."""
+        prefix = "/".join(parts) + "/"
+        return sorted({n[len(prefix):].split("/")[0] for n in self.zip_names(leaf) if n.startswith(prefix)})
+
+    def write_marker(self, leaf, source, extra=()):
+        """A zip left by an earlier run: its `.source` entry and any extra entries named."""
+        os.makedirs(self.archive_root(), exist_ok=True)
+        with zipfile.ZipFile(self.zip_path(leaf), "w") as archive:
+            archive.writestr(".source", source + "\n")
+            for name in extra:
+                archive.writestr(name, FILE_BODY)
 
     def write_file(self, path, body):
         """One file with a body of this test's choosing, so two archives can be told apart."""
@@ -442,10 +471,10 @@ class WorktreeSweepTest(unittest.TestCase):
             ("app", "build", "reports", "lint.html"),
             ("app", "build", "test-results", "testDebug", "TEST-a.xml"),
         ):
-            full = self.archived(leaf, *relative)
-            self.assertTrue(os.path.isfile(full), full + " missing:\n" + out)
-        with open(self.archived(leaf, ".source"), "r", encoding="utf-8") as handle:
-            self.assertEqual(norm(path), norm(handle.read().strip()))
+            self.assertTrue(self.zip_has(leaf, *relative), "/".join(relative) + " missing:\n" + out)
+        self.assertEqual(norm(path), norm(self.zip_text(leaf, ".source").strip()))
+        # one zip per worktree and nothing else in the archive folder, no .part left behind
+        self.assertEqual([leaf + ".zip"], sorted(os.listdir(self.archive_root())))
 
     def test_the_archive_holds_the_same_names_after_a_removal(self):
         self.exclude_build()
@@ -460,9 +489,7 @@ class WorktreeSweepTest(unittest.TestCase):
         self.assertEqual(0, code, out)
         self.assertIn("SWEEP applied: removed=1 stopped=0 left=0 skipped=0", out)
         self.assertFalse(os.path.isdir(path))
-        archived = self.archived(leaf, "build", "lockrun")
-        self.assertTrue(os.path.isdir(archived), out)
-        self.assertEqual(sorted(names), sorted(os.listdir(archived)))
+        self.assertEqual(sorted(names), self.zip_children(leaf, "build", "lockrun"), out)
 
     def test_a_test_results_nested_under_a_feature_module_is_found_and_archived(self):
         self.exclude_build()
@@ -474,10 +501,10 @@ class WorktreeSweepTest(unittest.TestCase):
         self.assertEqual(0, code, out)
         self.assertTrue(self.line_for(out, "ARCHIVED").endswith(" files=2 bytes=8"), out)
         for name in ("TEST-money.xml", "TEST-more.xml"):
-            full = self.archived(
-                leaf, "feature", "money", "build", "test-results", "testFamily", name
+            self.assertTrue(
+                self.zip_has(leaf, "feature", "money", "build", "test-results", "testFamily", name),
+                name + " missing:\n" + out,
             )
-            self.assertTrue(os.path.isfile(full), full + " missing:\n" + out)
 
     def test_the_generated_children_of_a_build_directory_are_never_archived(self):
         self.exclude_build()
@@ -489,7 +516,7 @@ class WorktreeSweepTest(unittest.TestCase):
         code, out = self.sweep("--apply")
         self.assertEqual(0, code, out)
         self.assertTrue(self.line_for(out, "ARCHIVED").endswith(" files=1 bytes=4"), out)
-        self.assertEqual(["reports"], sorted(os.listdir(self.archived(leaf, "app", "build"))))
+        self.assertEqual(["reports"], self.zip_children(leaf, "app", "build"))
 
     def test_a_link_inside_a_subtree_is_never_followed_into_the_archive(self):
         self.exclude_build()
@@ -504,52 +531,83 @@ class WorktreeSweepTest(unittest.TestCase):
         code, out = self.sweep("--apply")
         self.assertEqual(0, code, out)
         self.assertTrue(self.line_for(out, "ARCHIVED").endswith(" files=2 bytes=8"), out)
-        self.assertEqual(
-            ["x.done", "x.log"],
-            sorted(os.listdir(self.archived(leaf, "build", "lockrun"))),
-        )
-        self.assertFalse(
-            os.path.isdir(self.archived(leaf, "build", "lockrun", "linked")), out
-        )
+        self.assertEqual(["x.done", "x.log"], self.zip_children(leaf, "build", "lockrun"))
+        self.assertFalse(any("linked" in name for name in self.zip_names(leaf)), out)
         # And the removal that followed did not walk through the link either.
         self.assertEqual(
             ["secret-one.txt", "secret-two.txt"], sorted(os.listdir(outside)), out
         )
 
-    def test_an_archive_leaf_written_for_another_worktree_stops_the_removal(self):
+    def test_a_zip_of_another_worktree_at_the_same_name_is_kept_and_the_next_name_written(self):
         self.exclude_build()
         path = self.worktree("wt-landed", "landed", self.commits[0])
         self.lockrun_files(path, ("x.done", "x.log"))
-        self.write_marker(
-            self.leaf_name(path), os.path.join(self.root, "elsewhere", "wt-landed")
-        )
+        leaf = self.leaf_name(path)
+        elsewhere = os.path.join(self.root, "elsewhere", "wt-landed")
+        self.write_marker(leaf, elsewhere, extra=("build/lockrun/theirs.log",))
         code, out = self.sweep("--apply")
-        self.assertEqual(2, code, out)
-        stopped = self.line_for(out, "STOPPED")
-        self.assert_names(stopped, path)
-        self.assertIn("archive not verified", stopped)
-        self.assertIn("already holds the archive of", stopped)
-        self.assertNotIn("REMOVED", out)
-        self.assertTrue(os.path.isdir(path))
-        self.assertIn("SWEEP applied: removed=0 stopped=1 left=1 skipped=0", out)
+        self.assertEqual(0, code, out)
+        self.assert_names(self.line_for(out, "REMOVED"), path)
+        self.assertEqual(["theirs.log"], self.zip_children(leaf, "build", "lockrun"))
+        self.assertEqual(elsewhere, self.zip_text(leaf, ".source").strip())
+        self.assertEqual(["x.done", "x.log"], self.zip_children(leaf + "-2", "build", "lockrun"))
+        self.assertEqual(os.path.abspath(path), self.zip_text(leaf + "-2", ".source").strip())
+
+    def test_a_zip_left_by_an_earlier_run_of_the_same_worktree_is_kept_whole(self):
+        # A run that archived and then skipped (a gate started) leaves its zip. The next run
+        # never writes over it: the entry the source no longer holds stays in the first zip,
+        # and the second zip holds the tree as it is now.
+        self.exclude_build()
+        path = self.worktree("wt-landed", "landed", self.commits[0])
+        self.lockrun_files(path, ("x.done", "x.log"))
+        leaf = self.leaf_name(path)
+        self.write_marker(leaf, path, extra=("build/lockrun/ghost.log",))
+        code, out = self.sweep("--apply")
+        self.assertEqual(0, code, out)
+        self.assert_names(self.line_for(out, "REMOVED"), path)
+        self.assertEqual(["ghost.log"], self.zip_children(leaf, "build", "lockrun"))
+        self.assertEqual(["x.done", "x.log"], self.zip_children(leaf + "-2", "build", "lockrun"))
 
     def test_an_archive_that_does_not_count_the_same_as_its_source_stops_the_removal(self):
+        # A zip that misses a file of its source must never let the removal run: the writer is
+        # handed one file fewer than the independent count walks.
         self.exclude_build()
         path = self.worktree("wt-landed", "landed", self.commits[0])
         self.lockrun_files(path, ("x.done", "x.log"))
-        # A leaf of the same name left behind by an earlier run: the copy succeeds, the
-        # counts cannot agree, and the worktree must survive.
-        leaf = self.leaf_name(path)
-        self.write_marker(leaf, path)
-        self.make_files(self.archived(leaf, "build", "lockrun"), ("ghost.log",))
-        code, out = self.sweep("--apply")
+        real = SWEEP.list_files
+        SWEEP.list_files = lambda worktree, relative: real(worktree, relative)[:-1]
+        try:
+            code, out = self.sweep_in_process("--apply")
+        finally:
+            SWEEP.list_files = real
         self.assertEqual(2, code, out)
         stopped = self.line_for(out, "STOPPED")
         self.assert_names(stopped, path)
         self.assertIn("archive not verified", stopped)
-        self.assertIn("source files=2 bytes=8, archive files=3 bytes=12", stopped)
+        self.assertIn("source files=2 bytes=8, archive files=1 bytes=4", stopped)
         self.assertNotIn("REMOVED", out)
         self.assertTrue(os.path.isdir(path))
+        # the unproved zip stays a .part, never a zip that looks complete; the sweep deletes
+        # nothing itself, so the next attempt of this worktree writes that .part again
+        self.assertFalse(os.path.exists(self.zip_path(self.leaf_name(path))), out)
+        self.assertTrue(os.path.exists(self.zip_path(self.leaf_name(path)) + ".part"), out)
+
+    def test_a_report_nested_past_the_old_copy_limit_is_zipped_and_the_worktree_removed(self):
+        # The loose copy stopped when its destination passed 240 characters (54 worktrees on
+        # 2026-09-24); a zip entry has no such limit.
+        self.exclude_build()
+        path = self.worktree("wt-landed", "landed", self.commits[0])
+        deep = os.path.join(path, "app", "build", "reports", "tests", "testDebugUnitTest", "classes")
+        name = "com.example.app.feature.capture.domain.suggestion." + "Long" * 20 + ".html"
+        self.make_files(deep, (name,))
+        leaf = self.leaf_name(path)
+        old_dest = os.path.join(self.archive_root(), leaf, os.path.relpath(os.path.join(deep, name), path))
+        self.assertGreater(len(old_dest), SWEEP.MAX_DEST_PATH, "the fixture must pass the old limit")
+        code, out = self.sweep("--apply")
+        self.assertEqual(0, code, out)
+        self.assert_names(self.line_for(out, "REMOVED"), path)
+        self.assertTrue(self.zip_has(leaf, "app", "build", "reports", "tests", "testDebugUnitTest",
+                                     "classes", name), out)
 
     def test_the_dry_run_creates_no_archive_and_prints_the_totals_it_would_write(self):
         self.exclude_build()
@@ -560,7 +618,7 @@ class WorktreeSweepTest(unittest.TestCase):
         self.assertEqual(0, code, out)
         line = self.line_for(out, "WOULD-ARCHIVE")
         self.assert_names(line, path)
-        self.assertIn(" leaf=" + self.leaf_name(path) + " ", line)
+        self.assertIn(" leaf=" + self.leaf_name(path) + ".zip ", line)
         self.assertTrue(line.endswith(" files=3 bytes=12"), line)
         self.assertTrue(
             out.rstrip().splitlines()[-1].endswith("archive-files=3 archive-bytes=12"),
@@ -594,7 +652,7 @@ class WorktreeSweepTest(unittest.TestCase):
         self.assertIn("SWEEP applied: removed=0 stopped=0 left=1 skipped=1", out)
         self.assertTrue(os.path.isdir(path))
         # The archive already written stays where it is: it costs nothing and proves nothing wrong.
-        self.assertTrue(os.path.isfile(self.archived(leaf, "build", "lockrun", "x.log")), out)
+        self.assertTrue(self.zip_has(leaf, "build", "lockrun", "x.log"), out)
 
     def test_a_run_started_during_the_archive_stops_that_worktrees_removal(self):
         self.exclude_build()
@@ -615,7 +673,7 @@ class WorktreeSweepTest(unittest.TestCase):
         self.assertNotIn("REMOVED", out)
         self.assertIn("SWEEP applied: removed=0 stopped=0 left=1 skipped=1", out)
         self.assertTrue(os.path.isdir(path))
-        self.assertTrue(os.path.isfile(self.archived(leaf, "build", "lockrun", "x.log")), out)
+        self.assertTrue(self.zip_has(leaf, "build", "lockrun", "x.log"), out)
 
     def test_the_evidence_root_defaults_to_the_env_then_beside_the_repository(self):
         saved = os.environ.pop("EVIDENCE_ROOT", None)
@@ -646,7 +704,7 @@ class WorktreeSweepTest(unittest.TestCase):
             [sys.executable, SCRIPT] + argv, capture_output=True, text=True, timeout=300, env=env
         )
         self.assertEqual(0, done.returncode, done.stdout)
-        self.assertTrue(os.path.isfile(self.archived(leaf, "build", "lockrun", "x.log")), done.stdout)
+        self.assertTrue(self.zip_has(leaf, "build", "lockrun", "x.log"), done.stdout)
         self.assertFalse(os.path.isdir(os.path.join(self.root, "nest", "evidence")), done.stdout)
         self.assertTrue(os.path.isdir(anchor))
 
@@ -665,7 +723,7 @@ class WorktreeSweepTest(unittest.TestCase):
         self.assertEqual(0, done.returncode, done.stdout)
         self.assertIn("REMOVED", done.stdout)
         self.assertFalse(os.path.isdir(path))
-        self.assertTrue(os.path.isfile(self.archived(leaf, "build", "lockrun", "x.log")), done.stdout)
+        self.assertTrue(self.zip_has(leaf, "build", "lockrun", "x.log"), done.stdout)
 
     def test_apply_exits_three_while_the_bench_mutex_alone_is_held(self):
         # The refusal claims every `*.lock.d`, not only gradle's: the bench mutex is one too.
@@ -699,16 +757,187 @@ class WorktreeSweepTest(unittest.TestCase):
         self.assert_names(self.line_for(again, "REMOVED"), second)
 
         self.assertEqual(
-            sorted([first_leaf, second_leaf]),
+            sorted([first_leaf + ".zip", second_leaf + ".zip"]),
             sorted(os.listdir(self.archive_root())),
             again,
         )
+        self.assertEqual("abcd", self.zip_text(first_leaf, "build", "lockrun", "x.log"))
+        self.assertEqual("wxyz", self.zip_text(second_leaf, "build", "lockrun", "x.log"))
+
+
+    # -- round 6: one pin per guard of the zip that a mutant showed unpinned -------------
+
+    def test_a_zip_entry_that_fails_its_crc_stops_the_removal(self):
+        self.exclude_build()
+        path = self.worktree("wt-landed", "landed", self.commits[0])
+        self.lockrun_files(path, ("x.done", "x.log"))
+        real = zipfile.ZipFile.testzip
+        zipfile.ZipFile.testzip = lambda archive: "build/lockrun/x.log"
+        try:
+            code, out = self.sweep_in_process("--apply")
+        finally:
+            zipfile.ZipFile.testzip = real
+        self.assertEqual(2, code, out)
+        stopped = self.line_for(out, "STOPPED")
+        self.assert_names(stopped, path)
+        self.assertIn("the zip entry build/lockrun/x.log fails its CRC", stopped)
+        self.assertNotIn("REMOVED", out)
+        self.assertTrue(os.path.isdir(path))
+        self.assertFalse(os.path.exists(self.zip_path(self.leaf_name(path))), out)
+
+    def test_a_file_at_the_zip_name_that_is_no_zip_is_kept_and_the_next_name_written(self):
+        self.exclude_build()
+        path = self.worktree("wt-landed", "landed", self.commits[0])
+        self.lockrun_files(path, ("x.done", "x.log"))
+        leaf = self.leaf_name(path)
+        target = self.zip_path(leaf)
+        self.write_file(target, "not a zip")
+        code, out = self.sweep("--apply")
+        self.assertEqual(0, code, out)
+        self.assert_names(self.line_for(out, "REMOVED"), path)
+        self.assertEqual("not a zip", self.read_file(target))
+        self.assertEqual(["x.done", "x.log"], self.zip_children(leaf + "-2", "build", "lockrun"))
+
+    def test_a_source_file_past_260_characters_is_zipped(self):
+        # The copy's old stop was the destination; a zip entry has none, but the source must
+        # still be read through the long-path prefix or the walk skips it without a word.
+        self.exclude_build()
+        self.git("-C", self.repo, "config", "core.longpaths", "true")
+        path = self.worktree("wt-landed", "landed", self.commits[0])
+        self.lockrun_files(path, ("x.done", "x.log"))
+        parts = ["segment-of-a-long-report-path-{:02d}".format(i) for i in range(8)]
+        deep = os.path.join(path, "build", "reports", *parts)
+        name = "Deep$1.html"
+        self.assertGreater(len(os.path.join(deep, name)), 260, "the fixture must pass 260")
+        os.makedirs(own_long_path(deep))
+        with open(own_long_path(os.path.join(deep, name)), "w", encoding="utf-8") as handle:
+            handle.write(FILE_BODY)
+        leaf = self.leaf_name(path)
+        code, out = self.sweep("--apply")
+        self.assertTrue(self.line_for(out, "ARCHIVED").endswith(" files=3 bytes=12"), out)
+        self.assertTrue(self.zip_has(leaf, "build", "reports", *(parts + [name])), out)
+
+    def test_an_archive_path_past_the_bound_stops_before_anything_is_written(self):
+        self.exclude_build()
+        path = self.worktree("wt-landed", "landed", self.commits[0])
+        self.lockrun_files(path, ("x.done", "x.log"))
+        leaf = self.leaf_name(path) + ".zip"
+        tail = len(os.path.join(SWEEP.ARCHIVE_LEAF, leaf)) + 1
+        pad = SWEEP.MAX_DEST_PATH + 5 - tail - len(self.root) - 1
+        evidence = os.path.join(self.root, "e" * pad)
+        self.assertLess(len(os.path.join(evidence, SWEEP.ARCHIVE_LEAF, leaf)), 255)
+        code, out = self.sweep("--apply", evidence=evidence)
+        self.assertEqual(2, code, out)
+        stopped = self.line_for(out, "STOPPED")
+        self.assertIn("archive path longer than {} characters".format(SWEEP.MAX_DEST_PATH), stopped)
+        self.assertNotIn("REMOVED", out)
+        self.assertTrue(os.path.isdir(path))
+        self.assertFalse(os.path.exists(evidence), out)
+
+    def test_a_file_written_after_the_plan_stops_the_removal(self):
+        # A run that writes into the subtree after the plan was counted: the zip and the count
+        # after it agree with each other, and only the plan shows the source moved.
+        self.exclude_build()
+        path = self.worktree("wt-landed", "landed", self.commits[0])
+        lockrun = self.lockrun_files(path, ("x.done", "x.log"))
+        real = SWEEP.list_files
+
+        def a_file_lands(worktree, relative):
+            self.write_file(os.path.join(lockrun, "late.txt"), FILE_BODY)
+            return real(worktree, relative)
+
+        SWEEP.list_files = a_file_lands
+        try:
+            code, out = self.sweep_in_process("--apply")
+        finally:
+            SWEEP.list_files = real
+        self.assertEqual(2, code, out)
+        stopped = self.line_for(out, "STOPPED")
+        self.assertIn("the source changed during the zip: planned files=2 bytes=8", stopped)
+        self.assertNotIn("REMOVED", out)
+        self.assertTrue(os.path.isdir(path))
+
+    def test_a_file_the_walk_reads_as_a_link_is_left_out_of_the_zip(self):
+        # This account cannot make a file symlink, so the link test above covers directories
+        # only; here the link rule itself names one file, and both walks must leave it out.
+        self.exclude_build()
+        path = self.worktree("wt-landed", "landed", self.commits[0])
+        self.lockrun_files(path, ("x.done", "x.log", "linked.txt"))
+        leaf = self.leaf_name(path)
+        real = SWEEP.is_reparse
+        SWEEP.is_reparse = lambda entry: os.path.basename(entry) == "linked.txt" or real(entry)
+        try:
+            code, out = self.sweep_in_process("--apply")
+        finally:
+            SWEEP.is_reparse = real
+        self.assertEqual(0, code, out)
+        self.assertTrue(self.line_for(out, "ARCHIVED").endswith(" files=2 bytes=8"), out)
+        self.assertEqual(["x.done", "x.log"], self.zip_children(leaf, "build", "lockrun"))
+
+    # -- round 7: review wtzp r1, a zip is never replaced ---------------------------------
+
+    def test_a_path_reused_at_the_same_tip_keeps_the_first_zip_whole(self):
+        # Review wtzp r1 finding 1: a worktree is archived and removed, its branch stays at the
+        # same tip, a hand worktree is added again at the same path and runs a gate. The second
+        # sweep must not replace the first zip with the new logs alone.
+        self.exclude_build()
+        path = self.worktree("wt-hand", "hand", self.commits[0])
+        self.write_file(os.path.join(path, "build", "lockrun", "first.log"), "abcd")
+        self.make_files(os.path.join(path, "build", "lockrun"), ("first.done",))
+        leaf = self.leaf_name(path)
+        code, out = self.sweep("--apply")
+        self.assertEqual(0, code, out)
+        self.assert_names(self.line_for(out, "REMOVED"), path)
+        with open(self.zip_path(leaf), "rb") as handle:
+            first_bytes = handle.read()
+
+        self.git("-C", self.repo, "worktree", "add", path, "hand")
+        self.assertEqual(leaf, self.leaf_name(path), "the fixture must reuse the same tip")
+        self.write_file(os.path.join(path, "build", "lockrun", "second.log"), "wxyz")
+        self.make_files(os.path.join(path, "build", "lockrun"), ("second.done",))
+        again_code, again = self.sweep("--apply")
+        self.assertEqual(0, again_code, again)
+        self.assert_names(self.line_for(again, "REMOVED"), path)
+        with open(self.zip_path(leaf), "rb") as handle:
+            self.assertEqual(first_bytes, handle.read(), "the first zip was written over")
+        self.assertEqual(["first.done", "first.log"], self.zip_children(leaf, "build", "lockrun"))
         self.assertEqual(
-            "abcd", self.read_file(self.archived(first_leaf, "build", "lockrun", "x.log"))
+            ["second.done", "second.log"], self.zip_children(leaf + "-2", "build", "lockrun")
         )
-        self.assertEqual(
-            "wxyz", self.read_file(self.archived(second_leaf, "build", "lockrun", "x.log"))
-        )
+        self.assertEqual("wxyz", self.zip_text(leaf + "-2", "build", "lockrun", "second.log"))
+
+    def test_every_name_taken_stops_the_removal(self):
+        self.exclude_build()
+        path = self.worktree("wt-landed", "landed", self.commits[0])
+        self.lockrun_files(path, ("x.done", "x.log"))
+        leaf = self.leaf_name(path)
+        self.write_marker(leaf, path)
+        self.write_marker(leaf + "-2", path)
+        real = SWEEP.MAX_LEAVES
+        SWEEP.MAX_LEAVES = 2
+        try:
+            code, out = self.sweep_in_process("--apply")
+        finally:
+            SWEEP.MAX_LEAVES = real
+        self.assertEqual(2, code, out)
+        stopped = self.line_for(out, "STOPPED")
+        self.assertIn("no free archive name: 2 zips of", stopped)
+        self.assertNotIn("REMOVED", out)
+        self.assertTrue(os.path.isdir(path))
+        self.assertFalse(os.path.exists(self.zip_path(leaf + "-3")), out)
+
+    def test_a_report_stamped_before_1980_is_zipped(self):
+        # Review wtzp r1 finding 2: zipfile refuses a timestamp before 1980 unless told not to,
+        # and the oldest worktree is always tried first, so one such file would stop every run.
+        self.exclude_build()
+        path = self.worktree("wt-landed", "landed", self.commits[0])
+        lockrun = self.lockrun_files(path, ("x.done", "x.log"))
+        os.utime(os.path.join(lockrun, "x.log"), (86400 * 2, 86400 * 2))
+        leaf = self.leaf_name(path)
+        code, out = self.sweep("--apply")
+        self.assertEqual(0, code, out)
+        self.assertTrue(self.line_for(out, "ARCHIVED").endswith(" files=2 bytes=8"), out)
+        self.assertEqual("abcd", self.zip_text(leaf, "build", "lockrun", "x.log"))
 
 
 if __name__ == "__main__":
