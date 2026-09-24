@@ -661,5 +661,196 @@ class QualityCase(unittest.TestCase):
         self.assertEqual(data["defects"]["declared"], 2)
 
 
+def lane(fix, head="abc123def", subjects=None):
+    return {"head": head, "fix": fix,
+            "subjects": subjects or (["fix(x): a correction"] if fix else ["feat(x): a new door"])}
+
+
+class FixLaneCase(unittest.TestCase):
+    """The fix lane column: the lanes each landing carried, the old ten-cell rows kept beside the new ones,
+    and the head never summing a landing count with a lane count."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="quality-lanes-")
+        self.addCleanup(__import__("shutil").rmtree, self.tmp, True)
+
+    def numbers(self, features):
+        return quality.defect_numbers(START, END, None, features, len(features))
+
+    def test_lanes_counted_per_landing_and_an_unread_landing_named(self):
+        got = self.numbers([{"sha": "a", "lanes": [lane(True), lane(False)]},
+                            {"sha": "b", "lanes": [lane(True, "fed987cba")]},
+                            {"sha": "c"}])
+        self.assertEqual((got["fix_lanes"], got["lanes"], got["lanes_unread"]), (2, 3, 1))
+        self.assertEqual(quality.lane_cell(got), "2/3 (66.7%) +1 unread")
+        self.assertEqual(got["fix_lane_subjects"], ["abc123def fix(x): a correction",
+                                                    "fed987cba fix(x): a correction"])
+
+    def test_no_landing_read_is_not_measured_and_no_landing_is_zero(self):
+        self.assertEqual(quality.lane_cell(self.numbers([{"sha": "a"}])), "-")
+        self.assertEqual(quality.lane_cell(self.numbers(FEATURES)), "-")
+        self.assertEqual(quality.lane_cell(self.numbers([])), quality.pct_cell(0, 0))
+
+    def test_a_landing_that_carried_no_lane_reads_zero_not_unread(self):
+        got = self.numbers([{"sha": "a", "lanes": []}])
+        self.assertEqual((got["lanes"], got["lanes_unread"]), (0, 0))
+
+    def test_the_row_gains_an_eleventh_cell_after_the_landing_share(self):
+        rep = quality.compute(START, END, None, None, [{"sha": "a", "subject": "merge(train): x",
+                                                        "lanes": [lane(True), lane(False)]}], [], NOW)
+        cells = [c.strip() for c in quality.format_row(NOW, START, END, rep).strip().strip("|").split("|")]
+        self.assertEqual(len(cells), 11)
+        self.assertEqual(cells[9], "0/1 (0.0%)")
+        self.assertEqual(cells[10], "1/2 (50.0%)")
+
+    def test_an_old_row_survives_the_rewrite_and_the_head_reads_lanes_from_new_rows_only(self):
+        path = os.path.join(self.tmp, "quality.md")
+        old = table_row("2026-09-05 18:00", "2026-09-05 08:00 to 2026-09-05 18:00", 3, fix="1/3 (33.3%)")
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("# Quality ledger\n\n" + quality.QUALITY_HEADER + "\n" + quality.QUALITY_SEP + "\n" + old + "\n")
+        rep = quality.compute(START, END, None, None, [{"sha": "a", "subject": "merge(train): x",
+                                                        "lanes": [lane(True), lane(True), lane(False)]}], [], NOW)
+        quality.append_quality(path, NOW, START, END, rep)
+        text = read(path)
+        self.assertIn(old, text, "the ten-cell row of an older run must survive append_quality")
+        rows = quality.parse_rows(text)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([(r["fix_lanes"], r["lanes"]) for r in rows], [(None, None), (2, 3)])
+        head = "\n".join(quality.render_head(rows, NOW))
+        # the landing share sums both rows (1 of 3, then 0 of 1); the lane share reads the new row alone
+        self.assertIn("| Fix landings / landings | 1/4 (25.0%) |", head)
+        self.assertIn("| Fix lanes / lanes | 2/3 (66.7%); 1 row(s) without it |", head)
+
+    def test_a_week_of_old_rows_prints_a_dash_never_a_zero(self):
+        rows = quality.parse_rows(table_row("2026-09-05 18:00", "2026-09-05 08:00 to 2026-09-05 18:00", 3))
+        head = "\n".join(quality.render_head(rows, NOW))
+        self.assertIn("| Fix lanes / lanes | - (no row of the week measured it) |", head)
+
+    def test_an_eleven_cell_row_with_a_dash_is_not_measured(self):
+        row = table_row("2026-09-05 18:00", "2026-09-05 08:00 to 2026-09-05 18:00", 3)[:-2] + " | - |"
+        parsed = quality.parse_rows(row)
+        self.assertEqual((parsed[0]["fix_lanes"], parsed[0]["lanes"]), (None, None))
+
+
+class LandingLanesCase(unittest.TestCase):
+    """ledger-day.py's parse_reflog_rows gives each landing the tip it moved from, one row past the window, and
+    fill_landing_lanes reads the lanes of that range on a real git repository in a temp folder."""
+
+    def setUp(self):
+        self.ld = load_ledger_day_new()
+        self.tmp = tempfile.mkdtemp(prefix="quality-git-")
+        self.addCleanup(__import__("shutil").rmtree, self.tmp, True)
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(os.path.join(self.tmp, "nohooks"))
+        self.env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com",
+                        GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.com")
+
+    def git(self, *args):
+        out = subprocess.run(["git", "-c", "core.hooksPath=" + os.path.join(self.tmp, "nohooks"),
+                              "-c", "commit.gpgsign=false", "-C", self.repo] + list(args),
+                             capture_output=True, text=True, env=self.env, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout.strip()
+
+    def commit(self, subject):
+        self.git("commit", "--allow-empty", "-q", "-m", subject)
+        return self.git("rev-parse", "HEAD")
+
+    def lane_branch(self, name, subjects):
+        self.git("checkout", "-q", "-b", name, "main")
+        for s in subjects:
+            self.commit(s)
+        self.git("checkout", "-q", "train")
+        self.git("merge", "--no-ff", "-q", name, "-m", "merge(train): %s into train" % name)
+
+    def test_prev_is_read_one_row_past_the_window(self):
+        rows = ["ccc main@{2026-09-06 09:00:00 -0500}: merge ccc: Fast-forward",
+                "bbb main@{2026-09-05 20:00:00 -0500}: merge bbb: Fast-forward",
+                "aaa main@{2026-09-04 10:00:00 -0500}: merge aaa: Fast-forward"]
+        features, _ = self.ld.parse_reflog_rows(rows, START, END)
+        self.assertEqual([(f["sha"], f["prev"]) for f in features], [("ccc", "bbb"), ("bbb", "aaa")])
+        oldest, _ = self.ld.parse_reflog_rows(rows, datetime(2026, 9, 4), END)
+        self.assertIsNone(oldest[-1]["prev"])
+
+    def test_a_train_landing_and_a_straight_landing(self):
+        os.makedirs(self.repo)
+        self.git("init", "-q", "-b", "main")
+        base = self.commit("chore: base")
+        self.git("checkout", "-q", "-b", "train")
+        self.lane_branch("lanea", ["test(x): pin the refusal, red", "fix(x): refuse the empty name"])
+        self.lane_branch("laneb", ["feat(y): a new door", "fix(y): the notes of the review"])
+        self.lane_branch("lanec", ["test(z): the census records the chip", "docs(z): say why"])
+        self.git("checkout", "-q", "main")
+        self.git("merge", "--ff-only", "-q", "train")
+        train_tip = self.git("rev-parse", "HEAD")
+        self.commit("test(app): the census re-record")
+        straight_tip = self.commit("fix(app): the chip census follows the file")
+        entries = [{"sha": straight_tip, "prev": train_tip}, {"sha": train_tip, "prev": base},
+                   {"sha": base, "prev": None}]
+        self.ld.fill_landing_lanes(self.repo, entries)
+        straight, train, first = entries
+        self.assertEqual(sorted(l["fix"] for l in train["lanes"]), [False, False, True])
+        self.assertEqual(len(train["lanes"]), 3)
+        fixes = [l for l in train["lanes"] if l["fix"]]
+        self.assertEqual(sorted(fixes[0]["subjects"]), ["fix(x): refuse the empty name",
+                                                        "test(x): pin the refusal, red"])
+        self.assertEqual(len(straight["lanes"]), 1)
+        self.assertTrue(straight["lanes"][0]["fix"])
+        self.assertEqual(len(straight["lanes"][0]["subjects"]), 2)
+        self.assertNotIn("lanes", first)
+        rep = quality.compute(START, END, None, None, entries, [], NOW)
+        self.assertEqual(quality.lane_cell(rep["defects"]), "2/4 (50.0%) +1 unread")
+
+    def test_read_merges_gives_each_landing_its_lanes(self):
+        # the call inside read_merges is what puts the lanes on a real ledger run
+        os.makedirs(self.repo)
+        self.git("init", "-q", "-b", "main")
+        self.commit("chore: base")
+        self.git("checkout", "-q", "-b", "train")
+        self.lane_branch("lanea", ["test(x): pin the refusal, red", "fix(x): refuse the empty name"])
+        self.lane_branch("laneb", ["feat(y): a new door"])
+        self.git("checkout", "-q", "main")
+        self.git("merge", "--ff-only", "-q", "train")
+        now = datetime.now()
+        features, _others, source = self.ld.read_merges(self.repo, now - timedelta(hours=1),
+                                                        now + timedelta(hours=1), None)
+        self.assertTrue(source.startswith("reflog main"), source)
+        self.assertEqual(len(features), 1)
+        self.assertEqual(sorted(l["fix"] for l in features[0]["lanes"]), [False, True])
+
+    def test_the_fix_lanes_list_names_a_fix_subject_never_a_fixture(self):
+        got = quality.defect_numbers(START, END, None, [{"sha": "a", "lanes": [
+            lane(True, "abc123def", ["fixture: a sample", "fix(a): the correction"])]}], 1)
+        self.assertEqual(got["fix_lane_subjects"], ["abc123def fix(a): the correction"])
+
+    def test_an_unreadable_range_and_an_oversized_one_stay_unread(self):
+        os.makedirs(self.repo)
+        self.git("init", "-q", "-b", "main")
+        base = self.commit("chore: base")
+        tip = self.commit("fix(a): one")
+        tip = self.commit("fix(a): two")
+        entries = [{"sha": tip, "prev": "0123456789abcdef0123456789abcdef01234567"}]
+        self.ld.fill_landing_lanes(self.repo, entries)
+        self.assertNotIn("lanes", entries[0])
+        saved = self.ld.LANDING_MAX_COMMITS
+        self.ld.LANDING_MAX_COMMITS = 1
+        try:
+            entries = [{"sha": tip, "prev": base}]
+            self.ld.fill_landing_lanes(self.repo, entries)
+            self.assertNotIn("lanes", entries[0])
+        finally:
+            self.ld.LANDING_MAX_COMMITS = saved
+
+    def test_a_fixup_or_a_feature_word_is_not_a_type(self):
+        os.makedirs(self.repo)
+        self.git("init", "-q", "-b", "main")
+        base = self.commit("chore: base")
+        tip = self.commit("fixup! test(a): tidy")
+        tip = self.commit("fixture: a new sample")
+        entries = [{"sha": tip, "prev": base}]
+        self.ld.fill_landing_lanes(self.repo, entries)
+        self.assertEqual([l["fix"] for l in entries[0]["lanes"]], [False])
+
+
 if __name__ == "__main__":
     unittest.main()
