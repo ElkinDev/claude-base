@@ -1,0 +1,3 @@
+4ac9cead6449 claude/hooks/guard-delegate.py the live file pins this machine's measured DENY_TIER 2 and its briefs root; the kit already carries the generalized code (deny_tier(), CLAUDE_BRIEFS_ROOT, GUARD_LOG) and ships tier 0
+e1957a287bf6 claude/hooks/guard-read.py only the docstring differs: it explains this machine's 150 KB ceiling, set in shell_read.py; the kit ships 48 KB and says why
+79c9fa78d6cf claude/agents/reviewer.md the live file pins this machine's model id and dates the CLEAR with notes rule to an owner ruling; the kit carries the same rule undated and model opus

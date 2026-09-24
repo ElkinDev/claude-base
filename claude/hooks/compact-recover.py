@@ -4,9 +4,10 @@ disk-truth section), the last rows of the rulings register, the head of the work
 NOTES.md, the newest brief in CLAUDE_BRIEFS_DIR and the tail of CLAUDE_LANDINGS_FILE.
 No model runs. Both modes open with the seat block: which chair the pane holds, the loud line
 when nothing launched the session, and the newest resume brief of that seat. Both then print the
-open owner asks of the newest dated decisions file, before the rulings: a full block at a session
-start, the count and the last written ask after a compaction, and nothing to a subagent. With
---rulings it prints the seat block, the asks and the rulings block and nothing else, which is what
+open owner asks of the newest dated decisions file, then the pulse, before the rulings: a full
+block at a session start, the count and the last written ask after a compaction, and nothing to a
+subagent. With --rulings it prints the seat block, the asks, the pulse and the rulings block and
+nothing else, which is what
 a SessionStart on startup, resume, clear or fork wires; stdin is read there too, because the
 payload is what tells a subagent from the session that launched it.
 
@@ -284,6 +285,61 @@ def open_asks(data, cap=ASKS_CAP):
     return text
 
 
+# The pulse: the mechanisms of pulse.md that are silent, dark or match nothing, and the ledger warnings that stand
+# or recur, each with the key a decision row cites, read by tools/pulse.py from files on disk with no agent. It
+# prints after the open asks. A session start has room for PULSE_MAX lines; a compaction output already runs close
+# to CAP, so there it is PULSE_COMPACT_MAX: the summary, the first item and the count of the rest. Either block is
+# also trimmed to the room its caller gives it, whole lines from the end, so it never pushes the output past CAP.
+# A subagent gets no pulse, as it gets no asks. A missing script prints nothing, and the script is run with
+# --if-set, so a machine that installed the kit and never wrote a pulse register sees no block either (review
+# kit-twins-0924a r1 finding 1); a copy older than the flag refuses it with exit 2 and is run again without it,
+# as it was before (r2 note 1). CLAUDE_PULSE_PY moves the script.
+PULSE_PY = os.path.join(os.path.expanduser("~"), ".claude", "tools", "pulse.py")
+PULSE_MAX = 10
+PULSE_COMPACT_MAX = 3
+PULSE_TIMEOUT = 3
+PULSE_HEAD = "Pulse (python %s; a flagged item gets a decision row citing its key):"
+PULSE_MORE = "[pulse cut to fit, run pulse.py]"
+PULSE_DROPPED = "[pulse dropped for room, run python %s]"
+
+
+def pulse_block(data, max_lines=PULSE_MAX, room=CAP):
+    """The pulse's lines under a heading, at most max_lines of them and room characters in all; when even the
+    heading and one line do not fit, the pulse's summary line with PULSE_MORE, then PULSE_DROPPED; "" for a
+    subagent's payload, a missing script, a run that fails or times out, or a room under PULSE_DROPPED. Never raises."""
+    if data.get("agent_id") or data.get("agent_type"):
+        return ""
+    script = os.environ.get("CLAUDE_PULSE_PY") or PULSE_PY
+    try:
+        if not os.path.isfile(script):
+            return ""
+        cmd = [sys.executable, script, "--max", str(max_lines), "--if-set"]
+        env = dict(os.environ, PYTHONIOENCODING="utf-8")
+        run = subprocess.run(cmd, capture_output=True, timeout=PULSE_TIMEOUT, env=env)
+        if run.returncode == 2 and b"--if-set" in run.stderr:
+            run = subprocess.run(cmd[:-1], capture_output=True, timeout=PULSE_TIMEOUT, env=env)
+        if run.returncode not in (0, 1):  # 1 names a missing input or a malformed register line in the block
+            return ""
+        lines = run.stdout.decode("utf-8", "replace").strip().splitlines()[:max_lines]
+    except Exception:
+        return ""
+    if not lines:
+        return ""
+    heading = PULSE_HEAD % script  # not head: the module has a head() (review nthd note 1)
+    text = "\n".join([heading] + lines)
+    while len(text) > room and len(lines) > 1:
+        lines = lines[:-1]
+        text = "\n".join([heading] + lines + [PULSE_MORE])
+    if len(text) <= room:
+        return text
+    # A full day (asks and rulings at their caps) leaves too little room for the block: its summary line, which
+    # carries the counts, with the cut marker, then a one-line notice, so a pulse is never dropped without a trace.
+    for alt in (lines[0] + "\n" + PULSE_MORE, PULSE_DROPPED % script):
+        if len(alt) <= room:
+            return alt
+    return ""
+
+
 LANE_STATE_SCRIPT = os.path.join(os.path.expanduser("~"), ".claude", "tools", "lane-state.py")
 LANE_STATE_SHEET = os.path.join(os.path.expanduser("~"), ".claude", "law.md")
 SHEET_TIMEOUT = 5
@@ -510,10 +566,11 @@ def main():
             return 0
         text = rulings_block()
         asks = open_asks(data)
-        if asks:
-            text = asks + "\n\n" + text
-        if block:
-            text = block + "\n\n" + text
+        # never named head: an assignment anywhere in main() makes the name local to all of it, and the
+        # compaction branch below calls the module's head() on NOTES.md
+        top = "\n\n".join(part for part in (block, asks) if part)
+        pulse = pulse_block(data, PULSE_MAX, CAP - len(text) - len(top) - 4)
+        text = "\n\n".join(part for part in (top, pulse, text) if part)
         sys.stdout.buffer.write(text.encode("utf-8"))
         return 0
     session_id = str(data.get("session_id") or "")
@@ -533,10 +590,12 @@ def main():
     live = inflight_line(transcript_path)
     if live:
         out.insert(1 if block else 0, live)
+    pulse_at = None
     if board:
         asks = open_asks(data, ASKS_COMPACT_CAP)
         if asks:
             out.append(asks)
+        pulse_at = len(out)
         out.append(rulings_block())
         sheet = state_sheet()
         if sheet:
@@ -556,6 +615,11 @@ def main():
     landings = os.environ.get("CLAUDE_LANDINGS_FILE") if board else ""
     if landings and os.path.isfile(landings):
         out.append(f"Last landings ({landings}):\n{tail(landings, 5).rstrip()}")
+    # the pulse goes in last, before the rulings, into the room the rest left under CAP
+    if pulse_at is not None:
+        pulse = pulse_block(data, PULSE_COMPACT_MAX, CAP - len("\n\n".join(out)) - 2)
+        if pulse:
+            out.insert(pulse_at, pulse)
     text = "\n\n".join(out)
     if len(text) > CAP:
         text = text[:CAP - len(CAP_MARKER)] + CAP_MARKER

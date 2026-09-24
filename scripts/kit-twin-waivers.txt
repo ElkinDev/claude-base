@@ -2,3 +2,6 @@
 # One basename per line, then its reason; kit-twin-drift.py leaves a listed basename out of its no-twin column.
 # Add a line only with its reason, for example:
 # deploy-prod.ps1  names this machine's hosts and credentials store
+courier-handover.py  hands the evidence repo's gate courier outbox (gate-courier.sh, not in the kit) to the orchestrator seat
+herdr-agent-state.ps1  installed and overwritten by herdr's own integration
+ui-claims.py  staples reports with the evidence repo's UI truth (ui-truth.py over an Android app's UI catalogs, not in the kit)
