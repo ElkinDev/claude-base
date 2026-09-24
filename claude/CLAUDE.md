@@ -13,6 +13,8 @@ alone, `/groundwork:codebase-design` and `/groundwork:slice-plan`, because the i
 plugin on purpose, so seven skills carry a prefix there. Read a bare name here as the installer
 form, and add the plugin prefix when the machine took the plugin route.
 
+<!-- cb:rules -->
+
 ## Language and voice
 - Language by audience. Spanish (or whatever language the owner writes in) is used ONLY in text
   addressed to the owner: the chat reply, the status block, a question. Every exchange between
@@ -48,6 +50,13 @@ correct way with a concrete example.
 - When you ask the user a question, STOP and wait for the answer. Never assume it.
 - Propose alternatives with tradeoffs when relevant, and give a recommendation, not an exhaustive
   survey.
+
+## Deploy and status honesty
+Never say a change is "in", "live", or "in place" unless it is merged, passed the project's QA and
+UAT, and deployed to production. "Built and tested by me" is only the first step. Verify with git
+before claiming anything is live.
+
+<!-- /cb:rules -->
 
 ## Context economy (orchestrator)
 - After every compaction the harness re-attaches the five files most recently touched with the Read,
@@ -90,8 +99,3 @@ correct way with a concrete example.
   at every compaction of that pane, whole, for as long as the session lives: six of them measured at
   8704 tokens restored per compaction, on a pane that had already delegated the writing. A Herdr
   command is read from the herdr-driving sheet with `sed -n`, never by invoking it.
-
-## Deploy and status honesty
-Never say a change is "in", "live", or "in place" unless it is merged, passed the project's QA and
-UAT, and deployed to production. "Built and tested by me" is only the first step. Verify with git
-before claiming anything is live.

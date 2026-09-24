@@ -147,6 +147,9 @@ def main():
     a = ap.parse_args()
     if not a.source.strip() or not a.target.strip():
         ap.error("source and target must not be blank")
+    # PowerShell hands a bare ~/... to python as it is typed, so the user scope command of docs/AGENTS-SUPPORT.md
+    # works in every shell only when the script expands it (review agmc r1 finding 1)
+    a.source, a.target = os.path.expanduser(a.source), os.path.expanduser(a.target)
     if a.dry_run and a.action != "render":
         ap.error("--dry-run is render's")
     if os.path.isdir(a.target):
