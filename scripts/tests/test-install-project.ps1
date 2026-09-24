@@ -30,6 +30,7 @@ $main        = Join-Path $base 'main-repo'
 $worktree    = Join-Path $base 'wt-feature'
 $rules       = 'Company rules: every push runs the gate. Do not commit to main.'
 $ownDocs     = 'The team docs index. Owned by the team, not by any tool.'
+$agentRules  = 'Team rules for every coding agent: run the linter before a push.'
 
 try {
     New-Item -ItemType Directory -Force -Path $company, $fresh, $main | Out-Null
@@ -38,6 +39,7 @@ try {
     Invoke-Git @('init', '-q', $main) | Out-Null
     New-Item -ItemType Directory -Force -Path (Join-Path $company '.git\hooks'), (Join-Path $company 'docs') | Out-Null
     Set-Content -LiteralPath (Join-Path $company 'CLAUDE.md') -Value $rules -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $company 'AGENTS.md') -Value $agentRules -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $company 'docs\README.md') -Value $ownDocs -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $company '.git\hooks\pre-push') -Value "#!/bin/sh`nexit 0" -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $company '.pre-commit-config.yaml') -Value 'repos: []' -Encoding UTF8
@@ -53,15 +55,30 @@ try {
     Assert-Exit 0 'the project install succeeds'
     Assert-Match $out 'Adoption preflight' 'the preflight ran before the plan'
     Assert-Regex $out 'CLAUDE\.md\s+kept as is' 'the preflight says what happens to their CLAUDE.md'
+    Assert-Regex $out 'AGENTS\.md\s+kept as is' 'and to their AGENTS.md'
     Assert-Regex $out '\.git/hooks/pre-push\s+never touched' 'the preflight says the company hook is untouched'
     Assert-Regex $out '\.pre-commit-config\.yaml\s+never touched' 'and so is their pre-commit config'
-    Assert-Match $out 'writes only CLAUDE.md, CLAUDE.project.md, .claude/ and docs/' `
+    Assert-Match $out 'writes only AGENTS.md, CLAUDE.md, CLAUDE.project.md, .claude/ and docs/' `
         'with -Sdd the promise names docs/ too'
     Assert-True ((Get-Content -LiteralPath (Join-Path $company 'CLAUDE.md') -Raw).Contains($rules)) `
         'the company CLAUDE.md is untouched'
     Assert-True ((Get-Content -LiteralPath (Join-Path $company 'docs\README.md') -Raw).Contains($ownDocs)) `
         'the team docs index is untouched'
     Assert-True (Test-Path -LiteralPath (Join-Path $company 'CLAUDE.md.new')) 'the kit version landed as CLAUDE.md.new'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $company 'AGENTS.md') -Raw).Contains($agentRules)) `
+        'the team AGENTS.md is untouched'
+    Assert-True (Test-Path -LiteralPath (Join-Path $company 'AGENTS.md.new')) 'the kit AGENTS.md landed as AGENTS.md.new'
+    $named = [regex]::Match(($out -join "`n"), 'AGENTS\.md\s+kept as is.*?python "([^"]+)" render "([^"]+)" "([^"]+)"')
+    Assert-True ($named.Success -and $named.Groups[3].Value -eq (Join-Path $company 'AGENTS.md')) `
+        'the preflight names the command that merges the kit sections into their AGENTS.md, by full path'
+    # the command it names works on the result of this very run, from another folder: the kit sections join, theirs stay
+    if ($named.Success) {
+        & python $named.Groups[1].Value render $named.Groups[2].Value $named.Groups[3].Value | Out-Null
+        Assert-True ($LASTEXITCODE -eq 0) "the named merge command succeeds (exit $LASTEXITCODE)"
+    }
+    $merged = Get-Content -LiteralPath (Join-Path $company 'AGENTS.md') -Raw
+    Assert-True ($merged.Contains($agentRules) -and $merged.Contains('<!-- cb:rules -->')) `
+        'after the merge their AGENTS.md holds their rules and the kit sections'
     Assert-True (Test-Path -LiteralPath (Join-Path $company 'docs\README.md.new')) 'and as docs/README.md.new'
     Assert-True ((Get-FileHash -LiteralPath (Join-Path $company '.git\hooks\pre-push') -Algorithm SHA256).Hash -eq $hookBefore) `
         'the company pre-push hook is untouched'
@@ -117,7 +134,7 @@ try {
     Assert-True (Test-Path -LiteralPath (Join-Path $worktree '.git') -PathType Leaf) 'the worktree .git is a file, not a folder'
     $out = Invoke-Install @('-Project', $worktree, '-LocalOnly')
     Assert-Exit 0 'the install into the worktree succeeds'
-    Assert-Match $out 'writes only CLAUDE.md, CLAUDE.project.md and .claude/' `
+    Assert-Match $out 'writes only AGENTS.md, CLAUDE.md, CLAUDE.project.md and .claude/' `
         'without -Sdd the promise does not name docs/'
     Assert-True (Test-GitIgnored $worktree 'CLAUDE.project.md') 'git actually ignores what the run wrote'
     Assert-True (Test-GitIgnored $worktree '.claude/settings.local.json') 'and the project wiring with it'

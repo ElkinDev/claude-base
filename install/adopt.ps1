@@ -122,7 +122,7 @@ function Get-AdoptionFindings {
     $same   = 'kept as is, already matches the kit'
     $never  = 'never touched by the installer'
     $known  = @(
-        @('CLAUDE.md', $shared), @('AGENTS.md', $never), @('.claude', $shared),
+        @('CLAUDE.md', $shared), @('AGENTS.md', $shared), @('.claude', $shared),
         @('.cursor', $never), @('.github/copilot-instructions.md', $never), @('.husky', $never),
         @('.pre-commit-config.yaml', $never), @('lefthook.yml', $never), @('CODEOWNERS', $never),
         @('.editorconfig', $never)
@@ -136,6 +136,14 @@ function Get-AdoptionFindings {
             if ($note -eq $shared -and $kit -and (Test-Path -LiteralPath $kit -PathType Leaf) -and
                 (Test-Path -LiteralPath $here -PathType Leaf) -and
                 (Get-Sha256File $here) -eq (Get-Sha256File $kit)) { $note = $same }
+            # A team AGENTS.md is merged by its markers, never by hand (F03 edge case 1): the note names
+            # the command, which adds the kit's sections to theirs and leaves every line of theirs alone.
+            # Full paths, so it runs from wherever the adopter reads it.
+            if ($item[0] -eq 'AGENTS.md' -and $note -eq $shared -and $Template) {
+                $tool = Join-Path (Split-Path -Parent $Template) 'scripts\agents-md.py'
+                # the preflight also prints on -DryRun, which writes no .new, so the note says which run makes it
+                $note += "; once a real run has written AGENTS.md.new, take the kit sections into yours: python `"$tool`" render `"$here.new`" `"$here`""
+            }
             $out += [pscustomobject]@{ Item = $item[0]; Note = $note }
         }
     }

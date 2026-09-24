@@ -5,7 +5,7 @@ install.ps1 - install the personal Claude Code base without destroying anything 
   User scope (default): copy the skills, hooks, statusline and helpers into the kit home
   (%USERPROFILE%\.claude, or $env:KIT_HOME when it is set) and render settings.json.
 
-  Project scope (-Project <path>): scaffold a project with CLAUDE.md, CLAUDE.project.md, a
+  Project scope (-Project <path>): scaffold a project with AGENTS.md, CLAUDE.md, CLAUDE.project.md, a
   .claude/settings.local.json and the branch hooks, plus docs/ when you pass -Sdd. It prints what
   the repository already has before it plans anything, and it never writes git hooks, CI files, or
   anything outside the paths it names in that preflight.
@@ -144,13 +144,16 @@ if ($Project) {
     } else {
         Write-Output "  nothing of yours is in the way; this looks like a fresh repository"
     }
-    $writes = if ($Sdd) { 'CLAUDE.md, CLAUDE.project.md, .claude/ and docs/ (the -Sdd spec tree)' }
-              else { 'CLAUDE.md, CLAUDE.project.md and .claude/' }
+    $writes = if ($Sdd) { 'AGENTS.md, CLAUDE.md, CLAUDE.project.md, .claude/ and docs/ (the -Sdd spec tree)' }
+              else { 'AGENTS.md, CLAUDE.md, CLAUDE.project.md and .claude/' }
     Write-Output "  the installer writes only $writes, and deletes nothing"
     Write-Output ""
 
     $projClaude = Join-Path $proj '.claude'
+    # AGENTS.md is the project's canonical rules file for every agent and CLAUDE.md imports it (F03,
+    # ADR-010); one the repository already has is kept and the kit's lands beside it as AGENTS.md.new.
     $pairs = @(
+        (New-KitPair (Join-Path $tpl 'AGENTS.md')         (Join-Path $proj 'AGENTS.md')),
         (New-KitPair (Join-Path $tpl 'CLAUDE.md')         (Join-Path $proj 'CLAUDE.md')),
         (New-KitPair (Join-Path $tpl 'CLAUDE.project.md') (Join-Path $proj 'CLAUDE.project.md')),
         (New-KitPair (Join-Path $tpl '.claude\settings.local.json') (Join-Path $projClaude 'settings.local.json'))
