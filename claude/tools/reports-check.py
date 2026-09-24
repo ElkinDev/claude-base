@@ -40,9 +40,12 @@ The cells live in the session files and nowhere else, which is `sessions_glob`: 
 their cells under other names too (`--sessions-glob` repeats on the command line; a file
 named by two globs is read once). A lane report that quotes a row id is not evidence that anyone
 ran it, and reading a whole folder let one such report silence two of the three flags for
-every row at once. A row has a cell when either a session file names the row id as a
-whole word (punctuation of the id included, so OR-1 is never read inside OR-10), or the
-validation cell carries a session token that resolves to one. A session token is `MMDD`
+every row at once. A row has a cell when a session file names the row id as a
+whole word (punctuation of the id included, so OR-1 is never read inside OR-10), when the
+validation cell carries a session token that resolves to one, or when the validation cell
+cites a session file by a path, `<folder>/<name>.md` with an optional `:line`, whose name is
+a file of the corpus (a round that numbers its cells never writes the row id; a cited file
+outside the corpus, a lane report, does not count). A session token is `MMDD`
 plus one or two lowercase letters (0906e, 0907bb); it resolves against a session file
 whose name ends in `<year>-MM-DD<letters>.md`, the year taken from the row's reported date
 and then the year after it, so a token of January under a December report still resolves.
@@ -93,6 +96,9 @@ DATE_OR_TIME_TOKEN_RE = re.compile(r"(?:(?:19|20)\d{2}(?:-\d{2}){0,2}|\d{1,2}:\d
 DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})(?: (\d{2}:\d{2}))?")
 YEAR_RE = re.compile(r"(\d{4})-\d{2}-\d{2}")
 SESSION_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])(\d{2})(\d{2})([a-z]{1,2})(?![0-9A-Za-z])")
+# A session file cited by its path: a folder separator, then the name up to its .md, with an
+# optional :line after it. The name ends at the .md, so a longer name never matches a shorter one.
+CELL_PATH_RE = re.compile(r"[/\\]([0-9A-Za-z_.-]+\.md)(?![0-9A-Za-z_.-])")
 
 LANDED_GRACE_SECS = 24 * 3600
 VERIFIED_WINDOW_SECS = 48 * 3600
@@ -310,6 +316,18 @@ def token_resolves(reported, validation, names, devices=None):
     return False
 
 
+def path_resolves(validation, names):
+    """True when the validation cell cites a file of the corpus by a path.
+
+    A round that numbers its cells (T2 cell 1) never writes the report id, so the ledger row
+    cites the cell by file and line. Only a file of the corpus counts: a cited lane report is
+    not evidence that anyone ran it.
+    """
+    lowered = {name.lower() for name in names if name}
+    return any(found.group(1).lower() in lowered
+               for found in CELL_PATH_RE.finditer(validation or ""))
+
+
 def status_is(cells, word):
     return cells[STATUS].upper().startswith(word)
 
@@ -331,7 +349,8 @@ def check(ledger_text, landings_text, session_files, now=None, devices=None):
         row_id = cells[ID]
         has_cell = (row_id in named
                     or token_resolves(cells[REPORTED], cells[VALIDATION], names,
-                                      devices))
+                                      devices)
+                    or path_resolves(cells[VALIDATION], names))
         found = newest_landing(lane_tokens(cells[LANE]), landings)
         if status_is(cells, "OPEN") and found:
             flags.append("OPEN with a landing row: %s %s %s" % (row_id, found[0], found[1]))
