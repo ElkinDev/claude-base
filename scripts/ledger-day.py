@@ -755,6 +755,7 @@ def read_merges(repo, start, end, git_log_file, branch=None):
         return [], [], "git failed: %s" % exc
     features, others = parse_reflog_rows(rows, start, end)
     fill_reflog_subjects(repo, features + others)
+    fill_landing_lanes(repo, features)
     return features, others, source
 
 
@@ -763,9 +764,12 @@ def parse_reflog_rows(rows, start, end):
 
     A row reads `<sha> main@{2026-09-05 19:25:34 -0500}: merge <sha>: Fast-forward`.
     Only the rows inside [start, end] are kept; the timestamp is read as local
-    time, the same clock the window is expressed in.
+    time, the same clock the window is expressed in. Each kept entry carries
+    `prev`, the sha of the next older row whatever its kind or time, so the
+    oldest landing of the window knows the tip it moved from; the oldest row of
+    the whole reflog has `prev` None.
     """
-    features, others = [], []
+    parsed = []
     for row in rows:
         m = REFLOG_ROW_RE.match(row.strip())
         if not m:
@@ -775,10 +779,14 @@ def parse_reflog_rows(rows, start, end):
             when = dt.datetime.strptime(stamp[:19], "%Y-%m-%d %H:%M:%S")
         except ValueError:
             continue
+        parsed.append((sha, stamp, message, when))
+    features, others = [], []
+    for i, (sha, stamp, message, when) in enumerate(parsed):
         if not (start <= when <= end):
             continue
         entry = {"sha": sha, "date": stamp, "subject": message,
-                 "reflog": message}
+                 "reflog": message,
+                 "prev": parsed[i + 1][0] if i + 1 < len(parsed) else None}
         if message.lower().startswith("merge "):
             features.append(entry)
         else:
@@ -822,6 +830,78 @@ def fill_reflog_subjects(repo, entries):
             if full.startswith(entry["sha"]):
                 entry["subject"] = subject
                 break
+
+
+LANDING_MAX_COMMITS = 200
+
+
+def _git_lines(repo, args):
+    """The stdout lines of one git call, or None when git fails or times out."""
+    cmd = ["git", "-C", repo] + args
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=60,
+                             encoding="utf-8", errors="replace")
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return [l.strip() for l in (out.stdout or "").splitlines() if l.strip()]
+
+
+def fill_landing_lanes(repo, entries):
+    """Give each landing the lanes it carried, as `lanes`: a list of
+    {"head", "subjects", "fix"}.
+
+    The lanes of a landing are read from `<prev>..<sha>` on the first parent:
+    every merge commit there is one lane whose own commits are the ones the
+    merge brought (`^p1 p2 ...`), and the non-merge first-parent commits, when
+    there are any, are one more lane, since a plain fast-forward puts one lane's
+    commits straight onto main. A lane is a fix lane when one of its commit
+    subjects starts with `fix` and none with `feat`: the lane corrected
+    something already on main, the post-landing defect quality.py counts. A
+    first-parent merge whose second parent is itself a train (a train merged
+    into another before it landed) counts as one lane, since only first-parent
+    merges are read. A lane
+    landed twice counts once per landing, and its second landing brings only the
+    commits new to it. An entry with no `prev`, or whose range git cannot read,
+    gets no `lanes` key and is counted as unread, never as a landing of no lane;
+    so does a range of more than LANDING_MAX_COMMITS first-parent commits, which
+    is a reset or a first landing, not a train.
+    """
+    def is_type(subject, word):
+        low = subject.lower()
+        return low.startswith(word) and low[len(word):len(word) + 1] in ("(", ":", "!")
+
+    for entry in entries:
+        prev = entry.get("prev")
+        if not prev:
+            continue
+        rows = _git_lines(repo, ["rev-list", "--first-parent", "--parents",
+                                 "%s..%s" % (prev, entry["sha"])])
+        if rows is None or len(rows) > LANDING_MAX_COMMITS:
+            continue
+        lanes, straight = [], []
+        for row in rows:
+            parts = row.split()
+            if len(parts) > 2:
+                subjects = _git_lines(repo, ["log", "--format=%s", "^" + parts[1]] + parts[2:])
+                if subjects is None:
+                    lanes = None
+                    break
+                lanes.append({"head": parts[0][:9], "subjects": subjects})
+            elif parts:
+                straight.append(parts[0])
+        if lanes is None:
+            continue
+        if straight:
+            subjects = _git_lines(repo, ["log", "--no-walk=unsorted", "--format=%s"] + straight)
+            if subjects is None:
+                continue
+            lanes.append({"head": straight[0][:9], "subjects": subjects})
+        for lane in lanes:
+            lane["fix"] = (any(is_type(s, "fix") for s in lane["subjects"])
+                           and not any(is_type(s, "feat") for s in lane["subjects"]))
+        entry["lanes"] = lanes
 
 
 def run_analyzer(analyzer, start, notes):
@@ -1509,13 +1589,23 @@ def render_daily(rep):
             % (defects["fix_landings"], landings,
                "-" if defects["fix_share"] is None
                else "%.1f%%" % (100.0 * defects["fix_share"])))
+        if defects.get("lanes") is None:
+            add("- fix lanes: not measured, no landing of the window carries its lanes.")
+        else:
+            add("- fix lanes: %d of %d lane(s), %s%s."
+                % (defects["fix_lanes"], defects["lanes"],
+                   "-" if defects["fix_lane_share"] is None
+                   else "%.1f%%" % (100.0 * defects["fix_lane_share"]),
+                   "; %d landing(s) unread" % defects["lanes_unread"]
+                   if defects["lanes_unread"] else ""))
         for title, items in (("Gate files counted", gates.get("rows")),
                              ("Review rows counted", review.get("heads")),
                              ("Review rows with no verdict in the head, listed "
                               "and not counted", review.get("unclassified")),
                              ("Defects declared inside the window",
                               defects.get("rows")),
-                             ("Fix landings", defects.get("fix_subjects"))):
+                             ("Fix landings", defects.get("fix_subjects")),
+                             ("Fix lanes", defects.get("fix_lane_subjects"))):
             if not items:
                 continue
             add("")

@@ -17,9 +17,12 @@ costs, over the same window the ledger uses:
      unclassified: counted apart, listed, and printed as its own column, so a verdict
      this reader cannot place is never silently dropped toward zero.
   3. Post-landing defects. The rows of <ledger>/defects.md inside the window (declared),
-     and the landings of the window whose tip subject starts with `fix` (a rework
-     proxy). An owner item, a spec or a mockup is not a defect: only something that
-     landed and then failed a check is.
+     the landings of the window whose tip subject starts with `fix` (a rework
+     proxy that a train landing never meets, since its tip is a `merge(train)`), and
+     the fix lanes: every lane a landing carried, read by ledger-day.py's
+     fill_landing_lanes, is a fix lane when its own commits carry a `fix` subject and
+     no `feat` one. An owner item, a spec or a mockup is not a defect: only something
+     that landed and then failed a check is.
 
 Counts alone cannot be compared week over week, because two weeks rarely measure the
 same amount of time: a skipped run leaves its hours unmeasured forever. So every row
@@ -86,7 +89,10 @@ ABORT_CODES = {143}
 
 QUALITY_COLUMNS = ("Time", "Window", "Landings", "Gates red/total", "Red by cause",
                    "Gates per landing", "Review block/total", "Review unclassified",
-                   "Defects declared", "Fix landings/landings")
+                   "Defects declared", "Fix landings/landings", "Fix lanes/lanes")
+# Rows written before this column have ten cells, with no lane count; parse_rows keeps both shapes, so the rewrite
+# of append_quality never drops an old row, and the head reads the lane share from the eleven-cell rows alone.
+QUALITY_OLD_WIDTH = 10
 QUALITY_HEADER = "| " + " | ".join(QUALITY_COLUMNS) + " |"
 QUALITY_SEP = "| " + " | ".join("---" for _ in QUALITY_COLUMNS) + " |"
 QUALITY_TITLE = "# Quality ledger"
@@ -100,7 +106,13 @@ QUALITY_INTRO = (
     "the aborted ones and keeps the file count even when the window landed nothing, "
     "review blocks come from the REVIEW rows of `landings.md`, review unclassified "
     "counts the rows that carry REVIEW without a verdict this reader can place, "
-    "declared defects from `defects.md` and fix landings from the tip subjects. The "
+    "declared defects from `defects.md`, fix landings from the tip subjects, and fix "
+    "lanes from the lanes each landing carried: a lane whose commits carry a `fix` subject "
+    "and no `feat` one. A landing's non-merge first-parent commits count as one lane, which "
+    "is a lane landed straight onto main or a train's own commits (a re-recorded fixture adds "
+    "one non-fix lane), a first-parent merge of a whole train counts as one lane, and a "
+    "lane landed twice counts once per landing. Rows written before this column carry no "
+    "lane cell. The "
     "window is written as full dates so the head can union the time each week "
     "actually measured. The head table is re-rendered from the rows below on every run."
 )
@@ -308,6 +320,12 @@ def review_numbers(start, end, landings_path):
 # --------------------------------------------------------------------------
 # 3. defects
 # --------------------------------------------------------------------------
+def is_fix_subject(subject):
+    """A `fix(`, `fix:` or `fix!` subject, the rule of ledger-day.py fill_landing_lanes."""
+    low = (subject or "").lower()
+    return low.startswith("fix") and low[3:4] in ("(", ":", "!")
+
+
 def defect_numbers(start, end, defects_path, features, landings):
     out = {"declared": 0, "rows": [], "fix_landings": 0, "fix_share": None,
            "fix_subjects": []}
@@ -318,6 +336,16 @@ def defect_numbers(start, end, defects_path, features, landings):
             out["fix_subjects"].append(("%s %s" % (entry.get("sha", "-"),
                                                    subject)).strip())
     out["fix_share"] = share(out["fix_landings"], landings)
+    # the lanes each landing carried (ledger-day.py fill_landing_lanes); a landing without the key was not read,
+    # and when no landing of a non-empty window was read the number is not measured, never zero
+    read = [entry for entry in (features or []) if isinstance(entry.get("lanes"), list)]
+    out["lanes_unread"] = len(features or []) - len(read)
+    out["lanes"] = None if (features and not read) else sum(len(e["lanes"]) for e in read)
+    out["fix_lanes"] = sum(1 for e in read for lane in e["lanes"] if lane.get("fix"))
+    out["fix_lane_share"] = None if out["lanes"] is None else share(out["fix_lanes"], out["lanes"])
+    out["fix_lane_subjects"] = [
+        "%s %s" % (lane.get("head", "-"), next((s for s in lane.get("subjects", []) if is_fix_subject(s)), ""))
+        for e in read for lane in e["lanes"] if lane.get("fix")]
     if not (defects_path and os.path.isfile(defects_path)):
         out["unavailable"] = "no defects file at %s" % defects_path
         return out
@@ -386,8 +414,19 @@ def format_row(now, start, end, rep):
         "-" if "unavailable" in review else str(len(review["unclassified"])),
         "-" if "unavailable" in defects else str(defects["declared"]),
         pct_cell(defects["fix_landings"], landings),
+        lane_cell(defects),
     ]
     return "| " + " | ".join(cells) + " |"
+
+
+def lane_cell(defects):
+    """`fix/lanes (pct)`, with the landings whose lanes could not be read after it, or `-` when no landing of
+    the window was read; a report from before the lane count has no `lanes` key and reads `-` too."""
+    if defects.get("lanes") is None:
+        return "-"
+    cell = pct_cell(defects["fix_lanes"], defects["lanes"])
+    unread = defects.get("lanes_unread") or 0
+    return cell + (" +%d unread" % unread if unread else "")
 
 
 def _fraction(cell):
@@ -438,7 +477,7 @@ def parse_rows(text):
         if not line.startswith("|"):
             continue
         cells = [c.strip() for c in line.strip("|").split("|")]
-        if len(cells) != len(QUALITY_COLUMNS):
+        if len(cells) not in (QUALITY_OLD_WIDTH, len(QUALITY_COLUMNS)):
             continue
         try:
             when = dt.datetime.strptime(cells[0], "%Y-%m-%d %H:%M")
@@ -448,13 +487,16 @@ def parse_rows(text):
         gate_files, gate_landings = _fraction(cells[5])
         block, review_total = _fraction(cells[6])
         fix, fix_landings = _fraction(cells[9])
+        lane_text = cells[10] if len(cells) > QUALITY_OLD_WIDTH else "-"
+        fix_lanes, lanes = _fraction(lane_text) if re.search(r"\d+\s*/\s*\d+", lane_text) else (None, None)
         rows.append({"time": when, "raw": line, "landings": _int(cells[2]),
                      "span": _window_span(cells[1]),
                      "red": red, "red_green": red_green,
                      "gate_files": gate_files, "gate_landings": gate_landings,
                      "block": block, "review_total": review_total,
                      "unclassified": _count(cells[7]), "declared": _count(cells[8]),
-                     "fix": fix, "fix_landings": fix_landings})
+                     "fix": fix, "fix_landings": fix_landings,
+                     "fix_lanes": fix_lanes, "lanes": lanes})
     return rows
 
 
@@ -655,6 +697,19 @@ def render_head(rows, now):
     lines.append("| Fix landings / landings | %s | %s |"
                  % (share(last, "fix", "fix_landings", last_over),
                     share(prev, "fix", "fix_landings", prev_over)))
+
+    def lane_share(bucket, overlap):
+        """The fix lane share of the rows that measured it; a landing count is never summed in, and the rows
+        without it (older than the column, or unread) are named, never read as zero."""
+        seen = [r for r in bucket if r["lanes"] is not None]
+        if bucket and not seen:
+            return "- (no row of the week measured it)"
+        first, second = sum(r["fix_lanes"] for r in seen), sum(r["lanes"] for r in seen)
+        cell = overlap_cell(first, second) if overlap else pct_cell(first, second)
+        missing = len(bucket) - len(seen)
+        return cell + ("; %d row(s) without it" % missing if missing else "")
+    lines.append("| Fix lanes / lanes | %s | %s |"
+                 % (lane_share(last, last_over), lane_share(prev, prev_over)))
     gap = coverage_gap(last_hours, prev_hours)
     if gap is not None and gap > COVERAGE_GAP_PCT:
         lines.append("")

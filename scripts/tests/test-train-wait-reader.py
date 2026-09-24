@@ -1,7 +1,7 @@
 """Pins for the reader of scripts/train-wait.py: the lane token of a merge(train) subject, the review-name route,
 the verdict line with a byte order mark or an upper-case label, and the landing timed by main's reflog.
 
-    python scripts/tests/test-train-wait.py
+    python scripts/tests/test-train-wait-reader.py
     TRAIN_WAIT_PY=<path> python scripts/tests/test-train-wait-reader.py      # against a staged copy
 
 Every run is on a fixture repository and a fixture evidence folder in a temp folder, passed by --evidence.

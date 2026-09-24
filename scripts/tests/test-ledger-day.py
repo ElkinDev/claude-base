@@ -202,7 +202,7 @@ class LedgerFixture(unittest.TestCase):
             projects_dir=projects, max_file_mb=512,
             analyzer_json=cls.analyzer_json, no_analyzer=False, analyzer=None,
             no_token_ledger=True, usage_log=cls.usage_log, repo=None,
-            git_log_file=cls.git_log)
+            git_log_file=cls.git_log, ledger_dir=cls.tmp)
         cls.report = ledger.build_report(cls.args, cls.start, cls.end, now)
         cls.row = cls.report["rows"][0]
 
@@ -402,7 +402,7 @@ class ForkFallback(unittest.TestCase):
                 projects_dir=projects, max_file_mb=512, analyzer_json=None,
                 no_analyzer=True, analyzer=None, no_token_ledger=True,
                 usage_log=os.path.join(tmp, "missing.csv"), repo=None,
-                git_log_file=None)
+                git_log_file=None, ledger_dir=tmp)
             report = ledger.build_report(args, start, end, now)
             row = report["rows"][0]
             self.assertEqual(row["forks"], 1)
