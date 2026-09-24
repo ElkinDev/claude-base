@@ -26,6 +26,12 @@
     "evidence_root": null
   },
   "_worktree_sweep": "Read by ledger-nightly.ps1 on the morning run, after retention. `repo` names the repository whose landed, clean worktrees worktree-sweep.py removes, oldest first and at most `limit` a run; null, the default, is no sweep. Before a worktree goes, its build evidence is written into one verified zip under `evidence_root` (null takes the tool's default, `{repo_parent}/evidence`), and an existing zip is never replaced. `lock_root` is a folder of *.lock.d mutex directories and the whole run is refused while any is held; null is no mutex belt, so a project with none runs the sweep only when no build is running.",
+  "evidence_retention": {
+    "root": null,
+    "scope": null,
+    "trash": null
+  },
+  "_evidence_retention": "Read by ledger-nightly.ps1 on the morning run, after the worktree sweep. `root` names the evidence root whose old record work evidence-retention.py removes; null, the default, is no retention, and a root without its register file (rulings.md) is refused. `scope` is the scope file: copy claude/tools/evidence-retention.example.json, edit it, and name the copy here; null reads evidence-retention.json beside the tool, which the kit does not ship, so a null scope refuses every run. `trash` is where removed files wait for the trash_days of the scope; null is <root>-trash beside the root. A run whose plan passes a quarter of the files of the root is refused whole.",
   "compare": {
     "baseline": "baseline.json",
     "baseline_label": "the window before the change",

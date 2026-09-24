@@ -1,0 +1,42 @@
+{
+  "_help": "Test fixture: the scope the cases of test-evidence-retention.py were written against. Adopters start from claude/tools/evidence-retention.example.json.",
+  "round_folders": [
+    "Findings/bench/*",
+    "Findings/04_bench/*",
+    "bench/*",
+    "bench-*",
+    "r[0-9]*-*",
+    "page-preview-*",
+    "scratch-*"
+  ],
+  "record_files": [
+    "lanes/*",
+    "reviews/*",
+    "briefs/*",
+    "builds/*",
+    "*.bak"
+  ],
+  "keep": [
+    "scripts/*.py",
+    "scripts/*.ps1",
+    "scripts/*.sh",
+    "scripts/*.json",
+    "scripts/*.md",
+    "scripts/*.txt",
+    "ledger/*.md",
+    "ledger/*.log",
+    "ledger/*.csv",
+    "ledger/*.json",
+    "ledger/deleted/*",
+    "briefs/TEMPLATE-*.md",
+    "briefs/agent-laws.md",
+    "drafts/decisions-2026-08-28.md",
+    "drafts/release-notes-vc84.md",
+    "drafts/block-causes-2026-09-22.md"
+  ],
+  "apk_rule": true,
+  "release_kinds": [
+    ".apk"
+  ],
+  "trash_days": 30
+}

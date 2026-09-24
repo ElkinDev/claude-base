@@ -709,5 +709,47 @@ if ($sweepDue -and -not $RetentionDryRun) {
     }
 }
 
+# 6. the evidence retention, morning only, and only when `evidence_retention.root` in ledger-config.json names an
+# evidence root (null, the default, is no retention). evidence-retention.py moves what that root no longer keeps
+# into <root>-trash\<day> (or `trash`), writes one manifest line per file under ledger\deleted, purges trash days
+# older than the scope's trash_days, and refuses the whole run (exit 4 or 5, nothing removed) on a bad clock, a bad
+# scope, a trash it cannot use, another run, or a plan past a quarter of the root's files. `scope` names its scope
+# file (null takes evidence-retention.json beside the tool, which the kit does not ship: copy
+# evidence-retention.example.json and edit it). Its lines start with "evidence |": the summary line always, and
+# at most 20 ERROR or REFUSED lines, since a full trash volume would write one per file and this log is never
+# pruned; the manifest names every file. After the worktree sweep, so the archive never meets a folder this step
+# is emptying. A dry retention run and -RetentionOnly never reach it. Unbuffered (-u), as step 5. No agent.
+if ($sweepDue -and -not $RetentionDryRun -and -not $RetentionOnly) {
+    $evConfig = Read-LedgerConfig
+    $evBlock = $null
+    if ($null -ne $evConfig) { $evBlock = $evConfig.evidence_retention }
+    if ($null -eq $evBlock -or -not $evBlock.root) {
+        Write-Log 'evidence | no evidence_retention.root in ledger-config.json, skipped'
+    } else {
+        $evPy = Resolve-KitTool 'evidence-retention.py'
+        if (-not (Test-Path $evPy)) {
+            Write-Log 'evidence | evidence-retention.py not found, skipped'
+        } else {
+            # A path that ends in a backslash would escape its closing quote on the command line.
+            $evArgs = '-u "{0}" --root "{1}" --apply' -f $evPy, ([string]$evBlock.root).TrimEnd('\', '/')
+            if ($evBlock.scope) { $evArgs += (' --scope "{0}"' -f ([string]$evBlock.scope).TrimEnd('\', '/')) }
+            if ($evBlock.trash) { $evArgs += (' --trash "{0}"' -f ([string]$evBlock.trash).TrimEnd('\', '/')) }
+            $evr = Invoke-Step -Name 'evidence' -ArgLine $evArgs -TimeoutMs 600000 -KeepOutput
+            $evShown = 0
+            $evCut = 0
+            foreach ($line in $evr.Lines) {
+                if ($line.StartsWith('RETENTION') -or $evShown -lt 20) {
+                    Write-Log "evidence | $line"
+                    if (-not $line.StartsWith('RETENTION')) { $evShown++ }
+                } else {
+                    $evCut++
+                }
+            }
+            if ($evCut -gt 0) { Write-Log "evidence | $evCut more lines cut; the manifest under ledger\deleted names every file" }
+            Write-Log "evidence-retention.py exit code $($evr.Code)"
+        }
+    }
+}
+
 Write-Log "end"
 exit 0
