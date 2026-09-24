@@ -17,5 +17,7 @@
   "precheck_command": null,
   "_commands": "Templates filled per brief: {worktree} as written, {worktree_posix} in /c/... form, {worktree_native} in C:/... form, {tag} the run tag the brief picks (<token>-fix1, <token>-notes) and {tests} the --tests argument. `own_tests_command` runs the lane's own test classes on its committed tip, for example `bash scripts/run-own-tests.sh {worktree_posix} {tag} '{tests}'`; null writes a placeholder the orchestrator fills. `own_tests_done` is the file that run writes when it ends, for example {worktree_posix}/build/runs/{tag}.done; when set, the brief tells the lane to launch the run as a foreground call that returns at once and end its turn on that path instead of waiting. `precheck_command` is a static check of the new tip run after the tests; null leaves the line out. Write a literal brace as {{ or }}.",
   "review_tools": 14,
-  "fix_tools": 20
+  "fix_tools": 20,
+  "run_verdict_line": null,
+  "_run_verdict_line": "`run_verdict_line` is the prefix of the verdict line a done file carries, for example exitCodes= for a done file reading exitCodes=0,0. When set (it needs own_tests_done, whose file name starts with {tag}.), a review brief is refused while the newest test run on the lane's tip is red or has no done file yet; --allow-red-run writes it on purpose and names the run for the reviewer. null leaves the check off."
 }

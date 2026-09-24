@@ -60,6 +60,13 @@ and edit it. Every key is optional and the defaults write a brief that names no 
   precheck_command   a static check of the tip run after the tests, {worktree}, {worktree_posix} and
                      {worktree_native} filled in; default null, the line is left out
   review_tools, fix_tools   the tool budgets; default 14 and 20
+  run_verdict_line   the prefix of the line a done file ends with its verdict on, for example "exitCodes=" for a
+                     done file reading exitCodes=0,0; when set, a review brief is refused while the newest test run
+                     on the lane's tip is red (any code other than 0) or still running (no done file yet), and
+                     --allow-red-run writes it on purpose, naming the run for the reviewer. The runs are the files
+                     in the folder of own_tests_done, grouped by the tag before the first dot, so its file name must
+                     start with {tag}. A run is on the tip when its done file names tip=<sha> of HEAD, or when the
+                     HEAD reflog entry in force at its start names HEAD. Default null, no check
 A config file that is not a JSON object, or a key of the wrong type, is exit 2 with the reason: a brief written on
 a half-read config would carry the wrong commands.
 """
@@ -77,7 +84,7 @@ DEFAULTS = {
     "evidence_root": None, "lanes_dir": "lanes", "briefs_dir": "briefs", "reviews_dir": "reviews",
     "template": "briefs/TEMPLATE-lane-brief.md", "worktree": None, "base_branch": "main", "laws": None,
     "subject_suffix": "", "own_tests_command": None, "own_tests_done": None, "precheck_command": None,
-    "review_tools": 14, "fix_tools": 20,
+    "review_tools": 14, "fix_tools": 20, "run_verdict_line": None,
 }
 INT_KEYS = ("review_tools", "fix_tools")
 REQUIRED_STR = ("lanes_dir", "briefs_dir", "reviews_dir", "template", "base_branch")
@@ -120,6 +127,13 @@ def load_config(path=None):
         cfg[k] = v
     if cfg["own_tests_done"] and not cfg["own_tests_command"]:  # the done file alone would render the old order
         raise ConfigError("%s: own_tests_done needs own_tests_command, the run that writes it" % path)
+    if cfg["run_verdict_line"] is not None and not cfg["run_verdict_line"].strip():
+        raise ConfigError("%s: run_verdict_line is blank; give the prefix of the done file's verdict line, or null" % path)
+    if cfg["run_verdict_line"] and not cfg["own_tests_done"]:
+        raise ConfigError("%s: run_verdict_line needs own_tests_done, the file whose verdict it reads" % path)
+    if cfg["run_verdict_line"] and not os.path.basename(cfg["own_tests_done"].replace("\\", "/")).startswith("{tag}."):
+        raise ConfigError("%s: run_verdict_line groups a run's files by the tag before the first dot, so the file name "
+                          "of own_tests_done must start with {tag}." % path)
     for k in TEMPLATE_KEYS:  # a stray brace would otherwise fail at render time, after the facts were read
         if cfg[k]:
             try:
@@ -176,6 +190,112 @@ def git_ok(wt, *args):
 
 class Refused(Exception):
     pass
+
+
+RUN_TIP = re.compile(r"\btip=([0-9a-f]{7,64})\b")  # a runner may name the tip it ran on
+UNREADABLE = object()
+
+
+def read_text(path, limit=65536):
+    """The start of a run file, or None when it cannot be read (locked, a folder, gone between list and open)."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read(limit).lstrip("\ufeff")
+    except OSError:
+        return None
+
+
+def tip_history(wt, limit=2000):
+    """The HEAD reflog of the worktree as [(unix time, sha)], newest first, or [] when it has none. The newest entry
+    alone is not when the sha became the tip: a stash, a reset to HEAD or a checkout away and back writes an entry
+    that keeps the sha. A worktree's HEAD reflog is its own."""
+    out = git(wt, "log", "-g", "-n", str(limit), "--date=unix", "--format=%gd %H", "HEAD")
+    hist = []
+    for line in out.splitlines():
+        m = re.match(r"^HEAD@\{(\d+)\} ([0-9a-f]{40}|[0-9a-f]{64})$", line.strip())  # SHA-1 or SHA-256
+        if m:
+            hist.append((int(m.group(1)), m.group(2)))
+    return hist
+
+
+def sha_at(history, t):
+    """The sha HEAD held at time t: the newest reflog entry (by position) written at or before t, else None, a run
+    older than the kept reflog."""
+    for when, sha in history:
+        if when <= t:
+            return sha
+    return None
+
+
+def runs_on_tip(wt, head, history, head_time):
+    """The test runs of the lane that ran on its tip, oldest first, as dicts (tag, start, done, path). The runs live in
+    the folder of own_tests_done; a run's tag is its file names up to the first dot, its done file is own_tests_done
+    for that tag, and its start is the oldest mtime of its files. A run whose done file names a tip= is on the tip when
+    that sha is HEAD; any other run is on it when the HEAD reflog entry in force at its start names HEAD's sha, or,
+    with no reflog, when it started at or after HEAD's committer time. done is the done file's text, None while it is
+    absent, UNREADABLE when it exists and cannot be read."""
+    def done_path(tag):  # a filesystem path: the /c/... form of {worktree_posix} is read as C:/... here
+        return CFG["own_tests_done"].format(worktree=wt, worktree_posix=native(wt), worktree_native=native(wt),
+                                            tag=tag, tests="")
+    folder = os.path.dirname(done_path("x"))
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return []
+    times = {}
+    for n in names:
+        p = os.path.join(folder, n)
+        if n.startswith(".") or not os.path.isfile(p):
+            continue
+        try:
+            times.setdefault(n.split(".", 1)[0], []).append(os.path.getmtime(p))
+        except OSError:
+            continue
+    runs = []
+    for tag, stamps in times.items():
+        path = done_path(tag)
+        done = read_text(path) if os.path.exists(path) else None
+        if done is None and os.path.exists(path):
+            done = UNREADABLE
+        start = min(stamps)
+        mt = RUN_TIP.search(done if isinstance(done, str) else "")
+        if mt:
+            on_tip = head.startswith(mt.group(1)) or mt.group(1).startswith(head)
+        elif history:
+            on_tip = sha_at(history, start) == head
+        else:
+            on_tip = head_time is not None and start >= head_time
+        if on_tip:
+            runs.append({"tag": tag, "start": start, "done": done, "path": path.replace("\\", "/")})
+    return sorted(runs, key=lambda r: (r["start"], r["tag"]))
+
+
+def red_run(wt):
+    """Why a review would read a red or unfinished run on the lane's tip, or None: the newest run on the tip by start
+    decides, finished or not, and its done file must hold a run_verdict_line whose comma-separated codes are all 0.
+    A second test run queued beside a review launched on a green one is the case --allow-red-run exists for. Off
+    unless run_verdict_line is set; no worktree, no commit or no run on the tip gives no opinion."""
+    if not CFG["run_verdict_line"]:
+        return None
+    head = git(wt, "rev-parse", "HEAD")
+    if not head:
+        return None
+    when = git(wt, "log", "-1", "--format=%ct", "HEAD")
+    runs = runs_on_tip(wt, head, tip_history(wt), int(when) if when.isdigit() else None)
+    if not runs:
+        return None
+    r = runs[-1]
+    if r["done"] is None:
+        return "the newest run on the tip %s, %s, is still running or was killed (%s is absent)" % (head[:9], r["tag"], r["path"])
+    if r["done"] is UNREADABLE:
+        return "the newest run on the tip %s, %s, cannot be read" % (head[:9], r["path"])
+    prefix = CFG["run_verdict_line"]
+    m = re.search(r"^%s([^\r\n]*)" % re.escape(prefix), r["done"], re.M)
+    if not m:
+        return "the newest run on the tip %s has no %s line: %s" % (head[:9], prefix, r["path"])
+    if any(c.strip() != "0" for c in m.group(1).split(",")):
+        return "the newest run on the tip %s is red: %s reads %s%s" % (head[:9], r["path"], prefix, m.group(1).strip())
+    return None
 
 
 MAX_BASE_COMMITS = 40  # a --base with more commits above it is refused: a lane has a handful, so the sha is wrong
@@ -395,6 +515,8 @@ def review_brief(fx, a):
                  "Report: %s (read it whole, Open items included).%s" % (fx["wt"], fx["branch"], fx["base"],
                  fx.get("base_how", "merge-base with %s" % CFG["base_branch"]), fx["tip"], commits, fx["brief"],
                  fx["report"], runs))
+        if fx.get("run_note"):
+            where += " Written with --allow-red-run on purpose: %s. Read that run before you trust a pin." % fx["run_note"]
     # the reviewer writes the file, so a brief generated while an earlier reviewer of the round still runs passes the
     # existence check in main(); the reviewer checks again when it starts
     guard = ("" if getattr(a, "force_review", False) else
@@ -558,6 +680,8 @@ def main():
     ap.add_argument("--force", action="store_true", help="overwrite an existing brief file at --out")
     ap.add_argument("--force-review", action="store_true", help="review: write the brief although its deliverable exists, "
                     "and drop the line that stops its reviewer on an existing file")
+    ap.add_argument("--allow-red-run", action="store_true", help="review: write the brief although the newest test run "
+                    "on the tip is red or still running; the brief then tells the reviewer so (needs run_verdict_line)")
     a = ap.parse_args()
     if not a.token.strip():  # a blank token would write a brief of placeholders
         ap.error("give a lane token that is not blank")
@@ -579,6 +703,10 @@ def main():
         ap.error("--base names a commit, which a --no-git lane does not have")
     if a.base is not None and not a.base.strip():
         ap.error("--base is blank; give the sha or branch the lane was cut from")
+    if a.allow_red_run and a.kind != "review":
+        ap.error("--allow-red-run is the review kind's: only a review brief reads the lane's test runs")
+    if a.allow_red_run and a.no_git:
+        ap.error("--allow-red-run reads the lane's test runs, which a --no-git lane does not have")
     try:
         CFG = load_config()
     except ConfigError as e:
@@ -599,6 +727,13 @@ def main():
         if os.path.exists(deliverable) and not a.force_review:
             sys.exit("brief-gen: refused, %s exists: a review of this round already wrote it; a review of round N "
                      "takes --delta N, and --force-review writes over it" % deliverable)
+        why = None if a.no_git else red_run(fx["wt"])
+        if why and not a.allow_red_run:
+            sys.exit("brief-gen: refused, %s; a review reads a finished green run: fix the red, wait for the run or run "
+                     "the tests again, or pass --allow-red-run to write the brief on purpose" % why)
+        if why:
+            sys.stderr.write("brief-gen: note, --allow-red-run: %s\n" % why)
+            fx["run_note"] = why
         name, body = review_brief(fx, a)
     else:
         if not a.review:
