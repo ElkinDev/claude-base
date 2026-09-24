@@ -1,10 +1,13 @@
 """Renders a state sheet of the lanes from what is already on disk. No model runs.
 
-Two subcommands:
+Three subcommands:
 
   gates   one line per gate exit file, newest first, default the last 24 hours.
   law     the whole sheet (fixed lines, worktrees, rulings, gates, landings,
           lane reports and briefs) written atomically to the sheet path.
+  lane    one hand-back block for a lane token (its report, the tip check, its
+          reviews, its gates, other recent reports naming a file it touches), at
+          most 40 lines, and one line appended to the hand-back log.
 
 Sources are the gate exit files a gate runner writes, read-only git in the worktrees of
 the configured repository and in the merges its main branch took, the tail of the landings
@@ -24,7 +27,10 @@ project_repo (the repository whose worktrees are listed, empty means none),
 lanes_glob, briefs_glob, reports_file (the owner reports ledger rendered by the
 section below, checked by reports-check.py beside this file), sessions_glob (the
 session files that count as evidence for that ledger: one glob or a list), devices (the device words
-that bind a session token to one phone, empty for no narrowing).
+that bind a session token to one phone, empty for no narrowing), reviews_glob (the review
+files the lane block reads), handback_log (the file the lane block appends one line to),
+brief_gen (the brief-gen.py whose verdict reader the lane block uses, default beside this
+file; the kit ships it under scripts/, so point this key at the project's copy).
 
 Env seams, each of which wins over the default and is what the recovery hook wires:
 CLAUDE_LANE_STATE_CONFIG (the config file), CLAUDE_LANE_STATE_SHEET (the sheet written
@@ -95,6 +101,9 @@ def defaults_for(base):
         "project_repo": "",
         "lanes_glob": os.path.join(base, "lanes", "*.md"),
         "briefs_glob": os.path.join(base, "briefs", "*.md"),
+        "reviews_glob": os.path.join(base, "reviews", "*.md"),
+        "handback_log": os.path.join(base, "handback.log"),
+        "brief_gen": "",
     }
 
 
@@ -341,6 +350,13 @@ def worktree_line(entry):
 def worktrees(repo):
     if not repo:
         return []
+    entries = worktree_entries(repo)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        return list(pool.map(worktree_line, entries))
+
+
+def worktree_entries(repo):
+    """(path, branch, head) for every worktree of the repository, as git lists them."""
     entries = []
     path = branch = head = ""
     for line in run_git(["-C", repo, "worktree", "list", "--porcelain"]).splitlines():
@@ -355,8 +371,7 @@ def worktrees(repo):
             path = ""
     if path:
         entries.append((path, branch, head))
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        return list(pool.map(worktree_line, entries))
+    return entries
 
 
 def last_landings(path, count=LANDINGS_ROWS, clip=LANDINGS_CLIP):
@@ -658,6 +673,209 @@ def write_atomic(path, text):
 
 
 # --- command line -----------------------------------------------------------------
+# --- lane hand-back ---------------------------------------------------------------
+# One block per finished agent, in place of the seat reading the report, the reviews, the gate
+# files and git by hand. It adds two checks no other script makes: the report names the tip its
+# worktree holds, and other recent reports name a file the lane's diff touches, which is how two
+# lanes find out they changed the same file before a train does.
+
+TOKEN_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,23}$")
+HANDBACK_MAX_LINES = 40
+HANDBACK_CLIP = 160
+OVERLAP_DAYS = 7
+OVERLAP_SHOWN = 5
+GENERIC_SHARE = 0.25  # a touched name found in more of the recent files than this says nothing,
+GENERIC_MIN = 5  # and in more than this many of them, so a handful of reports never mutes a name
+READ_LIMIT = 256 * 1024
+OPEN_ITEMS_RE = re.compile(r"^#+\s*open items", re.IGNORECASE)
+
+
+def token_files(pattern, token):
+    """The files of the glob named <token>-*, newest first: `crk1` never takes `crk1x-...`."""
+    prefix = token.lower() + "-"
+    paths = [p for p in glob.glob(pattern) if os.path.basename(p).lower().startswith(prefix)]
+    return sorted(paths, key=lambda p: (os.path.getmtime(p), p), reverse=True)
+
+
+def read_text(path):
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        return handle.read(READ_LIMIT)
+
+
+def open_items(text):
+    """The bullets under a report's Open items heading, up to the next heading."""
+    items, inside_section = [], False
+    for line in text.splitlines():
+        if OPEN_ITEMS_RE.match(line):
+            inside_section = True
+            continue
+        if inside_section and line.startswith("#"):
+            break
+        if inside_section and re.match(r"^\s*(?:[-*]|\d+[.)])\s+\S", line):
+            items.append(re.sub(r"^\s*(?:[-*]|\d+[.)])\s+", "", line))
+    return items
+
+
+def load_disposition(config):
+    """brief-gen.py's reader of a review's verdict, so the two never disagree."""
+    path = config.get("brief_gen") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "brief-gen.py")
+    spec = importlib.util.spec_from_file_location("brief_gen_for_lane", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.disposition
+
+
+def lane_worktree(repo, token):
+    """(path, branch, head) of the worktree named <repo>-<token>, or None."""
+    want = (os.path.basename(repo.rstrip("\\/")) + "-" + token).lower()
+    for path, branch, head in worktree_entries(repo):
+        if os.path.basename(path.rstrip("\\/")).lower() == want:
+            return path, branch, head
+    return None
+
+
+def touched_names(path, base="main"):
+    """The base names of the files the lane's branch changes against its merge base with main."""
+    out = run_git(["-C", path, "diff", "--name-only", base + "...HEAD"])
+    return sorted({os.path.basename(ln.strip()) for ln in out.splitlines() if ln.strip()})
+
+
+def overlaps(names, patterns, token, now, days=OVERLAP_DAYS):
+    """(docs naming a specific touched file, the names too common to say anything, docs read)."""
+    prefix = token.lower() + "-"
+    docs = []
+    for pattern in patterns:
+        for path in glob.glob(pattern):
+            if os.path.basename(path).lower().startswith(prefix):
+                continue
+            try:
+                if os.path.getmtime(path) < now - days * 86400:
+                    continue
+                docs.append((path, read_text(path)))
+            except OSError:
+                continue
+    hits = {name: [p for p, text in docs if name in text] for name in names}
+    generic = sorted(n for n, found in hits.items() if len(found) > max(GENERIC_SHARE * len(docs), GENERIC_MIN))
+    found = {}
+    for name, paths in hits.items():
+        if name in generic:
+            continue
+        for p in paths:
+            found.setdefault(p, name)
+    ordered = sorted(found.items(), key=lambda item: os.path.getmtime(item[0]), reverse=True)
+    return ordered, generic, len(docs)
+
+
+def when_text(mtime, now):
+    """HH:MM for today, MM-DD HH:MM for an older day, so a stale report never reads as this morning's."""
+    stamp = datetime.fromtimestamp(mtime)
+    same = stamp.date() == datetime.fromtimestamp(now).date()
+    return stamp.strftime("%H:%M" if same else "%m-%d %H:%M")
+
+
+def rel_to(path, root):
+    try:
+        return posix(os.path.relpath(path, root))
+    except ValueError:  # another drive
+        return posix(path)
+
+
+def handback_lines(config, token, now=None, dirs=None):
+    """The block and the log fields (tip check state, overlap count). Every source that fails prints
+    one line saying so; the block never raises for a missing file or a git failure."""
+    now = time.time() if now is None else now
+    root = os.path.dirname(os.path.dirname(os.path.abspath(config["lanes_glob"])))
+    stamp = datetime.fromtimestamp(now).strftime("%Y-%m-%d %H:%M")
+    lines = ["lane %s %s" % (token, stamp)]
+    reports = token_files(config["lanes_glob"], token)
+    text = ""
+    if reports:
+        report = reports[0]
+        try:
+            text = read_text(report)
+            first = next((ln for ln in text.splitlines() if ln.strip()), "(empty)")
+            lines.append("report %s %s | %s" % (
+                rel_to(report, root), when_text(os.path.getmtime(report), now), clip_text(first, FIRST_LINE_CLIP)))
+        except OSError as error:
+            lines.append("report %s unreadable: %s" % (rel_to(report, root), error))
+        items = open_items(text)
+        lines.append("open items %d" % len(items))
+        lines += ["  - " + clip_text(item, HANDBACK_CLIP) for item in items[:3]]
+        if len(reports) > 1:
+            lines.append("older reports: " + ", ".join(os.path.basename(p) for p in reports[1:4]))
+    else:
+        lines.append("report none: no %s-* file under %s" % (token, posix(os.path.dirname(config["lanes_glob"]))))
+
+    s3 = "no-report" if not reports else "no-worktree"
+    names = []
+    repo = config.get("project_repo") or ""
+    entry = None
+    if not repo:
+        lines.append("worktree none: no project_repo configured; s3=%s" % s3)
+    else:
+        try:
+            entry = lane_worktree(repo, token)
+        except Exception as error:
+            lines.append("worktree read failed: %s" % error)
+        if entry:
+            path, branch, head = entry
+            if reports:
+                s3 = "ok" if head and head[:7] in text else "mismatch"
+            lines.append("worktree %s branch %s head %s; s3=%s%s" % (
+                posix(path), branch, head[:9] if head else "-", s3,
+                "" if s3 != "mismatch" else " (the report does not name %s)" % head[:9]))
+            try:
+                names = touched_names(path)
+            except Exception as error:
+                lines.append("diff against main failed: %s" % error)
+        elif not any(ln.startswith("worktree read failed") for ln in lines):
+            lines.append("worktree none named %s-%s; s3=%s" % (os.path.basename(repo.rstrip("\\/")), token, s3))
+
+    reviews = token_files(config["reviews_glob"], token)
+    if reviews:
+        try:
+            verdict = load_disposition(config)
+        except Exception as error:
+            verdict = None
+            lines.append("disposition reader failed: %s" % error)
+        shown = []
+        for path in reviews[:3]:
+            try:
+                what = verdict(path) if verdict else "?"
+            except OSError as error:
+                what = "unreadable: %s" % error
+            shown.append("%s %s %s" % (os.path.basename(path), when_text(os.path.getmtime(path), now), what))
+        lines.append("reviews: " + "; ".join(shown))
+    else:
+        lines.append("reviews none")
+
+    gate_rows = [format_gate_line(row) for row in collect_gates(
+        dirs if dirs is not None else gate_dirs(config), 72, token, now)]
+    lines.append("gates %d in 72 h%s" % (len(gate_rows), ":" if gate_rows else ""))
+    lines += ["  " + row for row in gate_rows[:3]]
+
+    count = None  # the log says "-" when no diff ran, never a false zero
+    if names:
+        found, generic, read = overlaps(names, [config["lanes_glob"], config["reviews_glob"]], token, now)
+        count = len(found)
+        lines.append("touched %d files; overlaps %d in %d reports of %d days%s" % (
+            len(names), count, read, OVERLAP_DAYS,
+            "" if not generic else "; too common to count: " + ", ".join(generic[:5])))
+        lines += ["  %s (%s)" % (rel_to(p, root), name) for p, name in found[:OVERLAP_SHOWN]]
+    if len(lines) > HANDBACK_MAX_LINES:
+        cut = len(lines) - HANDBACK_MAX_LINES + 1
+        lines = lines[:HANDBACK_MAX_LINES - 1] + ["... %d lines cut" % cut]
+    return lines, s3, count
+
+
+def append_handback(path, token, s3, count, now=None):
+    """One line per call: date, time, lane, s3=, overlaps= (a number, or - when no diff ran)."""
+    now = time.time() if now is None else now
+    line = "%s %s s3=%s overlaps=%s\n" % (datetime.fromtimestamp(now).strftime("%Y-%m-%d %H:%M:%S"),
+                                          token, s3, "-" if count is None else count)
+    with open(path, "a", encoding="utf-8", newline="\n") as handle:
+        handle.write(line)
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -678,6 +896,11 @@ def main(argv=None):
     law.add_argument("--max-lines", type=int, default=MAX_LINES)
     law.add_argument("--gates-dir", action="append", default=[], metavar="DIR")
 
+    lane = subs.add_parser("lane", help="one hand-back block for a lane token")
+    lane.add_argument("token")
+    lane.add_argument("--gates-dir", action="append", default=[], metavar="DIR")
+    lane.add_argument("--no-log", action="store_true", help="print the block, append nothing")
+
     args = parser.parse_args(argv)
     config = load_config(args.config)
     if args.gates_dir:
@@ -686,6 +909,22 @@ def main(argv=None):
     if args.command == "gates":
         for line in gates_lines(gate_dirs(config), None if args.all else args.since, args.lane):
             print(line)
+        return 0
+
+    if args.command == "lane":
+        token = (args.token or "").strip().lower()
+        if not TOKEN_RE.match(token):
+            print("REFUSED lane token %r: 1 to 24 of a-z, 0-9 and -, starting with a letter or digit" % args.token)
+            return 2
+        lines, s3, count = handback_lines(config, token, dirs=gate_dirs(config))
+        for line in lines:
+            print(line)
+        if not args.no_log:
+            try:
+                append_handback(config["handback_log"], token, s3, count)
+            except OSError as error:
+                print("handback log not written: %s" % error)
+                return 1
         return 0
 
     target = sheet_file(args.out)
