@@ -18,9 +18,23 @@ table.
 
 [1] The project's `AGENTS.md` is the canonical rules file (ADR-010). Claude Code reads it through
 the `@AGENTS.md` import in `CLAUDE.md` and skips an `AGENTS.md` it has already loaded, so the import
-never reads it twice. pi loads `AGENTS.md` natively from `~/.pi/agent/AGENTS.md`, from the parent
-directories and from the working directory, and concatenates them (pi README, "Context Files").
+never reads it twice. pi loads one context file per directory, the first of `AGENTS.override.md`,
+`AGENTS.md`, `AGENTS.MD`, `CLAUDE.md` and `CLAUDE.MD` that exists, from `~/.pi/agent/` first, then
+from the root down to the working directory, and concatenates them (pi 0.84.2,
+`dist/core/resource-loader.js`, `loadContextFileFromDir` and `loadProjectContextFiles`). So a
+project `AGENTS.md` beside a `CLAUDE.md` replaces it for pi rather than adding to it.
 `scripts/agents-md.py` keeps the managed sections of a rules file in step with their source.
+
+The user scope works the same way. `claude/CLAUDE.md` marks its shared sections (language and
+voice, persona, working principles, deploy honesty) as `cb:rules`; Claude Code strips block-level
+HTML comments before it injects a CLAUDE.md, so the markers cost a Claude session nothing. One
+command gives pi the same rules, and the same command again after every edit of the source. The
+script expands `~` itself, so the line is the same in bash and in PowerShell:
+
+    python scripts/agents-md.py render ~/.claude/CLAUDE.md ~/.pi/agent/AGENTS.md
+
+The sections Claude alone can use, such as the context economy one, stay outside the markers and
+never reach pi's smaller window.
 
 [2] pi reads skills in the Agent Skills format (`SKILL.md`) from `~/.pi/agent/skills/`,
 `~/.agents/skills/`, `.pi/skills/` and `.agents/skills/`. The kit's skills are that format, but the

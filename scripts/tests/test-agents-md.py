@@ -189,6 +189,18 @@ def main():
         check("--dry-run writes nothing; a blank path, --dry-run on check, a folder target, a missing source and a "
               "source with no sections are exit 2; a target in step is left alone", dry_run_and_usage)
 
+        def tilde_paths_expand():
+            # review agmc r1 finding 1: PowerShell passes ~/... to python literally
+            home = os.path.join(tmp, "home")
+            os.makedirs(os.path.join(home, ".pi"), exist_ok=True)
+            shutil.copy(src, os.path.join(home, "rules.md"))
+            env = dict(os.environ, HOME=home, USERPROFILE=home)
+            r = subprocess.run([sys.executable, SCRIPT, "render", "~/rules.md", "~/.pi/AGENTS.md"], capture_output=True,
+                               text=True, encoding="utf-8", errors="replace", env=env, timeout=60)
+            made = os.path.join(home, ".pi", "AGENTS.md")
+            return r.returncode == 0 and os.path.isfile(made) and get(made).startswith("<!-- cb:rules -->\n")
+        check("a source and a target written as ~/... resolve to the home folder in any shell", tilde_paths_expand)
+
         def template_parses():
             spec_path = SCRIPT
             import importlib.machinery
