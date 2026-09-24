@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.environ.get("BRIEF_GEN_PY") or os.path.join(HERE, "..", "brief-gen.py")
@@ -462,6 +463,160 @@ def main():
                     and ", 0 placeholders" in plain.stdout)
         check("above the base: more than 40 refused under --base, more than 100 cut with a pointer that is no "
               "placeholder", long_lists_bounded)
+
+        # No review brief on a red or unfinished run (run_verdict_line). A temp repo on trunk with its own worktree
+        # per case; commit times are set by the environment, so the reflog times are known; run files are laid with
+        # mtimes around them.
+        now = int(time.time())
+        rrepo = os.path.join(tmp, "run-repo").replace("\\", "/")
+        os.makedirs(rrepo)
+
+        def gd(where, when, *args):
+            env = dict(os.environ, GIT_AUTHOR_DATE="%d +0000" % when, GIT_COMMITTER_DATE="%d +0000" % when)
+            return subprocess.run(["git", "-C", where, "-c", "user.name=fixture", "-c", "user.email=fixture@example.com",
+                                   "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false"] + list(args),
+                                  check=True, capture_output=True, text=True, env=env, timeout=60).stdout.strip()
+
+        gd(rrepo, now - 3000, "init", "-q", "-b", "trunk")
+        gd(rrepo, now - 3000, "commit", "-q", "--allow-empty", "-m", "root")
+        rcfg = os.path.join(tmp, "run.json")
+        with open(rcfg, "w", encoding="utf-8") as f:
+            json.dump({"base_branch": "trunk", "own_tests_command": "bash run.sh {worktree_posix} {tag} '{tests}'",
+                       "own_tests_done": "{worktree_posix}/build/runs/{tag}.done", "run_verdict_line": "exitCodes="}, f)
+        renv = dict(os.environ, BRIEF_GEN_CONFIG=rcfg, EVIDENCE_ROOT=ev)
+
+        def lane(tok, commit_at):
+            wt = os.path.join(tmp, "run-" + tok).replace("\\", "/")
+            gd(rrepo, commit_at, "worktree", "add", "-q", "-b", "lane-" + tok, wt, "trunk")
+            gd(wt, commit_at, "commit", "-q", "--allow-empty", "-m", "%s1 a run lane" % tok.upper())
+            with open(os.path.join(ev, "lanes", "%s-lane-%s.md" % (tok, today)), "w", encoding="utf-8") as f:
+                f.write("# Lane %s (ABC-9): a run topic\n\nWorktree %s, branch as git says.\n" % (tok, wt))
+            return wt
+
+        def lay(wt, *runs):
+            # each run: (tag, unix start, done text or None); a .log at the start, the .done a second later
+            folder = os.path.join(wt, "build", "runs")
+            shutil.rmtree(folder, ignore_errors=True)
+            os.makedirs(folder)
+            for tag, t, done in runs:
+                files = [(tag + ".log", "start\n", t)] + ([(tag + ".done", done, t + 1)] if done is not None else [])
+                for n, text, when in files:
+                    p = os.path.join(folder, n)
+                    with open(p, "w", encoding="utf-8", newline="") as f:
+                        f.write(text)
+                    os.utime(p, (when, when))
+
+        def rgen(tok, *extra, env=None):
+            out = os.path.join(tmp, "run-%s.md" % tok)
+            if os.path.exists(out):
+                os.remove(out)
+            r = subprocess.run([sys.executable, SCRIPT, "review", tok, "--out", out] + list(extra), capture_output=True,
+                               text=True, env=env or renv, timeout=60)
+            return r, (open(out, encoding="utf-8").read() if os.path.exists(out) else None)
+
+        wr = lane("rr", now - 2000)
+        rr_head = gd(wr, now, "rev-parse", "HEAD")
+
+        def red_or_running_refused():
+            cases = []
+            for runs, why in ((
+                    [("rr-fix1", now - 1900, "exitCodes=1,0\r\n")], "is red: %s/build/runs/rr-fix1.done reads exitCodes=1,0" % wr),
+                    ([("rr-check", now - 1900, None)], "rr-check, is still running or was killed"),
+                    ([("rr-odd", now - 1900, "firstError=none\n")], "has no exitCodes= line"),
+                    ([("rr-fix1", now - 1950, "exitCodes=0\n"), ("rr-pre", now - 1900, None)], "rr-pre, is still running"),
+                    ([("rr-own", now - 2500, "exitCodes=1\ntip=%s\n" % rr_head)], "rr-own.done reads exitCodes=1")):
+                lay(wr, *runs)
+                r, body = rgen("rr")
+                cases.append(r.returncode == 1 and body is None and why in r.stderr and "--allow-red-run" in r.stderr
+                             and "Traceback" not in r.stderr)
+            return all(cases)
+        check("run_verdict_line: a review is refused when the newest run on the tip is red, shapeless, named by tip= or "
+              "still running, a green run before it included", red_or_running_refused)
+
+        def green_or_off_tip_passes():
+            cases = []
+            for runs in ([("rr-fix1", now - 1900, "exitCodes=0,0\n")],
+                         [("rr-fix1", now - 1950, "exitCodes=1\n"), ("rr-fix2", now - 1900, "exitCodes=0\n")],
+                         [("rr-red", now - 2500, "exitCodes=1\n")],
+                         [("rr-other", now - 1900, "exitCodes=1\ntip=%s\n" % ("0" * 40))],
+                         []):
+                lay(wr, *runs)
+                cases.append(rgen("rr"))
+            shutil.rmtree(os.path.join(wr, "build", "runs"))
+            cases.append(rgen("rr"))
+            lay(wr, ("rr-fix1", now - 1900, "exitCodes=1\n"))
+            cases.append(rgen("rr", env=dict(os.environ, BRIEF_GEN_CONFIG=os.path.join(tmp, "e2e.json"), EVIDENCE_ROOT=ev)))
+            return all(r.returncode == 0 and body and "--allow-red-run" not in body and "refused" not in r.stderr
+                       for r, body in cases)
+        check("a green newest run, green after red, a red run below the tip, a tip= of another commit, no runs, no runs "
+              "folder, and a config with no run_verdict_line all pass", green_or_off_tip_passes)
+
+        def reflog_moves():
+            # a fast-forward makes a new tip; a stash, a reset to HEAD and a checkout away and back keep it
+            wf = lane("ff", now - 1500)
+            q = gd(wf, now - 1200, "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "Q the new tip")
+            gd(rrepo, now - 1200, "branch", "side-ff", q)
+            lay(wf, ("ff-fix1", now - 600, "exitCodes=1\n"))
+            on_p, _ = rgen("ff")
+            gd(wf, now, "merge", "-q", "--ff-only", "side-ff")
+            on_q, _ = rgen("ff")
+            ws = lane("ss", now - 1500)
+            with open(os.path.join(ws, "f.txt"), "w", encoding="utf-8", newline="") as f:
+                f.write("one\n")
+            gd(ws, now - 1400, "add", "f.txt")
+            gd(ws, now - 1400, "commit", "-q", "-m", "S2 a tracked file")
+            lay(ws, ("ss-fix1", now - 600, "exitCodes=1\n"))
+            with open(os.path.join(ws, "f.txt"), "w", encoding="utf-8", newline="") as f:
+                f.write("two\n")
+            got = [rgen("ss")[0].returncode]
+            for move in (("stash", "-q"), ("reset", "-q", "--hard", "HEAD"), ("checkout", "-q", "-b", "away-ss")):
+                gd(ws, now, *move)
+                if move[0] == "checkout":
+                    gd(ws, now, "checkout", "-q", "lane-ss")
+                got.append(rgen("ss")[0].returncode)
+            return on_p.returncode == 1 and on_q.returncode == 0 and got == [1, 1, 1, 1]
+        check("a fast-forward makes a new tip; a stash, a reset to HEAD and a checkout away and back hide no red run",
+              reflog_moves)
+
+        def allow_and_config():
+            lay(wr, ("rr-fix1", now - 1950, "exitCodes=0\n"), ("rr-pre", now - 1900, None))
+            passed, body = rgen("rr", "--allow-red-run")
+            bad_kind = subprocess.run([sys.executable, SCRIPT, "notes", "rr", "--review", os.path.join(tmp, "r.md"),
+                                       "--allow-red-run"], capture_output=True, text=True, env=renv, timeout=60)
+            os.makedirs(os.path.join(wr, "build", "runs", "rr-lost.done"))  # a done file that cannot be read
+            with open(os.path.join(wr, "build", "runs", "rr-lost.log"), "w", encoding="utf-8") as f:
+                f.write("start\n")
+            os.utime(os.path.join(wr, "build", "runs", "rr-lost.log"), (now - 1850, now - 1850))
+            lost, _ = rgen("rr")
+            flag_misuse = [subprocess.run([sys.executable, SCRIPT, "review", "rr", "--no-git", "--allow-red-run"],
+                                          capture_output=True, text=True, env=renv, timeout=60),
+                           subprocess.run([sys.executable, SCRIPT, "review", "rr", "--allow-red-run", "--out",
+                                           os.path.join(tmp, "run-nocfg.md")], capture_output=True, text=True,
+                                          env=dict(os.environ, BRIEF_GEN_CONFIG=os.path.join(tmp, "e2e.json"),
+                                                   EVIDENCE_ROOT=ev), timeout=60)]
+            errs = []
+            for extra in ({"run_verdict_line": "  "}, {"run_verdict_line": "exitCodes=", "own_tests_done": None,
+                                                        "own_tests_command": None},
+                          {"run_verdict_line": "exitCodes=", "own_tests_done": "{worktree_posix}/build/runs/done-{tag}.txt"},
+                          {"run_verdict_line": "exitCodes=", "own_tests_done": "{worktree_posix}/build/{tag}/{tag}.done"}):
+                base = {"base_branch": "trunk", "own_tests_command": "bash run.sh {tag}",
+                        "own_tests_done": "{worktree_posix}/build/runs/{tag}.done"}
+                base.update(extra)
+                p = os.path.join(tmp, "run-bad.json")
+                with open(p, "w", encoding="utf-8") as f:
+                    json.dump(base, f)
+                r = subprocess.run([sys.executable, SCRIPT, "review", "rr", "--out", os.path.join(tmp, "run-bad.md")],
+                                   capture_output=True, text=True, env=dict(renv, BRIEF_GEN_CONFIG=p), timeout=60)
+                errs.append(r.returncode == 2 and "run_verdict_line" in r.stderr and "Traceback" not in r.stderr)
+            return (passed.returncode == 0 and body and "Written with --allow-red-run on purpose: the newest run on the "
+                    "tip %s, rr-pre, is still running" % rr_head[:9] in body and "note, --allow-red-run" in passed.stderr
+                    and bad_kind.returncode == 2 and "--allow-red-run" in bad_kind.stderr and all(errs)
+                    and lost.returncode == 1 and "rr-lost.done, cannot be read" in lost.stderr and "Traceback" not in lost.stderr
+                    and all(r.returncode == 2 and "--allow-red-run" in r.stderr for r in flag_misuse)
+                    and not os.path.exists(os.path.join(tmp, "run-nocfg.md")))
+        check("--allow-red-run writes the brief with the run named, only on a review with git and a run_verdict_line; an "
+              "unreadable done file is refused; a blank run_verdict_line, one with no own_tests_done, or a done path "
+              "whose file name does not start with {tag}. or whose folder holds {tag} is a config error", allow_and_config)
     finally:
         def unlock(fn, path, _exc):  # git writes read-only pack files
             try:
