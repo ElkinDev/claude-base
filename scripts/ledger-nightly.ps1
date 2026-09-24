@@ -627,13 +627,15 @@ if (Test-Path $ktdPy) {
 # reads, so this run's count. Read-only, no agent, under a second; its lines start with "pulse |", never "reports |"
 # or "meters |", so it never reads its own output back as a warning. Exit 1 means an input was missing or a register
 # line malformed, and the block names it. The log it reads is this run's own, handed over as PULSE_LOG for these two
-# steps only. The script is the installed copy the session-start hook runs (~/.claude/tools), so the two never
-# drift apart; a clone that was never installed falls back to its own claude/tools.
-$toolsDir = Join-Path $HOME '.claude\tools'
-if (-not (Test-Path (Join-Path $toolsDir 'pulse.py'))) {
-    $toolsDir = Join-Path (Split-Path -Parent $scriptDir) 'claude\tools'
+# steps only. Each script is the installed copy the session-start hook runs (~/.claude/tools), so the two never
+# drift apart; a script that was never installed falls back to the clone's own claude/tools, one script at a time,
+# so a partial install still runs both (review kit-twins-0924a r2 note 3).
+function Resolve-KitTool([string]$name) {
+    $installed = Join-Path (Join-Path $HOME '.claude\tools') $name
+    if (Test-Path $installed) { return $installed }
+    return Join-Path (Join-Path (Split-Path -Parent $scriptDir) 'claude\tools') $name
 }
-$pulsePy = Join-Path $toolsDir 'pulse.py'
+$pulsePy = Resolve-KitTool 'pulse.py'
 if (Test-Path $pulsePy) {
     $env:PULSE_LOG = $log
     $pulse = Invoke-Step -Name 'pulse' -ArgLine ('"{0}"' -f $pulsePy) -TimeoutMs 120000
@@ -646,7 +648,7 @@ if (Test-Path $pulsePy) {
 # row goes into today's owner decisions file as one auto-class row with a 21:15 deadline, so it prints among the open
 # asks at the next session start. No agent, under a second; its lines start with "escalate |", which neither pulse.py
 # nor the escalation reads back. Exit 1 means an input could not be read or written, and its line says which.
-$escPy = Join-Path $toolsDir 'pulse-escalate.py'
+$escPy = Resolve-KitTool 'pulse-escalate.py'
 if (Test-Path $escPy) {
     $env:PULSE_LOG = $log
     $esc = Invoke-Step -Name 'escalate' -ArgLine ('"{0}"' -f $escPy) -TimeoutMs 120000

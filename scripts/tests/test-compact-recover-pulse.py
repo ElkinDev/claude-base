@@ -127,6 +127,16 @@ def main():
         check("a fresh install with the kit's pulse.py and no register prints no pulse at either entry",
               fresh_install_no_register)
 
+        def older_copy_without_the_flag():
+            # review kit-twins-0924a r2 note 1: a pulse.py that predates --if-set exits 2 on it (argparse), and the
+            # block it would print without the flag must still print
+            old = stub(tmp, "older", "import argparse\nap = argparse.ArgumentParser()\nap.add_argument('--max', "
+                                     "type=int)\nap.parse_args()\nprint('pulse head')\nprint('OLDER [pulse:w-older]')\n")
+            return all("OLDER [pulse:w-older]" in run(hook, args, p, dict(base, CLAUDE_PULSE_PY=old))[1]
+                       for args, p in ((["--rulings"], payload), ([], compact)))
+        check("a copy older than --if-set refuses it and is run again without it, so its block prints at both entries",
+              older_copy_without_the_flag)
+
         def exit_one_prints():
             s1 = stub(tmp, "exit1", "import sys\nprint('pulse head')\nprint('pulse: cannot read the ledger log x "
                                     "[pulse:log-missing]')\nsys.exit(1)\n")

@@ -292,7 +292,8 @@ def open_asks(data, cap=ASKS_CAP):
 # also trimmed to the room its caller gives it, whole lines from the end, so it never pushes the output past CAP.
 # A subagent gets no pulse, as it gets no asks. A missing script prints nothing, and the script is run with
 # --if-set, so a machine that installed the kit and never wrote a pulse register sees no block either (review
-# kit-twins-0924a r1 finding 1). CLAUDE_PULSE_PY moves the script.
+# kit-twins-0924a r1 finding 1); a copy older than the flag refuses it with exit 2 and is run again without it,
+# as it was before (r2 note 1). CLAUDE_PULSE_PY moves the script.
 PULSE_PY = os.path.join(os.path.expanduser("~"), ".claude", "tools", "pulse.py")
 PULSE_MAX = 10
 PULSE_COMPACT_MAX = 3
@@ -312,8 +313,11 @@ def pulse_block(data, max_lines=PULSE_MAX, room=CAP):
     try:
         if not os.path.isfile(script):
             return ""
-        run = subprocess.run([sys.executable, script, "--max", str(max_lines), "--if-set"], capture_output=True,
-                             timeout=PULSE_TIMEOUT, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+        cmd = [sys.executable, script, "--max", str(max_lines), "--if-set"]
+        env = dict(os.environ, PYTHONIOENCODING="utf-8")
+        run = subprocess.run(cmd, capture_output=True, timeout=PULSE_TIMEOUT, env=env)
+        if run.returncode == 2 and b"--if-set" in run.stderr:
+            run = subprocess.run(cmd[:-1], capture_output=True, timeout=PULSE_TIMEOUT, env=env)
         if run.returncode not in (0, 1):  # 1 names a missing input or a malformed register line in the block
             return ""
         lines = run.stdout.decode("utf-8", "replace").strip().splitlines()[:max_lines]
