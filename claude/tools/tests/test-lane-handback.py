@@ -257,7 +257,31 @@ class HandbackTest(unittest.TestCase):
         self.assertEqual(os.path.join(self.base, "reviews", "*.md"), config["reviews_glob"])
         self.assertEqual(os.path.join(self.base, "handback.log"), config["handback_log"])
         self.assertEqual("", config["brief_gen"])
+        self.assertEqual(os.path.dirname(os.path.abspath(path)), config["evidence_root"])
 
+
+    def test_a_file_gone_between_the_glob_and_its_date_never_raises(self):
+        """A retention sweep or another lane can remove a review between the glob and a later date read
+        (review kit-twins-0924d note 1): the block still prints, the file sorts last."""
+        _, head = self.make_repo()
+        self.write("lanes/abcd-2026-09-24.md", "# Lane abcd\n\nTip %s, Widget.kt.\n" % head[:9])
+        self.write("reviews/abcd-2026-09-24.md", "Disposition: CLEAR\n")
+        self.write("reviews/efgh-2026-09-24.md", "Disposition: CLEAR\n\nWidget.kt:12 read.\n")
+        real, seen = os.path.getmtime, {}
+
+        def flaky(path):
+            # a review is found by its first date read and gone for every later one
+            if "reviews" in str(path):
+                seen[path] = seen.get(path, 0) + 1
+                if seen[path] > 1:
+                    raise FileNotFoundError(path)
+            return real(path)
+
+        from unittest import mock
+        with mock.patch("os.path.getmtime", flaky):
+            lines, _, count = self.block()
+        self.assertTrue(any(ln.startswith("reviews: abcd-2026-09-24.md") for ln in lines), "\n".join(lines))
+        self.assertEqual(1, count, "\n".join(lines))
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

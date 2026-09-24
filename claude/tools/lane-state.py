@@ -30,7 +30,8 @@ session files that count as evidence for that ledger: one glob or a list), devic
 that bind a session token to one phone, empty for no narrowing), reviews_glob (the review
 files the lane block reads), handback_log (the file the lane block appends one line to),
 brief_gen (the brief-gen.py whose verdict reader the lane block uses, default beside this
-file; the kit ships it under scripts/, so point this key at the project's copy).
+file; the kit ships it under scripts/, so point this key at the project's copy), evidence_root
+(the folder the block's paths are printed relative to, default the config's own folder).
 
 Env seams, each of which wins over the default and is what the recovery hook wires:
 CLAUDE_LANE_STATE_CONFIG (the config file), CLAUDE_LANE_STATE_SHEET (the sheet written
@@ -104,6 +105,7 @@ def defaults_for(base):
         "reviews_glob": os.path.join(base, "reviews", "*.md"),
         "handback_log": os.path.join(base, "handback.log"),
         "brief_gen": "",
+        "evidence_root": base,
     }
 
 
@@ -694,12 +696,21 @@ def token_files(pattern, token):
     """The files of the glob named <token>-*, newest first: `crk1` never takes `crk1x-...`."""
     prefix = token.lower() + "-"
     paths = [p for p in glob.glob(pattern) if os.path.basename(p).lower().startswith(prefix)]
-    return sorted(paths, key=lambda p: (os.path.getmtime(p), p), reverse=True)
+    return sorted(paths, key=lambda p: (mtime_of(p), p), reverse=True)
 
 
 def read_text(path):
     with open(path, encoding="utf-8", errors="replace") as handle:
         return handle.read(READ_LIMIT)
+
+
+def mtime_of(path):
+    """A file's mtime, or 0 when it went between the glob and this read (a sweep, another lane): the
+    block sorts it last and never raises for it."""
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
 
 
 def open_items(text):
@@ -762,7 +773,7 @@ def overlaps(names, patterns, token, now, days=OVERLAP_DAYS):
             continue
         for p in paths:
             found.setdefault(p, name)
-    ordered = sorted(found.items(), key=lambda item: os.path.getmtime(item[0]), reverse=True)
+    ordered = sorted(found.items(), key=lambda item: mtime_of(item[0]), reverse=True)
     return ordered, generic, len(docs)
 
 
@@ -784,7 +795,7 @@ def handback_lines(config, token, now=None, dirs=None):
     """The block and the log fields (tip check state, overlap count). Every source that fails prints
     one line saying so; the block never raises for a missing file or a git failure."""
     now = time.time() if now is None else now
-    root = os.path.dirname(os.path.dirname(os.path.abspath(config["lanes_glob"])))
+    root = config.get("evidence_root") or os.path.dirname(os.path.dirname(os.path.abspath(config["lanes_glob"])))
     stamp = datetime.fromtimestamp(now).strftime("%Y-%m-%d %H:%M")
     lines = ["lane %s %s" % (token, stamp)]
     reports = token_files(config["lanes_glob"], token)
@@ -804,7 +815,7 @@ def handback_lines(config, token, now=None, dirs=None):
         if len(reports) > 1:
             lines.append("older reports: " + ", ".join(os.path.basename(p) for p in reports[1:4]))
     else:
-        lines.append("report none: no %s-* file under %s" % (token, posix(os.path.dirname(config["lanes_glob"]))))
+        lines.append("report none: no %s-* file matches %s" % (token, posix(config["lanes_glob"])))
 
     s3 = "no-report" if not reports else "no-worktree"
     names = []
@@ -844,7 +855,7 @@ def handback_lines(config, token, now=None, dirs=None):
                 what = verdict(path) if verdict else "?"
             except OSError as error:
                 what = "unreadable: %s" % error
-            shown.append("%s %s %s" % (os.path.basename(path), when_text(os.path.getmtime(path), now), what))
+            shown.append("%s %s %s" % (os.path.basename(path), when_text(mtime_of(path), now), what))
         lines.append("reviews: " + "; ".join(shown))
     else:
         lines.append("reviews none")
