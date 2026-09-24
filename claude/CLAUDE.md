@@ -50,6 +50,10 @@ correct way with a concrete example.
 - When you ask the user a question, STOP and wait for the answer. Never assume it.
 - Propose alternatives with tradeoffs when relevant, and give a recommendation, not an exhaustive
   survey.
+- An `rm` whose path holds a shell variable spells each variable `${VAR:?}`, as in
+  `rm -f "${DIR:?}/${name:?}"`. Claude Code 2.1.281 and later asks before an `rm` on a possibly
+  empty variable path, and an unattended session denies it after about two minutes; with `:?` it
+  runs without asking, and an empty variable stops the shell instead of deleting.
 
 ## Deploy and status honesty
 Never say a change is "in", "live", or "in place" unless it is merged, passed the project's QA and

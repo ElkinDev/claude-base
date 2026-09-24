@@ -11,10 +11,22 @@ from git for ever, because a removal keeps the branch; what a removal really des
 ignored `build/` tree, and the reports cite exactly four kinds of subtree inside it:
 `build/lockrun` and `build/precheck` at the worktree root, and every `reports` or
 `test-results` directory whose parent is a `build` directory, at any depth. Before a worktree
-is removed those subtrees are copied into the evidence root and the copy is VERIFIED, file
-count and byte count against the source; only a verified archive lets the removal run. The
-archive leaf carries the worktree's tip, `<directory name>--<tip9>`, so a worktree directory
-name reused later by another lane gets its own leaf instead of writing over the first one.
+is removed those subtrees are written into ONE zip file in the evidence root, and the zip is
+VERIFIED: its entries are counted and their sizes summed against a fresh walk of the source,
+and every entry's CRC is read back; only a verified archive lets the removal run. One zip per
+worktree keeps the evidence folder at one file per removal instead of the thousands of report
+files a copy would add (222,379 files for 211 worktrees on 2026-09-24), and a path inside a zip
+has no Windows length limit, which stopped 54 of those copies. Source files are read through
+the long-path prefix, so a report nested past 260 characters is archived too. The zip is named
+after the worktree's tip, `<directory name>--<tip9>.zip`, so a worktree directory name reused
+later by another lane gets its own zip. A zip is never replaced: when that name is taken,
+whatever the file holds, the next free `<directory name>--<tip9>-2.zip`, `-3` and so on is
+written, so a path reused at the same tip, or a run that archived and then skipped, keeps every
+earlier zip whole. The one exception is two sweeps on the same worktree at the same moment: both
+can pick the same free name and the later rename replaces the earlier zip, which loses nothing,
+since both are verified copies of the same tree at the same tip (review wtzp r2 note 1). Each
+zip's `.source` entry names the worktree it was made from. It is written
+as `.zip.part` and renamed only once verified, so a crash never leaves a zip that looks complete.
 
 The archive is this tool's longest step, up to a minute on a large worktree, so the freshness
 belts are read again AFTER it and before the removal: a gate that starts during the copy is
@@ -38,10 +50,10 @@ Standard library only. Every git call is an argument list; no shell.
 
 import argparse
 import os
-import shutil
 import stat
 import subprocess
 import sys
+import zipfile
 
 CLASS_ORDER = (
     "REMOVE",
@@ -63,12 +75,15 @@ ARCHIVE_BUILD_LEAVES = ("reports", "test-results")
 SKIP_DIR_NAMES = (".git", ".gradle", "node_modules")
 # Never walked when their parent is a `build` directory: generated bulk, no evidence.
 SKIP_BUILD_CHILDREN = ("intermediates", "tmp", "kotlin", "generated", "outputs")
-# The archive names the source it came from, so a second worktree of the same name stops.
+# The zip's entry naming the worktree it was made from.
 SOURCE_MARKER = ".source"
-# Windows refuses a path near 260 characters; a destination past this is a stop, not a skip.
+ARCHIVE_SUFFIX = ".zip"
+# Windows refuses a path near 260 characters; only the zip's own path must stay under this.
 MAX_DEST_PATH = 240
-# Characters of the tip that name the archive leaf, so a reused directory name keeps two leaves.
+# Characters of the tip that name the archive, so a reused directory name keeps two zips.
 TIP_LENGTH = 9
+# Zips one worktree name and tip may take, `-2` to this; past it the removal stops.
+MAX_LEAVES = 99
 
 
 class ArchiveStop(Exception):
@@ -157,11 +172,6 @@ def is_reparse(path):
     return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
 
 
-def ignore_links(dirpath, names):
-    """copytree's ignore callable: never copy through a symlink or a junction."""
-    return [name for name in names if is_reparse(os.path.join(dirpath, name))]
-
-
 def archive_subtrees(worktree):
     """Relative paths of every build subtree of this worktree the archive must hold.
 
@@ -194,15 +204,23 @@ def archive_subtrees(worktree):
     return sorted(set(found))
 
 
-def measure_tree(source, dest_prefix=None):
-    """(files, bytes) of a tree, links skipped and never followed.
+def long_path(path):
+    """The path as Windows reads it past 260 characters: absolute, with the long-path prefix."""
+    full = os.path.abspath(path)
+    if os.name != "nt" or full.startswith("\\\\?\\"):
+        return full
+    if full.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + full[2:]
+    return "\\\\?\\" + full
 
-    With a destination prefix, every file's destination path is checked as it is counted, so
-    a path Windows would refuse stops the run before anything is copied.
-    """
-    files = 0
-    total = 0
-    for dirpath, dirnames, filenames in os.walk(source, followlinks=False):
+
+def list_files(worktree, relative):
+    """[(full path, zip entry name, bytes)] of every file of one subtree, links skipped and never
+    followed, walked through the long-path prefix so no deep report is silently left out."""
+    root = long_path(os.path.join(worktree, relative))
+    base = long_path(worktree)
+    found = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         dirnames[:] = [
             name for name in sorted(dirnames) if not is_reparse(os.path.join(dirpath, name))
         ]
@@ -210,21 +228,33 @@ def measure_tree(source, dest_prefix=None):
             full = os.path.join(dirpath, name)
             if is_reparse(full):
                 continue
-            if dest_prefix is not None:
-                dest = os.path.join(dest_prefix, os.path.relpath(full, source))
-                if len(dest) > MAX_DEST_PATH:
-                    raise ArchiveStop(
-                        "destination path longer than {} characters: {}".format(
-                            MAX_DEST_PATH, dest
-                        )
-                    )
-            files += 1
-            total += os.path.getsize(full)
+            entry = os.path.relpath(full, base).replace(os.sep, "/")
+            found.append((full, entry, os.path.getsize(full)))
+    return found
+
+
+def measure_subtrees(worktree, subtrees):
+    """(files, bytes) of the subtrees, from a walk of its own, never from list_files' result."""
+    files = 0
+    total = 0
+    for relative in subtrees:
+        for dirpath, dirnames, filenames in os.walk(
+            long_path(os.path.join(worktree, relative)), followlinks=False
+        ):
+            dirnames[:] = [
+                name for name in dirnames if not is_reparse(os.path.join(dirpath, name))
+            ]
+            for name in filenames:
+                full = os.path.join(dirpath, name)
+                if is_reparse(full):
+                    continue
+                files += 1
+                total += os.path.getsize(full)
     return files, total
 
 
 def worktree_tip(path):
-    """The worktree's short tip, read before anything is copied. Names its archive leaf."""
+    """The worktree's short tip, read before anything is copied. Names its archive."""
     code, out, err = git(["-C", path, "rev-parse", "--short={}".format(TIP_LENGTH), "HEAD"])
     tip = out.strip().splitlines()[0].strip() if code == 0 and out.strip() else ""
     if not tip:
@@ -232,102 +262,93 @@ def worktree_tip(path):
     return tip
 
 
-def archive_leaf_name(path, tip):
-    """`<worktree directory name>--<tip9>`: two lanes of the same name keep two leaves."""
-    return "{}--{}".format(os.path.basename(os.path.normpath(path)), tip)
+def archive_leaf_name(path, tip, number=1):
+    """`<worktree directory name>--<tip9>.zip`, or `...-<number>.zip` past the first."""
+    suffix = "" if number == 1 else "-{}".format(number)
+    return "{}--{}{}{}".format(os.path.basename(os.path.normpath(path)), tip, suffix, ARCHIVE_SUFFIX)
 
 
 def archive_destination(path, evidence_root, tip):
-    """Where this worktree's archive lives: one leaf per worktree directory name and tip."""
-    return os.path.join(evidence_root, ARCHIVE_LEAF, archive_leaf_name(path, tip))
+    """The first zip name of this worktree and tip that no file holds yet. An existing zip is
+    never written over, whatever it holds; a `.part` left by a killed run is. Two sweeps at the
+    same moment can both pick one name, and then the later verified zip of the same tree replaces
+    the earlier one."""
+    for number in range(1, MAX_LEAVES + 1):
+        dest = os.path.join(evidence_root, ARCHIVE_LEAF, archive_leaf_name(path, tip, number))
+        if not os.path.lexists(dest):
+            return dest
+    raise ArchiveStop(
+        "no free archive name: {} zips of {} at {} exist".format(MAX_LEAVES, path, tip)
+    )
 
 
-def plan_archive(path, evidence_root, tip):
+def plan_archive(path, dest):
     """(subtrees, files, bytes) that an archive of this worktree would hold. Writes nothing."""
-    dest_root = archive_destination(path, evidence_root, tip)
+    if len(dest) > MAX_DEST_PATH:
+        raise ArchiveStop(
+            "archive path longer than {} characters: {}".format(MAX_DEST_PATH, dest)
+        )
     subtrees = archive_subtrees(path)
-    files = 0
-    total = 0
-    for relative in subtrees:
-        try:
-            count, size = measure_tree(
-                os.path.join(path, relative), os.path.join(dest_root, relative)
-            )
-        except OSError as exc:
-            raise ArchiveStop("cannot read {}: {}".format(relative, one_line(str(exc))))
-        files += count
-        total += size
+    try:
+        files, total = measure_subtrees(path, subtrees)
+    except OSError as exc:
+        raise ArchiveStop("cannot read the build subtrees: {}".format(one_line(str(exc))))
     return subtrees, files, total
 
 
-def read_marker(dest_root):
-    """The source path this archive leaf was written for, or empty when it has none."""
-    marker = os.path.join(dest_root, SOURCE_MARKER)
-    try:
-        with open(marker, "r", encoding="utf-8") as handle:
-            return handle.read().strip()
-    except OSError:
-        return ""
-
-
 def archive_worktree(path, evidence_root):
-    """Copy the build subtrees of this worktree into the evidence root and prove the copy.
+    """Write the build subtrees of this worktree into one zip and prove it.
 
-    Returns (files, bytes) actually archived. Raises ArchiveStop when the archive cannot be
-    made or cannot be proved equal to its source, which keeps the worktree on disk.
+    Returns (files, bytes) archived. Raises ArchiveStop when the zip cannot be made or cannot
+    be proved equal to its source, which keeps the worktree on disk. A zip already at this
+    worktree's name, from an earlier run or an earlier worktree at the same path and tip, is
+    kept whole and this one takes the next free name.
     """
     tip = worktree_tip(path)
-    dest_root = archive_destination(path, evidence_root, tip)
-    recorded = read_marker(dest_root)
-    if recorded and norm(recorded) != norm(path):
-        raise ArchiveStop(
-            "{} already holds the archive of {}".format(dest_root, recorded)
-        )
-    subtrees, planned_files, planned_bytes = plan_archive(path, evidence_root, tip)
+    dest = archive_destination(path, evidence_root, tip)
+    subtrees, planned_files, planned_bytes = plan_archive(path, dest)
     if not subtrees:
         return 0, 0
+    part = dest + ".part"
     try:
-        os.makedirs(dest_root, exist_ok=True)
-        if not recorded:
-            with open(
-                os.path.join(dest_root, SOURCE_MARKER), "w", encoding="utf-8"
-            ) as handle:
-                handle.write(os.path.abspath(path) + "\n")
-        for relative in subtrees:
-            shutil.copytree(
-                os.path.join(path, relative),
-                os.path.join(dest_root, relative),
-                dirs_exist_ok=True,
-                symlinks=True,
-                ignore=ignore_links,
-            )
-    except (OSError, shutil.Error) as exc:
-        raise ArchiveStop("copy failed: " + one_line(str(exc)))
-
-    files = 0
-    total = 0
-    for relative in subtrees:
-        source = os.path.join(path, relative)
-        dest = os.path.join(dest_root, relative)
-        try:
-            source_files, source_bytes = measure_tree(source)
-            dest_files, dest_bytes = measure_tree(dest)
-        except OSError as exc:
-            raise ArchiveStop("cannot count {}: {}".format(relative, one_line(str(exc))))
-        if (source_files, source_bytes) != (dest_files, dest_bytes):
-            raise ArchiveStop(
-                "{}: source files={} bytes={}, archive files={} bytes={}".format(
-                    relative, source_files, source_bytes, dest_files, dest_bytes
-                )
-            )
-        files += source_files
-        total += source_bytes
-    if (files, total) != (planned_files, planned_bytes):
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        # a report stamped before 1980 is stored with the 1980 date, never refused
+        with zipfile.ZipFile(
+            part, "w", compression=zipfile.ZIP_DEFLATED, strict_timestamps=False
+        ) as archive:
+            archive.writestr(SOURCE_MARKER, os.path.abspath(path) + "\n")
+            for relative in subtrees:
+                for full, entry, _ in list_files(path, relative):
+                    archive.write(full, entry)
+        with zipfile.ZipFile(part) as archive:
+            broken = archive.testzip()
+            entries = [info for info in archive.infolist() if info.filename != SOURCE_MARKER]
+    except (OSError, ValueError, zipfile.BadZipFile, zipfile.LargeZipFile) as exc:
+        raise ArchiveStop("zip failed: " + one_line(str(exc)))
+    if broken is not None:
+        raise ArchiveStop("the zip entry {} fails its CRC".format(broken))
+    zip_files = len(entries)
+    zip_bytes = sum(info.file_size for info in entries)
+    try:
+        source_files, source_bytes = measure_subtrees(path, subtrees)
+    except OSError as exc:
+        raise ArchiveStop("cannot count the build subtrees: {}".format(one_line(str(exc))))
+    if (source_files, source_bytes) != (zip_files, zip_bytes):
         raise ArchiveStop(
-            "the source changed during the copy: planned files={} bytes={}, copied"
-            " files={} bytes={}".format(planned_files, planned_bytes, files, total)
+            "source files={} bytes={}, archive files={} bytes={}".format(
+                source_files, source_bytes, zip_files, zip_bytes
+            )
         )
-    return files, total
+    if (source_files, source_bytes) != (planned_files, planned_bytes):
+        raise ArchiveStop(
+            "the source changed during the zip: planned files={} bytes={}, zipped"
+            " files={} bytes={}".format(planned_files, planned_bytes, source_files, source_bytes)
+        )
+    try:
+        os.replace(part, dest)
+    except OSError as exc:
+        raise ArchiveStop("cannot rename {}: {}".format(part, one_line(str(exc))))
+    return source_files, source_bytes
 
 
 def run_in_flight(path):
@@ -489,7 +510,8 @@ def sweep(args, after_archive=None):
         for _, path, _ in removable:
             try:
                 tip = worktree_tip(path)
-                _, files, total = plan_archive(path, args.evidence_root, tip)
+                dest = archive_destination(path, args.evidence_root, tip)
+                _, files, total = plan_archive(path, dest)
             except ArchiveStop as exc:
                 print("WOULD-STOP {}: archive not verified: {}".format(path, exc))
                 continue
@@ -497,7 +519,7 @@ def sweep(args, after_archive=None):
             archive_bytes += total
             print(
                 "WOULD-ARCHIVE {} leaf={} files={} bytes={}".format(
-                    path, archive_leaf_name(path, tip), files, total
+                    path, os.path.basename(dest), files, total
                 )
             )
         for path in unmatched:
@@ -589,8 +611,8 @@ def build_parser():
     parser.add_argument(
         "--evidence-root",
         default=None,
-        help="root the build subtrees are archived under, in worktree-archive; default"
-        " EVIDENCE_ROOT, else {repo_parent}/evidence",
+        help="root the build subtrees are zipped under, one zip per worktree in worktree-archive;"
+        " default EVIDENCE_ROOT, else {repo_parent}/evidence",
     )
     parser.add_argument("--limit", type=int, default=5, help="remove at most N in one run")
     parser.add_argument("--apply", action="store_true", help="remove instead of only listing")

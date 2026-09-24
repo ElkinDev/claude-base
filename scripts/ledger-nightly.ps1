@@ -143,6 +143,14 @@ function Format-Bytes {
     return "$Bytes B"
 }
 
+# The long-path form of a local path, which Windows PowerShell 5.1 lists and deletes past 260
+# characters; a UNC path or one that already carries the prefix comes back as it is.
+function Get-LongPath {
+    param([string]$Path)
+    if ($Path.StartsWith('\\')) { return $Path }
+    return '\\?\' + $Path
+}
+
 # True when the folder is a reparse point or holds one at any depth, and true
 # when it cannot be read, because both mean recursive delete is not safe here.
 function Test-HasLink {
@@ -186,14 +194,18 @@ function Invoke-ScratchSweep {
             $pad = Join-Path $session.FullName 'scratchpad'
             if (-not (Test-Path -LiteralPath $pad -PathType Container)) { continue }
             if (-not $pad.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            # A scratchpad can hold build output past 260 characters (Kotlin class names). Without the
+            # long-path prefix Get-ChildItem silently skips those files, so a pad could be dated by
+            # what it could see, and Remove-Item fails on them.
+            $padLong = Get-LongPath -Path $pad
 
             try {
-                if (Test-HasLink -Path $pad) {
+                if (Test-HasLink -Path $padLong) {
                     $linked++
                     continue
                 }
 
-                $inside = @(Get-ChildItem -LiteralPath $pad -Recurse -Force -File -ErrorAction SilentlyContinue)
+                $inside = @(Get-ChildItem -LiteralPath $padLong -Recurse -Force -File -ErrorAction SilentlyContinue)
                 $newest = $null
                 foreach ($file in $inside) {
                     if ($null -eq $newest -or $file.LastWriteTime -gt $newest) { $newest = $file.LastWriteTime }
@@ -211,7 +223,7 @@ function Invoke-ScratchSweep {
                 foreach ($file in $inside) { $size += $file.Length }
 
                 if (-not $DryRun) {
-                    Remove-Item -LiteralPath $pad -Recurse -Force -ErrorAction Stop
+                    Remove-Item -LiteralPath $padLong -Recurse -Force -ErrorAction Stop
                 }
                 $pads++
                 $files += $inside.Count
@@ -665,6 +677,36 @@ if ($sweepDue) {
     Write-Log 'retention | skipped, -SkipRetention'
 } else {
     Write-Log 'retention | not due, evening run'
+}
+
+# 5. the worktree sweep, morning only, and only when `worktree_sweep.repo` in ledger-config.json names a
+# repository (null, the default, is no sweep). worktree-sweep.py removes the landed, clean worktrees of that
+# repository, oldest first and at most `limit` a run, after writing each one's build evidence into one
+# verified zip that is never replaced; it refuses the whole run with exit 3 while any *.lock.d is held under
+# `lock_root` and stops at the first refusal with exit 2. Its lines start with "worktrees |". Python runs
+# unbuffered (-u): its output goes to a file, and a sweep killed at the step's cap would otherwise lose every
+# line it had not flushed. No agent. A dry retention run never reaches it.
+if ($sweepDue -and -not $RetentionDryRun) {
+    $wtConfig = Read-LedgerConfig
+    $wtBlock = $null
+    if ($null -ne $wtConfig) { $wtBlock = $wtConfig.worktree_sweep }
+    if ($null -eq $wtBlock -or -not $wtBlock.repo) {
+        Write-Log 'worktrees | no worktree_sweep.repo in ledger-config.json, skipped'
+    } else {
+        $wtsPy = Resolve-KitTool 'worktree-sweep.py'
+        if (-not (Test-Path $wtsPy)) {
+            Write-Log 'worktrees | worktree-sweep.py not found, skipped'
+        } else {
+            $wtLimit = 30
+            if ($null -ne $wtBlock.limit) { $wtLimit = [int]$wtBlock.limit }
+            # A path that ends in a backslash would escape its closing quote on the command line.
+            $wtArgs = '-u "{0}" --repo "{1}" --apply --limit {2}' -f $wtsPy, ([string]$wtBlock.repo).TrimEnd('\', '/'), $wtLimit
+            if ($wtBlock.lock_root) { $wtArgs += (' --lock-root "{0}"' -f ([string]$wtBlock.lock_root).TrimEnd('\', '/')) }
+            if ($wtBlock.evidence_root) { $wtArgs += (' --evidence-root "{0}"' -f ([string]$wtBlock.evidence_root).TrimEnd('\', '/')) }
+            $wts = Invoke-Step -Name 'worktrees' -ArgLine $wtArgs -TimeoutMs 2700000
+            Write-Log "worktree-sweep.py exit code $($wts.Code)"
+        }
+    }
 }
 
 Write-Log "end"
