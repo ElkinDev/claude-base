@@ -42,6 +42,12 @@ Agents launched from this seat keep their own definitions and are never the seat
 
 Never continue the most recent conversation of a folder from a seated pane. Profiles share the projects directory, so that flag can load another seat's session into this one, and the appended seat text does not stop it. Resume by the picker or by session id.
 
+## Hand-backs
+
+A lane is done when its newest report `lanes/<token>-*.md` exists and names the tip `git rev-parse` gives on its worktree; a monitor line saying done or idle only triggers that check, and the artifact wins over the UI state. The first read on every agent completion is `python ~/.claude/tools/lane-state.py lane <token>`: one block of at most 40 lines with that check (s3=ok, mismatch, no-report or no-worktree), the report's open items, the lane's reviews with their verdicts, its gates, and the recent reports that name a file the lane's diff touches. A report or a review is opened only for what the block does not carry.
+
+The number: reads of a report, a review, a gate file or git in the turns that agent completions start, per completion turn, counted by hand from the session transcript (the kit ships no reader for it), with the hand-back log (one line per block: date, time, lane, s3, overlaps) as the count of completions read through the block. The rule is kept while those reads stay at 1.0 or less per completion turn over the next two ledger windows; else this section is reverted with its register row.
+
 ## Landing trains
 
 Lanes land in trains. A train takes every lane that is CLEAR (its review) and green (its own gate on its current tip) when it is built, merges them onto main's tip in one union branch, runs one union gate over it, and lands with the union proof: the union's diff against main is the sum of its members' diffs, nothing more. A train leaves on readiness, never on a clock: when two or more lanes are CLEAR and green and waiting, when the oldest waiting lane has been CLEAR and green for 60 minutes, or when a fix a held release candidate waits on is CLEAR and green. There is no daily cap. `python scripts/train-due.py` reads that trigger from disk at each planning point (a review read, a gate green, a train landed) and prints `train DUE` or `train not due` with its reason; `--verbose` lists every unmerged lane it did not count and why. A lane held on purpose (an owner ruling it waits for, a candidate freeze) is one line of `train-holds.txt` beside the register, `<token> <reason>`, written when the hold is decided and removed when it is released.
