@@ -28,7 +28,7 @@ this tool is the shape), so a change of scope is a config change, never a code c
   and .aab of that stem beside it goes, by either rule, whatever release_kinds holds. Artifacts
   and companions are never taken by the age rules, so the record rule cannot take a recent
   release's APK before the release rule judges it. A project with no such builds sets apk_rule
-  false.
+  false and release_kinds empty: a kind listed there stays out of the age rules either way.
 - `trash_days`: 0 deletes; more moves each file into `<trash>/<YYYY-MM-DD>/<its path>` and removes
   a trash day folder once it is older than that many days. An evidence root is usually not under
   git, so the trash is the only road back from a wrong scope or a wrong clock.

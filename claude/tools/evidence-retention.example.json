@@ -1,5 +1,5 @@
 {
-  "_help": "Scope of evidence-retention.py. Globs are relative to the evidence root and `*` crosses folders. A round folder goes whole when its newest file passes the cutoff; a record file directly in its top folder goes on its own, one deeper goes with its folder; keep wins over both and must name every file a tool reads at run time. Leave out any folder that holds the only copy of something (specs of unshipped work, design drafts). apk_rule is the Android release rule (vc<N> in build names, .aab bundles mark releases); set it false for any other stack. trash_days 30: removed files wait 30 days in <root>-trash.",
+  "_help": "Scope of evidence-retention.py. Globs are relative to the evidence root and `*` crosses folders. A round folder goes whole when its newest file passes the cutoff; a record file directly in its top folder goes on its own, one deeper goes with its folder; keep wins over both and must name every file a tool reads at run time. Leave out any folder that holds the only copy of something (specs of unshipped work, design drafts). apk_rule is the Android release rule (vc<N> in build names, .aab bundles mark releases); for any other stack keep it false and release_kinds empty, since a kind listed there is kept out of the age rules even with the release rule off. trash_days 30: removed files wait 30 days in <root>-trash.",
   "round_folders": [
     "bench/*",
     "rounds/*"
@@ -17,8 +17,6 @@
     "briefs/TEMPLATE-*.md"
   ],
   "apk_rule": false,
-  "release_kinds": [
-    ".apk"
-  ],
+  "release_kinds": [],
   "trash_days": 30
 }

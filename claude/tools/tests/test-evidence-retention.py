@@ -183,12 +183,12 @@ class EvidenceRetentionTest(unittest.TestCase):
             self.release(number, days)
         self.put("builds/myapp-vc79-candidate.apk", 44)
         self.put("builds/myapp-vc80-candidate.apk", 43)
-        self.put("Findings/04_bench/s21u-vc78-t2-2026-08-15/t2-installed.apk", 20)  # young, but vc78
+        self.put("Findings/04_bench/phone-vc78-t2-2026-08-15/t2-installed.apk", 20)  # young, but vc78
         code, out = self.run_it("--apply")
         self.assertEqual(0, code, out)
         self.assertFalse(self.exists("builds/myapp-vc79-candidate.apk"))
         self.assertTrue(self.exists("builds/myapp-vc80-candidate.apk"), "exactly ten behind stays")
-        self.assertFalse(self.exists("Findings/04_bench/s21u-vc78-t2-2026-08-15/t2-installed.apk"))
+        self.assertFalse(self.exists("Findings/04_bench/phone-vc78-t2-2026-08-15/t2-installed.apk"))
         self.assertTrue(self.exists("builds/myapp-vc79-abc-release.aab"), "under the letter a bundle is not an APK")
 
     def test_an_apk_without_a_release_in_its_path_takes_the_release_of_its_date(self):
