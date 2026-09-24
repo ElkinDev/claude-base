@@ -19,5 +19,7 @@
   "review_tools": 14,
   "fix_tools": 20,
   "run_verdict_line": null,
-  "_run_verdict_line": "`run_verdict_line` is the prefix of the verdict line a done file carries, for example exitCodes= for a done file reading exitCodes=0,0. When set (it needs own_tests_done, whose file name starts with {tag}.), a review brief is refused while the newest test run on the lane's tip is red or has no done file yet; --allow-red-run writes it on purpose and names the run for the reviewer. null leaves the check off."
+  "_run_verdict_line": "`run_verdict_line` is the prefix of the verdict line a done file carries, for example exitCodes= for a done file reading exitCodes=0,0. When set (it needs own_tests_done, whose file name starts with {tag}.), a review brief is refused while the newest test run on the lane's tip is red or has no done file yet; --allow-red-run writes it on purpose and names the run for the reviewer. null leaves the check off.",
+  "guard_log": null,
+  "_guard_log": "`guard_log` is a file the run check appends one line to per review brief it read, `<stamp> review <token> green|refused|allowed <why>`, relative to the evidence root unless absolute, for example ledger/brief-gen-guard.log. It is written only while its folder exists, so a missing folder turns it off, and a write that fails never stops the brief. It needs run_verdict_line. null writes no log."
 }

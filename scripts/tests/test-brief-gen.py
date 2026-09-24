@@ -617,6 +617,53 @@ def main():
         check("--allow-red-run writes the brief with the run named, only on a review with git and a run_verdict_line; an "
               "unreadable done file is refused; a blank run_verdict_line, one with no own_tests_done, or a done path "
               "whose file name does not start with {tag}. or whose folder holds {tag} is a config error", allow_and_config)
+
+        def guard_log_lines():
+            # guard_log: one line per review brief the run check read, only while the log's folder exists; a log
+            # that cannot be written never stops the brief; a blank guard_log or one without the check is refused
+            gcfg = os.path.join(tmp, "guard.json")
+            with open(rcfg, encoding="utf-8") as f:
+                conf = json.load(f)
+            conf["guard_log"] = "ledger/guard.log"
+            with open(gcfg, "w", encoding="utf-8") as f:
+                json.dump(conf, f)
+            genv = dict(renv, BRIEF_GEN_CONFIG=gcfg)
+            ledger = os.path.join(ev, "ledger")
+            log = os.path.join(ledger, "guard.log")
+            shutil.rmtree(ledger, ignore_errors=True)
+            lay(wr, ("rr-fix1", now - 1900, "exitCodes=0\n"))
+            no_folder, _ = rgen("rr", env=genv)
+            made = os.path.exists(ledger)
+            os.makedirs(ledger)
+            green, _ = rgen("rr", env=genv)
+            lay(wr, ("rr-fix1", now - 1900, "exitCodes=1,0\n"))
+            red, _ = rgen("rr", env=genv)
+            allowed, _ = rgen("rr", "--allow-red-run", env=genv)
+            unlogged, _ = rgen("rr", "--allow-red-run")  # the run config without guard_log writes no line
+            with open(log, encoding="utf-8") as f:
+                fields = [ln.split(" ") for ln in f.read().splitlines()]
+            os.remove(log)
+            os.makedirs(log)  # a log path that is a folder: the write fails, the brief does not
+            blocked, blocked_body = rgen("rr", "--allow-red-run", env=genv)
+            shutil.rmtree(ledger)
+            errs = []
+            for extra in ({"guard_log": "  "}, {"guard_log": "ledger/guard.log", "run_verdict_line": None}):
+                bad = dict(conf, **extra)
+                p = os.path.join(tmp, "guard-bad.json")
+                with open(p, "w", encoding="utf-8") as f:
+                    json.dump(bad, f)
+                r = subprocess.run([sys.executable, SCRIPT, "review", "rr", "--out", os.path.join(tmp, "guard-bad.md")],
+                                   capture_output=True, text=True, env=dict(renv, BRIEF_GEN_CONFIG=p), timeout=60)
+                errs.append(r.returncode == 2 and "guard_log" in r.stderr and "Traceback" not in r.stderr)
+            return (no_folder.returncode == 0 and not made and green.returncode == 0 and red.returncode == 1
+                    and allowed.returncode == 0 and unlogged.returncode == 0 and len(fields) == 3
+                    and all(len(f) >= 6 and f[2:4] == ["review", "rr"] for f in fields)
+                    and [f[4] for f in fields] == ["green", "refused", "allowed"] and fields[0][5:] == ["-"]
+                    and "exitCodes=1,0" in " ".join(fields[1]) and blocked.returncode == 0 and blocked_body
+                    and "Traceback" not in blocked.stderr and all(errs))
+        check("guard_log gets one line per checked review brief (green, refused, allowed) only while its folder exists; "
+              "an unwritable log never stops the brief; a blank one or one without run_verdict_line is a config error",
+              guard_log_lines)
     finally:
         def unlock(fn, path, _exc):  # git writes read-only pack files
             try:
