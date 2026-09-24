@@ -167,6 +167,25 @@ def main():
                "", [("pixel-session-2026-09-07bb.md", "C1")], now_secs),
          [])
 
+    # 3b. a session file cited by its path is a cell when it is in the corpus
+    cells_name = "phone-cells-2026-09-18.md"
+    by_path = HEADER + row("OR-33", "2026-09-17 14:3x", "fixed payments", "prsd 9c157ebae", "TRAIN 0918f",
+                           "T2 cell 1 PASS on build 2 (lanes/%s:11)" % cells_name,
+                           "VERIFIED 2026-09-18 (T2 cell 1)")
+    case("a corpus file cited by its folder path and line is a cell",
+         check(by_path, "", [(cells_name, "| 1 | PASS |")], now_secs), [])
+    case("the same file cited by an absolute or a backslash path is a cell",
+         check(by_path.replace("(lanes/", "(C:\\evidence\\lanes\\"), "", [(cells_name, "| 1 |")], now_secs), [])
+    case("a cited file outside the corpus (a lane report) flags",
+         check(by_path.replace(cells_name, "prsd-2026-09-18.md"), "", [(cells_name, "| 1 |")], now_secs),
+         ["VERIFIED without a cell: OR-33"])
+    case("a cited name that only ends like a corpus file flags",
+         check(by_path.replace("lanes/" + cells_name, "lanes/x" + cells_name), "", [(cells_name, "| 1 |")],
+               now_secs), ["VERIFIED without a cell: OR-33"])
+    case("a corpus name inside a longer cited name flags",
+         check(by_path.replace(".md:11", ".md.bak:11"), "", [(cells_name, "| 1 |")], now_secs),
+         ["VERIFIED without a cell: OR-33"])
+
     # 4. the device named in the validation cell narrows the files the token may use
     on_s21u = HEADER + row("OR-7", "2026-09-06", "dictation", "86.8.9 7f89a4bce", "TRAIN 7",
                            "S21U 0907w 5 of 5", "VERIFIED 2026-09-07")
