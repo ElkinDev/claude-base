@@ -658,12 +658,63 @@ def main():
             return (no_folder.returncode == 0 and not made and green.returncode == 0 and red.returncode == 1
                     and allowed.returncode == 0 and unlogged.returncode == 0 and len(fields) == 3
                     and all(len(f) >= 6 and f[2:4] == ["review", "rr"] for f in fields)
-                    and [f[4] for f in fields] == ["green", "refused", "allowed"] and fields[0][5:] == ["-"]
+                    and [f[4] for f in fields] == ["green", "refused", "allowed"] and fields[0][5] == "-"
+                    and fields[0][6].startswith("brief=") and not fields[1][-1].startswith("brief=")
+                    and fields[2][-1].startswith("brief=")
                     and "exitCodes=1,0" in " ".join(fields[1]) and blocked.returncode == 0 and blocked_body
                     and "Traceback" not in blocked.stderr and all(errs))
         check("guard_log gets one line per checked review brief (green, refused, allowed) only while its folder exists; "
               "an unwritable log never stops the brief; a blank one or one without run_verdict_line is a config error",
               guard_log_lines)
+
+        def guard_none_names_its_brief():
+            # a tip with no run is logged none, never green; a written brief's line ends with brief=<its path>, a
+            # space written %20; a report's bare 'Worktree <path>.' loses the sentence's period
+            gcfg = os.path.join(tmp, "guard.json")
+            genv = dict(renv, BRIEF_GEN_CONFIG=gcfg)
+            ledger = os.path.join(ev, "ledger")
+            log = os.path.join(ledger, "guard.log")
+            shutil.rmtree(ledger, ignore_errors=True)
+            os.makedirs(ledger)
+            lay(wr)
+            no_run, _ = rgen("rr", env=genv)
+            lay(wr, ("rr-fix1", now - 1900, "exitCodes=0\n"))
+            spaced = os.path.join(tmp, "run review spaced.md")
+            green = subprocess.run([sys.executable, SCRIPT, "review", "rr", "--out", spaced], capture_output=True,
+                                   text=True, env=genv, timeout=60)
+            lines = open(log, encoding="utf-8").read().splitlines()
+            f = [ln.split(" ") for ln in lines]
+            want = "brief=" + os.path.abspath(os.path.join(tmp, "run-rr.md")).replace("\\", "/")
+            want_spaced = "brief=" + os.path.abspath(spaced).replace("\\", "/").replace(" ", "%20")
+            wd = lane("dt", now - 1400)
+            with open(os.path.join(ev, "lanes", "dt-lane-%s.md" % today), "w", encoding="utf-8") as fh:
+                fh.write("# Lane dt (ABC-9): a period demo\n\nWorktree %s.\n" % wd)
+            lay(wd, ("dt-fix1", now - 900, "exitCodes=0\n"))
+            dot, body = rgen("dt", env=genv)
+            pw = ("/" + wd[0].lower() + wd[2:]) if wd[1:3] == ":/" else wd  # the {worktree_posix} spelling
+            shutil.rmtree(ledger)
+            return (no_run.returncode == 0 and green.returncode == 0 and len(lines) == 2 and len(f[0]) > 5
+                    and f[0][4] == "none" and "no run on the tip of" in lines[0] and f[0][-1] == want
+                    and f[1][4] == "green" and f[1][5] == "-" and f[1][-1] == want_spaced and len(f[1]) == 7
+                    and dot.returncode == 0 and body is not None
+                    and all((w + "./") not in body for w in (wd, pw)) and any((w + "/build") in body for w in (wd, pw)))
+        def trim_keeps_real_names():
+            # a sentence's period goes, a real folder's closing parenthesis stays, and nothing is cut to a name that
+            # is no folder
+            mod = load()
+            paren = os.path.join(tmp, "lane-p(1)").replace("\\", "/")
+            plain = os.path.join(tmp, "lane-q").replace("\\", "/")
+            os.makedirs(paren)
+            os.makedirs(plain)
+            gone = os.path.join(tmp, "absent").replace("\\", "/")
+            return (mod.trim_path(paren + ".") == paren and mod.trim_path(plain + ".") == plain
+                    and mod.trim_path(plain + ");") == plain and mod.trim_path(paren) == paren
+                    and mod.trim_path(gone + ".") == gone + ".")
+        check("a bare report path loses a sentence's period, keeps a real folder's parenthesis, and is never cut to a "
+              "name that is no folder", trim_keeps_real_names)
+
+        check("a tip with no run logs none, never green; each written brief's guard line ends with brief=<path>; a "
+              "report's trailing period is not the worktree's", guard_none_names_its_brief)
     finally:
         def unlock(fn, path, _exc):  # git writes read-only pack files
             try:
