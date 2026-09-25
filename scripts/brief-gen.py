@@ -184,7 +184,9 @@ def native(p):
 def trim_path(raw):
     """A bare path taken from prose, less the sentence's punctuation after it: the longest of the path and its cuts of
     a trailing '.', ';', ':' or ')' that is a folder and does not end in a period (Windows ignores a trailing period,
-    so isdir alone reads 'lane.' as the folder 'lane'); the path as written when none is a folder."""
+    so isdir alone reads 'lane.' as the folder 'lane'); the path as written when none is a folder. The trim needs
+    the folder on disk: a report naming a worktree removed since keeps its sentence's period (review kit-twins-0925b
+    note 1)."""
     cands = [raw]
     while cands[-1] and cands[-1][-1] in ".;:)":
         cands.append(cands[-1][:-1])

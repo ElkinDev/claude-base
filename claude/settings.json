@@ -146,6 +146,11 @@
             "type": "command",
             "command": "python \"%USERPROFILE%/.claude/hooks/inflight.py\"",
             "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/idle-guard.py\"",
+            "timeout": 20
           }
         ]
       }
