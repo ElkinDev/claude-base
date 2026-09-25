@@ -26,9 +26,9 @@ offset plus a digest of the file head, reset when the file is rewritten):
     silent for the rest of the session; past the bound the cheaper error is one refusal the model answers in a line;
   - the delivery queue, modelled from the queue-operation records: enqueue adds its content, dequeue takes the
     oldest entry not yet stale at the dequeue's own time, remove takes the entry with that content, popAll empties
-    it. An entry still queued at the Stop is a wake
-    already coming, so the turn end passes; an entry older than 10 minutes is dropped as stale (the harness drains
-    the queue as a turn ends, so an entry that old was lost, not waiting);
+    it. An entry still queued at the Stop is a wake already coming, so the turn end passes; an entry older than 10
+    minutes is dropped as stale (the harness drains the queue as a turn ends, so an entry that old was lost, not
+    waiting);
   - a process restart kills everything: the agents_killed record and a SessionStart resume or startup hook row
     empty the live set and the queue.
 The mutex: <lock root>/<IDLE_GUARD_HELD, default gradle.lock.d> exists (the mutex is held) or

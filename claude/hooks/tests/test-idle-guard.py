@@ -122,7 +122,8 @@ def main():
     reset(); ticket("x-g1")
     t = write("optin.jsonl", rec(type="user", message={"content": "hi"}))
     code, out, _ = run(payload(t), IDLE_GUARD_LOCK_ROOT=None)
-    check("opt-in: with no IDLE_GUARD_LOCK_ROOT every turn end passes", out == "" and not os.listdir(ROOT + "/state"))
+    check("opt-in: with no IDLE_GUARD_LOCK_ROOT every turn end passes", out == "" and not os.listdir(ROOT + "/state")
+          and not os.path.exists(ROOT + "/guard.log"))
     code, out, _ = run(payload(t), IDLE_GUARD_LOCK_ROOT=ROOT + "/no such root")
     check("opt-in: a lock root that is no folder passes", out == "")
 
