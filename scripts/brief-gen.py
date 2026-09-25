@@ -181,6 +181,16 @@ def native(p):
     return p
 
 
+def trim_path(raw):
+    """A bare path taken from prose, less the sentence's punctuation after it: the longest of the path and its cuts of
+    a trailing '.', ';', ':' or ')' that is a folder and does not end in a period (Windows ignores a trailing period,
+    so isdir alone reads 'lane.' as the folder 'lane'); the path as written when none is a folder."""
+    cands = [raw]
+    while cands[-1] and cands[-1][-1] in ".;:)":
+        cands.append(cands[-1][:-1])
+    return next((c for c in cands if c and not c.endswith(".") and os.path.isdir(c)), raw)
+
+
 def posix(path):
     m = re.match(r"^([A-Za-z]):/(.*)$", path.replace("\\", "/"))
     return "/%s/%s" % (m.group(1).lower(), m.group(2)) if m else path
@@ -205,6 +215,7 @@ class Refused(Exception):
 
 RUN_TIP = re.compile(r"\btip=([0-9a-f]{7,64})\b")  # a runner may name the tip it ran on
 UNREADABLE = object()
+NO_RUN = object()  # red_run: no worktree, no commit or no run on the tip
 
 
 def read_text(path, limit=65536):
@@ -285,16 +296,17 @@ def red_run(wt):
     """Why a review would read a red or unfinished run on the lane's tip, or None: the newest run on the tip by start
     decides, finished or not, and its done file must hold a run_verdict_line whose comma-separated codes are all 0.
     A second test run queued beside a review launched on a green one is the case --allow-red-run exists for. Off
-    unless run_verdict_line is set; no worktree, no commit or no run on the tip gives no opinion."""
+    unless run_verdict_line is set; no worktree, no commit or no run on the tip gives no opinion: NO_RUN, which the
+    guard log writes as none, never green (a round reviewed with no run on its tip must not read as a green one)."""
     if not CFG["run_verdict_line"]:
         return None
     head = git(wt, "rev-parse", "HEAD")
     if not head:
-        return None
+        return NO_RUN
     when = git(wt, "log", "-1", "--format=%ct", "HEAD")
     runs = runs_on_tip(wt, head, tip_history(wt), int(when) if when.isdigit() else None)
     if not runs:
-        return None
+        return NO_RUN
     r = runs[-1]
     if r["done"] is None:
         return "the newest run on the tip %s, %s, is still running or was killed (%s is absent)" % (head[:9], r["tag"], r["path"])
@@ -309,17 +321,20 @@ def red_run(wt):
     return None
 
 
-def guard_log(token, verdict, why=None):
-    """One line in the guard_log file per review brief the run check read, `<stamp> review <token> green|refused|
-    allowed <why>`, so a reader can tell the check ran and what it said. Written only while the log's folder exists;
-    a write that fails never stops the brief or changes its exit code."""
+def guard_log(token, verdict, why=None, brief=None):
+    """One line in the guard_log file per review brief the run check read, `<stamp> review <token> green|none|
+    refused|allowed <why> [brief=<path>]`, so a reader can tell the check ran and what it said. none is a tip with no
+    run, no commit or no worktree. brief= names the brief written, last on the line, spaces written %20, so a reader
+    can pair the line with its review round by path while the fields before it keep their place. Written only while
+    the log's folder exists; a write that fails never stops the brief or changes its exit code."""
     if not CFG["guard_log"]:
         return
     path = under_root(CFG["guard_log"].strip())
     if not os.path.isdir(os.path.dirname(path)):
         return
-    line = "%s review %s %s %s\n" % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), " ".join(token.split()),
-                                     verdict, " ".join((why or "-").split())[:300])
+    line = "%s review %s %s %s%s\n" % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), " ".join(token.split()),
+                                       verdict, " ".join((why or "-").split())[:300],
+                                       (" brief=" + brief.replace("\\", "/").replace(" ", "%20")) if brief else "")
     try:
         with open(path, "a", encoding="utf-8", newline="\n") as f:
             f.write(line)
@@ -378,7 +393,7 @@ def lane_facts(token):
         # (`C:/src/my app-tok`), a bare one ends at the first space or comma
         mw = re.search(r"[Ww]orktree (?:`([A-Za-z]:/[^`\n]+|/[^`\n]+)`|`?([A-Za-z]:/[^\s,`]+|/[^\s,`]+))", head)
         if (not wt or not os.path.isdir(wt)) and mw:
-            wt = mw.group(1) or mw.group(2)
+            wt = mw.group(1) or trim_path(mw.group(2))  # a backticked path is exact
         wt = wt or "<<worktree: set worktree in the config or name it in the report>>"
         briefs = under_root(CFG["briefs_dir"])
         brief = os.path.join(briefs, "%s-%s.md" % (slug, rdate)).replace("\\", "/")
@@ -760,7 +775,10 @@ def main():
             sys.exit("brief-gen: refused, %s exists: a review of this round already wrote it; a review of round N "
                      "takes --delta N, and --force-review writes over it" % deliverable)
         why = None if a.no_git else red_run(fx["wt"])
-        if not a.no_git and CFG["run_verdict_line"]:
+        if why is NO_RUN:
+            why = None
+            guard = ("none", "no run on the tip of %s" % posix(fx["wt"]))  # no worktree, no commit or no run
+        elif not a.no_git and CFG["run_verdict_line"]:
             guard = ("allowed", why) if why else ("green", None)
         if why and not a.allow_red_run:
             guard_log(a.token, "refused", why)
@@ -786,7 +804,7 @@ def main():
     with open(out, "w", encoding="utf-8", newline="\n") as f:
         f.write(body)
     if guard:
-        guard_log(a.token, *guard)
+        guard_log(a.token, *guard, brief=os.path.abspath(out))
     sys.stdout.write(body)
     print("brief-gen wrote %s (%d chars, %d placeholders)" % (out.replace("\\", "/"), len(body), body.count("<<")))
     return 0

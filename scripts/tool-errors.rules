@@ -6,6 +6,8 @@
 row.sh	ROW REFUSED: [^\n]*
 # A register row cut by the wrapper: the tail was dropped, so the seat overshot the cap.
 row.sh!ROW_REGISTER	ROW ok text \d+/\d+ CUT \d+ chars
+# A register row whose text names an HH:Mx time ahead of the clock (row.sh warns): a time guessed, not read.
+row.sh!ROW_REGISTER	ROW WARN the text names \d\d:\dx
 # A register write that asserts on the length of the row instead of going through the wrapper.
 rulings.md	AssertionError: [4-6]\d\d\b
 # A lane brief refused by the launch checker of claude/hooks/guard-delegate.py (the Agent tool result).
