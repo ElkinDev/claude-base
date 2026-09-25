@@ -698,6 +698,21 @@ def main():
                     and f[1][4] == "green" and f[1][5] == "-" and f[1][-1] == want_spaced and len(f[1]) == 7
                     and dot.returncode == 0 and body is not None
                     and all((w + "./") not in body for w in (wd, pw)) and any((w + "/build") in body for w in (wd, pw)))
+        def trim_keeps_real_names():
+            # a sentence's period goes, a real folder's closing parenthesis stays, and nothing is cut to a name that
+            # is no folder
+            mod = load()
+            paren = os.path.join(tmp, "lane-p(1)").replace("\\", "/")
+            plain = os.path.join(tmp, "lane-q").replace("\\", "/")
+            os.makedirs(paren)
+            os.makedirs(plain)
+            gone = os.path.join(tmp, "absent").replace("\\", "/")
+            return (mod.trim_path(paren + ".") == paren and mod.trim_path(plain + ".") == plain
+                    and mod.trim_path(plain + ");") == plain and mod.trim_path(paren) == paren
+                    and mod.trim_path(gone + ".") == gone + ".")
+        check("a bare report path loses a sentence's period, keeps a real folder's parenthesis, and is never cut to a "
+              "name that is no folder", trim_keeps_real_names)
+
         check("a tip with no run logs none, never green; each written brief's guard line ends with brief=<path>; a "
               "report's trailing period is not the worktree's", guard_none_names_its_brief)
     finally:

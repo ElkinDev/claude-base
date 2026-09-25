@@ -181,6 +181,16 @@ def native(p):
     return p
 
 
+def trim_path(raw):
+    """A bare path taken from prose, less the sentence's punctuation after it: the longest of the path and its cuts of
+    a trailing '.', ';', ':' or ')' that is a folder and does not end in a period (Windows ignores a trailing period,
+    so isdir alone reads 'lane.' as the folder 'lane'); the path as written when none is a folder."""
+    cands = [raw]
+    while cands[-1] and cands[-1][-1] in ".;:)":
+        cands.append(cands[-1][:-1])
+    return next((c for c in cands if c and not c.endswith(".") and os.path.isdir(c)), raw)
+
+
 def posix(path):
     m = re.match(r"^([A-Za-z]):/(.*)$", path.replace("\\", "/"))
     return "/%s/%s" % (m.group(1).lower(), m.group(2)) if m else path
@@ -383,7 +393,7 @@ def lane_facts(token):
         # (`C:/src/my app-tok`), a bare one ends at the first space or comma
         mw = re.search(r"[Ww]orktree (?:`([A-Za-z]:/[^`\n]+|/[^`\n]+)`|`?([A-Za-z]:/[^\s,`]+|/[^\s,`]+))", head)
         if (not wt or not os.path.isdir(wt)) and mw:
-            wt = mw.group(1) or mw.group(2).rstrip(".;:)")  # a bare path loses a sentence's period; a backticked one is exact
+            wt = mw.group(1) or trim_path(mw.group(2))  # a backticked path is exact
         wt = wt or "<<worktree: set worktree in the config or name it in the report>>"
         briefs = under_root(CFG["briefs_dir"])
         brief = os.path.join(briefs, "%s-%s.md" % (slug, rdate)).replace("\\", "/")
