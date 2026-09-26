@@ -1,0 +1,7 @@
+sanitize-ok: all seeded leak fixture
+Seeded on purpose, one made-up value per line, each in a shape the rule must keep catching.
+api_key = "AIzaSyD-abcdefghijklmnopqrstuvwxyz0123"
+API_KEY=sk-proj-0123456789abcdefABCDEF
+api-key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+"apiKey": "0123456789abcdef0123456789"
+api_key = SG.f7KpQ2mXR0aBcDeFgH.iJkLmNoPqRsTuVwXyZ0123456789

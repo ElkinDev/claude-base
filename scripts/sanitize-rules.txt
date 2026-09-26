@@ -47,4 +47,7 @@ token-aws	\bAKIA[0-9A-Z]{16}\b
 token-github	\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}\b
 token-github-pat	\bgithub_pat_[A-Za-z0-9_]{30,}\b
 token-slack	\bxox[abeprs]-[A-Za-z0-9-]{10,}\b
-api-key	(?i)\bapi[_-]?key\s*[:=]\s*\S{16,}
+# The api-key value is a token of 16 or more key characters (the class token-bearer uses), bare
+# or after one quote, so a keyless call that passes null is not a value, while base64, dotted and
+# dashed keys still are. The key name may carry its own quote, as JSON and YAML write it.
+api-key	(?i)\bapi[_-]?key["']?\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{16,}

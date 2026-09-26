@@ -11,3 +11,6 @@ https://your-org.atlassian.net/browse/PROJ-1
 git@github.com:your-org/example-service.git
 tests@example.com
 https://github.com/ElkinDev/claude-base
+GeminiAiProvider(apiKey = null).parseIntents("hola", emptyList())
+val provider = Provider(apiKey = "${BuildConfig.KEY}")
+"apiKey": null,

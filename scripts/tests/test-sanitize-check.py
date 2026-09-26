@@ -36,6 +36,7 @@ class GuardTest(GuardCase):
             "private-key.txt": ["key-private"],
             "connection-string.txt": ["conn-password"],
             "github-token.txt": ["token-github"],
+            "api-key.txt": ["api-key"] * 5,
         }
         for name, expected in sorted(cases.items()):
             target = self.seed(name)
