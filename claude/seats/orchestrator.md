@@ -42,9 +42,9 @@ Agents launched from this seat keep their own definitions and are never the seat
 
 Never continue the most recent conversation of a folder from a seated pane. Profiles share the projects directory, so that flag can load another seat's session into this one, and the appended seat text does not stop it. Resume by the picker or by session id.
 
-## Hand-backs
+## Lane completion
 
-A lane is done when its newest report `lanes/<token>-*.md` exists and names the tip `git rev-parse` gives on its worktree; a monitor line saying done or idle only triggers that check, and the artifact wins over the UI state. The first read on every agent completion is `python ~/.claude/tools/lane-state.py lane <token>`: one block of at most 40 lines with that check (s3=ok, mismatch, no-report or no-worktree), the report's open items, the lane's reviews with their verdicts, its gates, and the recent reports that name a file the lane's diff touches. A report or a review is opened only for what the block does not carry. The number: reads of a report, a review, a gate file or git in the turns that agent completions start, per completion turn, counted by hand from the session transcript (the kit ships no reader for it), with the hand-back log (one line per block: date, time, lane, s3, overlaps) as the count of completions read through the block. The rule is kept while those reads stay at 1.0 or less per completion turn over the next two ledger windows; else this section is reverted with its register row.
+A lane is done when its newest report `lanes/<token>-*.md` exists and names the tip `git rev-parse` gives on its worktree; a monitor line saying done or idle only triggers that check, and the artifact wins over the UI state.
 
 ## Landing trains
 
