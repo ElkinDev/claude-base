@@ -531,3 +531,20 @@ nothing to watch. The pattern carries: a resident watcher with no model cost, a 
 restart neither loses nor repeats an ending, batching by a hold after the previous delivery, and
 two delivery paths chosen by what the pane is doing, with the busy path going through a hook
 instead of the keyboard.
+
+### The watches a session arms for itself
+
+The courier does not remove the waits a session arms on its own. On two measured working days,
+the turns an orchestrator opened on a Monitor event or expiry were 19 and 27 percent of its
+tokens. 27 of those 44 turns acted on what they read, and the other 17 changed nothing. Most
+of the 17 were expiry wakes of a gate watch the session re-armed every 30 minutes. The Monitor
+tool caps a timeout at 1800000 ms, so asking for a longer one buys nothing. Two rules follow.
+
+- A watch on a pane or an agent is armed once and ends on the transition it waits for. It is not
+  re-armed on expiry.
+- A gate the session must act on gets one bounded background shell wait. That wait exits on the
+  gate's own end line in its log, not on a Monitor that is re-armed each time it expires. A wall
+  with no clock inside the day, such as a weekly quota, gets no watch at all.
+
+What proves it: Monitor-opened turns that changed nothing, per working day, fall from 8 and 9 to
+1 or less over two windows with gates running. If they do not, both rules are reverted.
