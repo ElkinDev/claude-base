@@ -120,5 +120,23 @@ class TrainWaitTest(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
 
 
+class TokenFormTest(unittest.TestCase):
+    """A train merge subject may put a comma and a topic after the token ("<tok>, <topic>"): with no pin every lane
+    landed in that form reads unnamed, and the lanes-per-train median is read on the wrong set."""
+
+    def test_the_token_is_read_before_a_comma_and_the_older_forms_still_read(self):
+        import importlib.machinery, importlib.util
+        loader = importlib.machinery.SourceFileLoader("train_wait_under_test", SCRIPT)
+        spec = importlib.util.spec_from_loader("train_wait_under_test", loader)
+        mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(mod)
+        for subject, want in (("merge(train): 2eba90efb into train-d51z, sosv, the destructive roster reads the server [skip ci]", "sosv"),
+                              ("merge(train): d7ef36673 into train-d51f, nqre [skip ci]", "nqre"),
+                              ("merge(train): 1234567ab into train-t1, abcd: the first lane [skip ci]", "abcd"),
+                              ("Merge lane totb5 (order tiebreak tables 5) into train-0915d [skip ci]", "totb5")):
+            m = mod.LANE_RE.match(subject)
+            self.assertIsNotNone(m, subject)
+            self.assertEqual(mod.token_of(m), want, subject)
+
 if __name__ == "__main__":
     unittest.main()

@@ -31,6 +31,7 @@ Stage one, against the brief:
 - Take each acceptance item one at a time and look for the input, state or ordering that breaks it. An item is satisfied only when you tried to break it and failed; say which scenario you tried.
 - Tests must assert the BEHAVIOUR the acceptance item describes, not the shape of the implementation. A test that would still pass with the feature removed, that asserts a mock was called, or that seeds a degenerate case which passes for the wrong reason, is a finding.
 - Scope: what the diff touches beyond the brief, and what the brief asked for that the diff does not touch.
+- A mockup or other design deliverable is reviewed against the request it answers before the code it depicts: read the ask the brief quotes first; a design brief that quotes no ask is itself a finding. Frames that are faithful to the code but do not answer that ask, or a screen built on a test render where the definition asks for a device capture, are a MAJOR.
 
 Stage two, against the code: the skill's questions one by one (the claim that breaks, the test that proves less than it looks, the uncovered sibling, the contract that lies, the runtime cost per row, the upgrade path, the data that can be lost or exposed, the better shape), plus the project's fixed conventions:
 

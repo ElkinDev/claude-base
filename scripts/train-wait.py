@@ -55,7 +55,7 @@ import tempfile
 SCRATCH_GLOB = os.path.join(tempfile.gettempdir(), "claude", "*", "*", "scratchpad")
 LANE_RE = re.compile(r"^(?:Merge lane (\S+) |merge\(train\): ([0-9a-f]{7,40}) into train-[^\s,]+,?\s*(.*))")
 TRAIN_RE = re.compile(r"into (train-[0-9A-Za-z]+)")
-SLUG_TOKEN_RE = re.compile(r"^([a-z0-9]{3,8})(?=$|[:\-\s]*\[skip ci\]|:|-)")
+SLUG_TOKEN_RE = re.compile(r"^([a-z0-9]{3,8})(?=$|[:\-\s]*\[skip ci\]|:|-|,)")  # "<tok>, <topic>", the comma train form
 ITEM_TOKEN_RE = re.compile(r"\(item \d+, ([a-z0-9]{3,8})\b[^()]*\)\s*(?:\[skip ci\])?$")
 STEM_RE = re.compile(r"(-r\d+)?-\d{4}-\d\d-\d\d(-r\d+)?\.md$")
 

@@ -45,6 +45,12 @@ branch), so such a project passes --lock-root or runs --apply only when no build
 The default evidence root is read from the main checkout, never from the current directory, so a run
 from inside a linked worktree archives to the same place as a run from the main checkout.
 
+A standing worktree that is detached or idle by design (a pass that checks out every landed tip
+detached and reuses the folder) is named with `--never-sweep PATH=REASON`, repeatable: it is KEPT
+with its reason whatever its state, and unlike `--keep` a path that matches no worktree refuses
+nothing, since the standing worktree may not exist yet. A PATH with no `=` is kept with the reason
+"never swept". The kit ships none; NEVER_SWEPT is empty.
+
 Standard library only. Every git call is an argument list; no shell.
 """
 
@@ -67,6 +73,8 @@ CLASS_ORDER = (
 
 READ_TIMEOUT = 60
 ARCHIVE_LEAF = "worktree-archive"
+# Worktrees never swept, each with its reason, filled by --never-sweep (module docstring). The kit ships none.
+NEVER_SWEPT = {}
 # Named once at the worktree root, under its `build` directory.
 ARCHIVE_ROOT_LEAVES = ("lockrun", "precheck")
 # Named under any `build` directory, at any depth.
@@ -415,13 +423,16 @@ def commit_date(repo, sha):
         return 0
 
 
-def classify(repo, main_ref, record, kept):
+def classify(repo, main_ref, record, kept, never=None):
     """Exactly one class per worktree, with the detail its line prints."""
     path = record["path"]
     if not os.path.isdir(path):
         return "MISSING", record["branch"] or "-"
     if norm(path) in kept:
         return "KEPT", record["branch"] or "-"
+    for standing, reason in (NEVER_SWEPT if never is None else never).items():
+        if norm(path) == norm(standing):
+            return "KEPT", reason
     if record["bare"] or record["detached"] or not record["branch"]:
         return "DETACHED-OR-BARE", "bare" if record["bare"] else "detached at " + record["head"][:12]
     running = run_in_flight(path)
@@ -435,6 +446,15 @@ def classify(repo, main_ref, record, kept):
         detail = "files={}".format(count) if count > 0 else "status failed: " + problem
         return "DIRTY", "{} {}".format(record["branch"], detail)
     return "REMOVE", "{} {}".format(record["branch"], record["head"][:12])
+
+
+def never_swept(values):
+    """{path: reason} of the --never-sweep values over NEVER_SWEPT; the reason follows the first `=`."""
+    out = dict(NEVER_SWEPT)
+    for value in values:
+        path, sep, reason = value.partition("=")
+        out[path.strip()] = reason.strip() if sep and reason.strip() else "never swept"
+    return out
 
 
 def default_evidence_root(repo):
@@ -485,6 +505,7 @@ def sweep(args, after_archive=None):
         args.evidence_root = default_evidence_root(records[0]["path"] if records else repo)
 
     kept = {norm(path) for path in args.keep}
+    never = never_swept(args.never_sweep)
     registered = {norm(record["path"]) for record in records}
     unmatched = [path for path in args.keep if norm(path) not in registered]
     main_checkout = norm(records[0]["path"]) if records else norm(repo)
@@ -493,7 +514,7 @@ def sweep(args, after_archive=None):
     for record in records:
         if norm(record["path"]) in (main_checkout, norm(repo)):
             continue
-        name, detail = classify(repo, args.main, record, kept)
+        name, detail = classify(repo, args.main, record, kept, never)
         buckets[name].append((record["path"], detail))
         if name == "REMOVE":
             removable.append(
@@ -596,6 +617,13 @@ def sweep(args, after_archive=None):
     return 2 if stopped else 0
 
 
+def never_sweep_value(value):
+    """An argparse type: PATH or PATH=REASON with a non-empty PATH."""
+    if not value.partition("=")[0].strip():
+        raise argparse.ArgumentTypeError("--never-sweep needs a path: PATH=REASON")
+    return value
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         description="List, and with --apply remove, the worktrees of landed lanes."
@@ -604,6 +632,13 @@ def build_parser():
     parser.add_argument("--main", default="main", help="ref a landed branch is an ancestor of")
     parser.add_argument(
         "--keep", action="append", default=[], help="worktree path to keep whatever its state"
+    )
+    parser.add_argument(
+        "--never-sweep",
+        action="append",
+        default=[],
+        type=never_sweep_value,
+        help="PATH=REASON of a standing worktree kept with its reason; a missing one refuses nothing",
     )
     parser.add_argument(
         "--lock-root", default="", help="folder of *.lock.d mutex directories; empty: no mutex belt"

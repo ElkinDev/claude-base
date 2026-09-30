@@ -8,6 +8,7 @@ default repository is the current directory, which the guard refuses by name too
 """
 
 import contextlib
+import importlib.machinery
 import importlib.util
 import io
 import os
@@ -19,7 +20,8 @@ import unittest
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPT = os.path.join(os.path.dirname(HERE), "worktree-sweep.py")
+# WORKTREE_SWEEP_PY=<path> points the suite at another copy (a staged .new, a backup).
+SCRIPT = os.environ.get("WORKTREE_SWEEP_PY") or os.path.join(os.path.dirname(HERE), "worktree-sweep.py")
 NEVER_NAME = (os.getcwd().lower().rstrip("/\\"), os.getcwd().replace("\\", "/").lower().rstrip("/"), ".")
 # Four bytes per fixture file, so a count in an ARCHIVED line is read, not recomputed.
 FILE_BODY = "abcd"
@@ -32,7 +34,9 @@ def load_script():
     path. Every in-process call still goes through the same argv and the same confinement
     guard as the subprocess calls.
     """
-    spec = importlib.util.spec_from_file_location("worktree_sweep", SCRIPT)
+    spec = importlib.util.spec_from_file_location(
+        "worktree_sweep", SCRIPT, loader=importlib.machinery.SourceFileLoader("worktree_sweep", SCRIPT)
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -332,6 +336,35 @@ class WorktreeSweepTest(unittest.TestCase):
         applied_code, applied = self.sweep("--keep", path, "--apply")
         self.assertEqual(0, applied_code, applied)
         self.assertTrue(os.path.isdir(path))
+
+    def test_never_sweep_keeps_a_landed_worktree_with_its_reason_through_apply(self):
+        path = self.worktree("wt-standing", "standing", self.commits[0])
+        code, out = self.sweep("--never-sweep", path + "=standing pass, detached by design")
+        self.assertEqual(0, code, out)
+        self.assertIn("standing pass, detached by design", self.line_for(out, "KEPT"))
+        self.assertIn("remove=0", out)
+        bare_code, bare = self.sweep("--never-sweep", path)
+        self.assertEqual(0, bare_code, bare)
+        self.assertIn("never swept", self.line_for(bare, "KEPT"))
+        applied_code, applied = self.sweep("--never-sweep", path, "--apply")
+        self.assertEqual(0, applied_code, applied)
+        self.assertIn("removed=0", applied)
+        self.assertTrue(os.path.isdir(path))
+
+    def test_a_never_sweep_path_that_matches_no_worktree_refuses_nothing(self):
+        path = self.worktree("wt-landed", "landed", self.commits[0])
+        self.exclude_build()
+        absent = os.path.join(self.root, "wt-standing-not-yet")
+        code, out = self.sweep("--never-sweep", absent + "=not created yet", "--apply")
+        self.assertEqual(0, code, out)
+        self.assertNotIn("REFUSED", out)
+        self.assertIn("REMOVED", out)
+        self.assertFalse(os.path.isdir(path))
+
+    def test_a_never_sweep_value_with_no_path_is_a_usage_error(self):
+        for value in ("", "  ", "=a reason"):
+            code, out = self.sweep("--never-sweep", value)
+            self.assertEqual(2, code, repr(value) + out)
 
     def test_a_lockrun_log_without_its_done_is_in_flight_and_survives(self):
         path = self.worktree("wt-running", "running", self.commits[0])
@@ -938,6 +971,24 @@ class WorktreeSweepTest(unittest.TestCase):
         self.assertEqual(0, code, out)
         self.assertTrue(self.line_for(out, "ARCHIVED").endswith(" files=2 bytes=8"), out)
         self.assertEqual("abcd", self.zip_text(leaf, "build", "lockrun", "x.log"))
+
+
+class NeverSweptTest(unittest.TestCase):
+    def test_the_kit_ships_no_standing_worktree_and_the_table_keeps_with_its_reason(self):
+        module = load_script()
+        self.assertEqual({}, module.NEVER_SWEPT)
+        tmp = tempfile.mkdtemp(prefix="sweep-never-")
+        try:
+            record = {"path": tmp, "branch": "", "bare": False, "detached": True, "head": "0" * 40}
+            module.NEVER_SWEPT = {tmp.replace("\\", "/") + "/": "fixture reason"}
+            self.assertEqual(module.classify(tmp, "main", record, set()), ("KEPT", "fixture reason"))
+            module.NEVER_SWEPT = {}
+            self.assertEqual(module.classify(tmp, "main", record, set())[0], "DETACHED-OR-BARE")
+            self.assertEqual(
+                module.classify(tmp, "main", record, set(), {tmp: "passed in"}), ("KEPT", "passed in")
+            )
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":
