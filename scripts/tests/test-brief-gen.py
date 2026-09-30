@@ -1,5 +1,5 @@
-"""Pins for scripts/brief-gen.py: the fix and notes briefs carry the hostile-input line of the lane brief template and
-the review brief does not; the defaults name no build tool; the configured commands, suffix and laws are rendered;
+"""Pins for scripts/brief-gen.py: no fix, notes or review brief asks for a hostile-input table (the practice is
+retired); the defaults name no build tool; the configured commands, suffix and laws are rendered;
 a bad config is exit 2; and one end-to-end run reads a lane report and a real git worktree.
 
     python scripts/tests/test-brief-gen.py
@@ -80,15 +80,14 @@ def main():
             configure()
             _, body = mod.fix_or_notes_brief(dict(FX), args, "fix")
             rep = report_of(body)
-            return (MARK in rep and "H1 to H8" in rep and "timeout 120" in rep
-                    and "/ev/briefs/TEMPLATE-lane-brief.md" in rep)
-        check("a fix brief's Report section carries the hostile-input line and the template under the root", fix_has_it)
+            return MARK not in rep and "H1 to H8" not in rep and "hostile-input" not in rep
+        check("a fix brief's Report section asks for no hostile-input table", fix_has_it)
 
         def notes_has_it():
             configure()
             _, body = mod.fix_or_notes_brief(dict(FX), args, "notes")
-            return MARK in report_of(body)
-        check("a notes brief's Report section carries it too", notes_has_it)
+            return MARK not in report_of(body) and "hostile-input" not in report_of(body)
+        check("a notes brief's Report section does not either", notes_has_it)
 
         def review_has_not():
             configure()
@@ -359,7 +358,7 @@ def main():
                     and not any(w in nb + rb for w in ("<<branch>>", "<<tip>>", "<<base>>", "<<worktree", "rev-parse"))
                     and "## Change, in the staged .new files" in nb and "Never a live file" in nb
                     and "reading and running the live file for the red pin is allowed" in nb
-                    and MARK in report_of(nb) and "B.kt:4 reads badly." in nb and "`.new` file as it is on disk" in rb
+                    and MARK not in report_of(nb) and "B.kt:4 reads badly." in nb and "`.new` file as it is on disk" in rb
                     and "no live file touched" in rb and all(ord(c) < 128 for c in nb + rb)
                     and bad.returncode == 2 and "--no-git" in bad.stderr)
         check("--no-git: a notes and a review brief name no worktree, tip or run, the notes brief passes brief-check "

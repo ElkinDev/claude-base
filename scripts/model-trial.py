@@ -195,7 +195,7 @@ def main(argv):
             continue
         try:
             day = local_day(first) if first is not None else None
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, AttributeError):  # a timestamp that is not a string has no replace()
             unread += 1
             continue
         if day is None or not (since <= day <= until):

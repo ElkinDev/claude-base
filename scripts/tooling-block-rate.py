@@ -3,7 +3,7 @@
     python tooling-block-rate.py <first day> <day after the last>      e.g. 2026-01-05 2026-01-09
     python tooling-block-rate.py --last-complete [--today YYYY-MM-DD]   the newest complete anchored window
 
-The proving number of the hostile-input practice (the probe table of the lane brief template's Report section):
+The proving number of a practice meant to cut BLOCK reviews on tooling changes, such as a probe table per lane:
 BLOCK review files on tooling slugs per tooling slug reviewed, over the review files of <root>/reviews whose modified
 time falls in the window (the first day from 00:00 inclusive, the day after the last exclusive). A slug is a review
 file's name without its YYYY-MM-DD date and its -rN or -fixN round. A slug counts as tooling when any of its review

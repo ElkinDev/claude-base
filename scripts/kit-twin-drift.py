@@ -34,6 +34,11 @@ those exact bytes only: the next change to the live file changes its hash and th
 never hides a later change. A missing carried file carries nothing; one that exists and cannot be read carries
 nothing and says so on stderr.
 
+Own lists. The reader's own two lists, the basenames of KIT_TWIN_WAIVERS and KIT_TWIN_CARRIED, pair
+with nothing and count in no column, and --carry-line refuses them: the carry hash covers the whole
+file, so a list's own carry line would change the hash it records, and every waiver line appended would
+make the waivers pair trail again.
+
 No twin. A .py, .sh, .ps1 or .md file of a flat live folder, changed after the floor, whose basename the kit does
 not track and the waivers file does not list (one basename per line, then its reason). The floor is fixed, never the
 kit tip, so a commit to the kit cannot erase the column. Backups never count: .bak, .new, .pyc, .log, or a
@@ -79,6 +84,7 @@ TEMPLATE = "TEMPLATE-lane-brief.md"
 SLACK = 60
 OWED_AFTER = 24 * 3600
 STAMP_RE = re.compile(r"\.20\d{6}-\d{6}")
+OWN_LISTS = {os.path.basename(WAIVERS), os.path.basename(CARRIED)}  # never paired (docstring, Own lists)
 
 
 def git(*args):
@@ -221,6 +227,8 @@ def twin_of(f, by_base, waived):
     """The kit twin of a live file, or None; one lookup for the reading and --carry-line. A waived basename pairs by
     its exact name only, so a machine file the waivers list never pairs with a kit file of a similar name."""
     base = os.path.basename(f)
+    if base in OWN_LISTS:
+        return None
     cands = by_base.get(base_key(base))
     if cands and base in waived:
         cands = [t for t in cands if os.path.basename(t) == base]
@@ -255,8 +263,8 @@ def reading(now, since, live):
     orphans = []
     for f, flat in files:
         base = os.path.basename(f)
-        if (not flat or base_key(base) in by_base or base in waived or not base.endswith(TOOL_EXT) or f in paired
-                or (mtime(f) or 0) <= since):
+        if (not flat or base_key(base) in by_base or base in waived or base in OWN_LISTS
+                or not base.endswith(TOOL_EXT) or f in paired or (mtime(f) or 0) <= since):
             continue
         if "/briefs/" in f and base != TEMPLATE:
             continue
@@ -296,6 +304,10 @@ def carry_line(path, reason, live):
     found = [f for f, _ in live_files(live) if os.path.normcase(os.path.realpath(f)) == key]
     if not found:
         print("kit-twin-drift: %s is not in the live set (KIT_TWIN_LIVE), so no row reads it" % path, file=sys.stderr)
+        return 2
+    if os.path.basename(found[0]) in OWN_LISTS:
+        print("kit-twin-drift: %s is one of this reader's own lists, which never pair, so there is nothing "
+              "to carry" % path, file=sys.stderr)
         return 2
     by_base = kit_index()
     if by_base is None:

@@ -46,8 +46,8 @@ and edit it. Every key is optional and the defaults write a brief that names no 
   evidence_root      the folder holding the lanes, briefs and reviews folders; default EVIDENCE_ROOT, else the
                      working directory
   lanes_dir, briefs_dir, reviews_dir   relative to the evidence root; default lanes, briefs, reviews
-  template           the lane brief template the hostile-input line points at, relative to the evidence root
-                     unless absolute; default briefs/TEMPLATE-lane-brief.md
+  template           accepted so an older config still loads; no brief reads it now (default
+                     briefs/TEMPLATE-lane-brief.md)
   worktree           the worktree of a lane, {token} filled in, for example "C:/src/myapp-{token}"; default null
   base_branch        the branch the base is the merge-base with; default main
   laws               a laws file named in the implementer briefs; default null, the sentence is left out
@@ -164,13 +164,6 @@ def root():
 
 def under_root(rel):
     return (rel if os.path.isabs(rel) else os.path.join(root(), rel)).replace("\\", "/")
-
-
-def hostile_line():
-    return ("If this round writes or changes a script (a file under scripts/, or a .py, .ps1, .sh or .ts file), "
-            "the appended section also carries the hostile-input table of the Report section of %s: one row per "
-            "probe H1 to H8, each under `timeout 120` and never against a shared build lock, a device lock, the "
-            "register or a device." % under_root(CFG["template"]))
 
 
 def native(p):
@@ -625,8 +618,8 @@ def fix_or_notes_brief(fx, a, kind):
                   "- Last, the report, appended whole as the Report section says; then END YOUR TURN with one line "
                   "naming %s." % fx["report"])
         report_what = ("each `.new` file with the line count of `diff <live> <live>.new`, the changes at their `.new` "
-                       "line numbers, the pin lines green on the `.new` and red on the live file, the hostile-input "
-                       "table when a script changed (below), and Open items LAST")
+                       "line numbers, the pin lines green on the `.new` and red on the live file, "
+                       "and Open items LAST")
         report_when = ""
         forbidden = ("Any file outside the ones the review names; any edit of a live file (a file without the .new "
                      "suffix) or of a .bak, beyond the two cp -p copies the Where section orders (reading and running "
@@ -651,8 +644,8 @@ def fix_or_notes_brief(fx, a, kind):
             checks += ("- Then the report, appended whole as the Report section says, before the run it names.\n"
                        "- Last, the own-tests run on the committed tip: %s" % own_tests_line(fx, tag, a.tests))
             report_what = ("the new tip and the commit subject, the changes, the own-tests tag %s and its done file %s "
-                           "with the words \"verdict in the done file\"%s, the hostile-input table when a script "
-                           "changed (below), and Open items LAST" % (tag, done, ", the precheck line" if pre else ""))
+                           "with the words \"verdict in the done file\"%s, and Open items LAST"
+                           % (tag, done, ", the precheck line" if pre else ""))
             report_when = " before the own-tests launch"
         else:
             if pre:
@@ -696,8 +689,6 @@ Quality. The review {a.review or '<<review path>>'} {purpose_kind} on {on}. The 
 ## Report
 
 Append "{section}" to {fx['report']}{report_when}, at most {lines} lines: {report_what}.
-
-{hostile_line()}
 
 ## Forbidden
 

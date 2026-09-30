@@ -359,6 +359,26 @@ def main():
     check("a byte order mark keeps the first verdict; an unreadable carried file is named on stderr",
           carried_file_edges)
 
+    def own_lists_never_pair(root):
+        # the reader's own two lists pair with nothing: a list's own carry line would change the hash it records
+        kit = make_kit(root)
+        for name in ("kit-twin-carried.txt", "kit-twin-waivers.txt"):
+            put(os.path.join(kit, "scripts", name), "kit list\n")
+        commit(kit, 3 * DAY)
+        c = os.path.join(root, "live", "scripts", "kit-twin-carried.txt")
+        w = os.path.join(root, "live", "scripts", "kit-twin-waivers.txt")
+        put(c, "# carried\n", age=2 * DAY)
+        put(w, "priv.py private\n", age=2 * DAY)
+        put(os.path.join(root, "live", "hooks", "h.py"), "live line\n", age=2 * DAY)  # a real pair still trails
+        rc, out, _ = run(root, kit, ["--row"], waivers=w, carried=c)
+        rc2, table, _ = run(root, kit, [], waivers=w, carried=c)
+        rc3, line, err3 = run(root, kit, ["--carry-line", c, "judged"], waivers=w, carried=c)
+        return (rc == 0 and row_numbers(out) == (1, 1, 0) and rc2 == 0 and "kit-twin-carried.txt" not in table
+                and "kit-twin-waivers.txt" not in table and "claude/hooks/h.py" in table and rc3 == 2
+                and line == "" and "own lists" in err3)
+    check("the reader's own two lists (KIT_TWIN_WAIVERS, KIT_TWIN_CARRIED) pair with nothing and cannot be carried",
+          own_lists_never_pair)
+
     print("%d of %d OK" % (sum(results), len(results)))
     return 0 if all(results) else 1
 

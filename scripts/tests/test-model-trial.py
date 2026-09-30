@@ -114,6 +114,13 @@ class ModelTrialTest(unittest.TestCase):
         self.assertEqual(0, code, out)
         self.assertIn("unreadable 1", out)
 
+    def test_a_first_timestamp_that_is_not_a_string_is_unreadable(self):
+        self.agent("implementer-light", "Lane abcd one", [(CHEAP, "m1", 0)])
+        self.agent("implementer-light", "Lane abcf three", [(CHEAP, "m3", 0)], when=12345)
+        code, out = self.run_on()
+        self.assertEqual(0, code, out)
+        self.assertIn("unreadable 1", out)
+
     def test_bad_arguments_and_an_empty_projects_folder_exit_two(self):
         self.agent("implementer-light", "Lane abcd one", [(CHEAP, "m1", 0)])
         for args in (("--since", ""), ("--until", "2026-09-19"), ("--baseline-share", "1"),
