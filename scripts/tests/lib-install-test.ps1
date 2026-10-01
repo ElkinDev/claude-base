@@ -1,4 +1,5 @@
-# Shared harness for the install tests (test-install-smoke.ps1, test-install-project.ps1).
+# Shared harness for the install tests (test-install-smoke.ps1, test-install-project.ps1,
+# test-install-herdr.ps1, test-install-get.ps1).
 #
 # Everything runs against a throwaway home under TEMP. KIT_HOME and USERPROFILE are pointed at it
 # before the first call and are asserted to be inside TEMP, because a bug here would write into the

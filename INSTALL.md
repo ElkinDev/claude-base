@@ -1,5 +1,32 @@
 # Install
 
+## One command (Windows)
+In PowerShell. Nothing needs administrator rights except installing Git for Windows, whose installer
+asks for them when git is missing:
+```
+irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 | iex
+```
+`install/get.ps1` does sections 0, 1 and 3 below in one run:
+1. It checks git (Git for Windows, which also brings the Git Bash the hooks run in), Python 3.8+
+   and Claude Code, and offers to install a missing one: git and Python through winget, Claude
+   Code through npm when npm is on PATH (`npm install -g @anthropic-ai/claude-code`, which works
+   on machines that allow npm but no installers), else through its official installer. A Claude
+   Code already installed, from npm or the installer, is left as it is. A tool you decline stops
+   the run before anything of the kit is written.
+2. It clones the kit into `%USERPROFILE%\claude-base`, or updates a clone of this repository that
+   is already there. A folder there that is not a clone of this repository is refused, never touched.
+3. It runs `install.ps1` at user scope (section 1), which overwrites nothing of yours.
+4. It asks whether to add Herdr, on its preview channel. Enter is yes: section 3 runs for you.
+5. It runs the doctor and lists what is left by hand: signing in to Claude Code, and a project.
+
+Options go through a script block:
+```
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1))) -NoHerdr
+```
+`-Herdr` or `-NoHerdr` answers the Herdr question, `-Yes` answers yes to every question, `-Dir`
+picks another folder, `-Permissions ask` keeps Claude Code's prompts, and `-DryRun` installs nothing
+and shows the installer's plan when a clone is already there.
+
 ## 0. Check the machine first
 ```
 python scripts/doctor.py
@@ -91,21 +118,26 @@ CLAUDE.project.md
 ```
 
 ## 3. Herdr and the global hotkey (optional)
-See `herdr/README.md`. In short:
-1. Install Herdr; copy `herdr/config.toml` to `%APPDATA%\herdr\config.toml`
-   (`~/.config/herdr/config.toml` on macOS/Linux).
-2. Run `herdr integration install claude` so Herdr tracks Claude Code sessions.
-3. Install the Ctrl+Alt+N hotkey:
-   ```
-   powershell -ExecutionPolicy Bypass -File .\herdr\hotkey\setup-hotkey.ps1
-   ```
+`install.ps1` asks at the end of a user-scope run whether to add Herdr, and Enter is yes; `-Herdr`
+or `-NoHerdr` answers it without asking, and a run with no console asks nothing and adds nothing.
+On yes (`install\herdr.ps1`):
+1. It installs Herdr with its official installer, `https://herdr.dev/install.ps1`, on the preview
+   channel the kit is verified on, unless a `herdr` is already on PATH. An installed Herdr keeps its
+   channel; the run says when it is not preview.
+2. It copies `herdr/config.toml` to `%APPDATA%\herdr\config.toml`. A config of yours that
+   differs is kept, and the kit version lands beside it as `config.toml.new`.
+3. It runs `herdr integration install claude` so Herdr tracks Claude Code sessions.
+4. It creates the Ctrl+Alt+N hotkey with `herdr\hotkey\setup-hotkey.ps1`. A shortcut of that name
+   that points at another launcher is kept, and the run names its target.
+
+Herdr stays optional: a step that fails prints a FAIL line and never fails the install. By hand,
+the same steps are in `herdr/README.md`.
 
 ## 4. Another device (clone and go)
+The one command at the top of this file does it. By hand:
 1. Clone this repo and run `python scripts\doctor.py`.
-2. Run `install.ps1` (user scope).
-3. Copy `herdr/config.toml` into place and run `herdr integration install claude`.
-4. Run `herdr/hotkey/setup-hotkey.ps1`.
-5. Review the defaults in `settings.json` (permission mode, model, effort) and adjust.
+2. Run `install.ps1` (user scope) and answer the Herdr question.
+3. Review the defaults in `settings.json` (permission mode, model, effort) and adjust.
 
 ## Plugin marketplace
 The five skills that only make sense as a set are also published as two plugins, for a machine that

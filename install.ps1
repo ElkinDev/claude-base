@@ -35,13 +35,19 @@ param(
     # prompts, which is fast and is what most of these skills assume. 'ask' keeps the
     # normal prompts. See docs/PERMISSIONS.md before choosing.
     [ValidateSet('bypass', 'ask')]
-    [string]$Permissions = 'bypass'
+    [string]$Permissions = 'bypass',
+    # User scope: add Herdr, set up the way this kit uses it (install\herdr.ps1), without asking.
+    # With neither switch the installer asks, and Enter is yes; a run with no console asks nothing.
+    [switch]$Herdr,
+    [switch]$NoHerdr
 )
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 . (Join-Path $root 'install\backup.ps1')
 . (Join-Path $root 'install\lib.ps1')
 . (Join-Path $root 'install\adopt.ps1')
+. (Join-Path $root 'install\herdr.ps1')
+if ($Herdr -and $NoHerdr) { throw '-Herdr and -NoHerdr cannot both be given.' }
 
 $kitHome      = Get-KitHome
 $stamp        = Get-KitStamp $kitHome
@@ -277,6 +283,8 @@ if ($Permissions -eq 'bypass') {
     Write-Output "  PERMISSIONS: ask. Claude Code will prompt before acting."
     Write-Output "  Some skills in this base assume bypass and will stop on each step."
 }
+Install-KitHerdr -KitRoot $root -KitHome $kitHome -DryRun:$DryRun `
+    -Choice (Get-KitHerdrChoice -Yes $Herdr.IsPresent -No $NoHerdr.IsPresent -DryRun $DryRun.IsPresent)
 Write-Output ""
-Write-Output "Done. If you use Herdr, run its Claude integration too (see herdr\README.md)."
+Write-Output "Done."
 Write-Output "Run: python scripts\doctor.py"
