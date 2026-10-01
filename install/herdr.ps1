@@ -14,6 +14,7 @@
 #   KIT_HERDR_EXE         the herdr to call instead of the one found on PATH
 #   KIT_HERDR_CONFIG_DIR  the folder of config.toml instead of %APPDATA%\herdr
 #   KIT_HERDR_HOTKEY      a .ps1 run instead of herdr\hotkey\setup-hotkey.ps1
+#   KIT_HERDR_LNK_DIR     the folder of the hotkey shortcut instead of the Start Menu Programs folder
 #   KIT_HERDR_ANSWER      the answer to the question, instead of reading the console
 #   KIT_ASSUME_INTERACTIVE  1 or 0, instead of asking the console whether a person is there
 
@@ -37,7 +38,7 @@ function Get-KitHerdrChoice {
     if ($DryRun) { return 'ask' }
     if ($null -ne $env:KIT_HERDR_ANSWER) { $answer = $env:KIT_HERDR_ANSWER }
     elseif (Test-KitInteractive) {
-        $answer = Read-Host 'Add Herdr, the terminal workspace for agents, set up the way this kit uses it? [Y/n]'
+        $answer = Read-Host 'Add Herdr, the terminal workspace for agents, on its preview channel and set up the way this kit uses it? [Y/n]'
     } else { return 'unattended' }
     if ($answer -match '^\s*(n|no)\s*$') { return 'no' }
     return 'yes'
@@ -70,6 +71,20 @@ function Get-KitHerdrConfigPlan {
         return "skip same $Config"
     }
     return "keep yours $Config, the kit version lands beside it as config.toml.new"
+}
+
+function Get-KitHotkeyPlan {
+    # The shortcut setup-hotkey.ps1 writes. One that points at another launcher is yours: an older
+    # clone whose launch-herdr.cmd you edited is never repointed by a new install.
+    param([string]$Launcher)
+    $dir = if ($env:KIT_HERDR_LNK_DIR) { $env:KIT_HERDR_LNK_DIR } else { [Environment]::GetFolderPath('Programs') }
+    # GetFolderPath answers empty when the folder does not exist, as under a moved USERPROFILE.
+    if (-not $dir) { return 'write, through herdr\hotkey\setup-hotkey.ps1 (no Start Menu Programs folder found to check)' }
+    $lnk = Join-Path $dir 'herdr (Ctrl+Alt+N).lnk'
+    if (-not (Test-Path -LiteralPath $lnk)) { return "write $lnk" }
+    try { $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath } catch { $target = '' }
+    if ($target -eq $Launcher) { return "skip same $lnk" }
+    return "keep yours $lnk, it points at $target; to repoint it run herdr\hotkey\setup-hotkey.ps1 from this clone"
 }
 
 function Invoke-KitHerdrCommand {
@@ -117,17 +132,21 @@ function Install-KitHerdr {
         else { Write-Output 'herdr        -Herdr given; a real run does:' }
         if ($exe) { Write-Output "  install    skip, herdr is already at $exe" }
         else { Write-Output '  install    the official installer, https://herdr.dev/install.ps1' }
-        Write-Output '  channel    herdr channel set preview'
+        Write-Output '  channel    a fresh install follows preview; an installed Herdr keeps its channel, and the run says which'
         Write-Output ('  config     ' + (Get-KitHerdrConfigPlan $kitConfig $config))
         Write-Output '  integrate  herdr integration install claude'
-        Write-Output '  hotkey     Ctrl+Alt+N, herdr\hotkey\setup-hotkey.ps1'
+        Write-Output ('  hotkey     ' + (Get-KitHotkeyPlan (Join-Path $KitRoot 'herdr\hotkey\launch-herdr.cmd')))
         return
     }
 
     Write-Output 'herdr'
+    $fresh = -not $exe
     if ($exe) {
         Write-Output "  ok    already installed at $exe"
     } else {
+        # The installer's own parameter: a fresh install follows preview from the start (herdr.dev/install.ps1:3).
+        $savedChannel = $env:HERDR_CHANNEL
+        $env:HERDR_CHANNEL = 'preview'
         if ($env:KIT_HERDR_INSTALLER) {
             $installer = $env:KIT_HERDR_INSTALLER
             Invoke-KitHerdrCommand 'the Herdr installer' { & powershell -NoProfile -ExecutionPolicy Bypass -File $installer }
@@ -136,6 +155,7 @@ function Install-KitHerdr {
                 & powershell -NoProfile -ExecutionPolicy Bypass -Command 'irm https://herdr.dev/install.ps1 | iex'
             }
         }
+        $env:HERDR_CHANNEL = $savedChannel
         if (-not $script:KitHerdrOk) {
             Write-Output '  skip  the rest of the Herdr setup, since Herdr did not install'
             return
@@ -148,7 +168,13 @@ function Install-KitHerdr {
         }
     }
 
-    Invoke-KitHerdrCommand 'channel preview' { & $exe channel set preview }
+    # An installed Herdr keeps the channel its owner chose; the run only says when it is not the
+    # preview channel this kit is verified on.
+    if (-not $fresh) {
+        $channel = (& $exe channel show 2>$null | Out-String).Trim()
+        if ($channel -eq 'preview') { Write-Output '  ok    channel preview' }
+        else { Write-Output ("  note  your Herdr follows '{0}'; this kit is verified on preview. To follow it: herdr channel set preview" -f $channel) }
+    }
 
     $plan = Get-KitHerdrConfigPlan $kitConfig $config
     try {
@@ -163,13 +189,17 @@ function Install-KitHerdr {
         Write-Output ("  FAIL  config: {0}" -f $_.Exception.Message)
     }
 
-    # Herdr writes its hook into the Claude Code profile that CLAUDE_CONFIG_DIR names, so a kit home
-    # moved with KIT_HOME gets the hook there and not in the default profile.
+    # Herdr writes its hook into the Claude Code profile that CLAUDE_CONFIG_DIR names. It goes to the
+    # kit home this run installed, whatever profile the shell happens to point at.
     $savedConfigDir = $env:CLAUDE_CONFIG_DIR
-    if ($env:KIT_HOME) { $env:CLAUDE_CONFIG_DIR = $KitHome }
+    $env:CLAUDE_CONFIG_DIR = $KitHome
     try {
         Invoke-KitHerdrCommand 'integration install claude' { & $exe integration install claude }
     } finally { $env:CLAUDE_CONFIG_DIR = $savedConfigDir }
 
-    Invoke-KitHerdrCommand 'hotkey Ctrl+Alt+N' { & powershell -NoProfile -ExecutionPolicy Bypass -File $hotkey }
+    $launcher = Join-Path $KitRoot 'herdr\hotkey\launch-herdr.cmd'
+    $hotkeyPlan = Get-KitHotkeyPlan $launcher
+    if ($hotkeyPlan.StartsWith('keep yours')) { Write-Output "  keep  hotkey: $hotkeyPlan" }
+    elseif ($hotkeyPlan.StartsWith('skip same')) { Write-Output "  ok    hotkey: $hotkeyPlan" }
+    else { Invoke-KitHerdrCommand 'hotkey Ctrl+Alt+N' { & powershell -NoProfile -ExecutionPolicy Bypass -File $hotkey } }
 }

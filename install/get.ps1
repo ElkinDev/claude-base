@@ -19,7 +19,8 @@
 #
 # The tests replace the external commands through the environment: CLAUDE_BASE_WINGET (winget),
 # CLAUDE_BASE_CLAUDE_INSTALLER (a .ps1 instead of the Claude Code installer), CLAUDE_BASE_MISSING
-# (a comma list of tools to treat as missing) and CLAUDE_BASE_ANSWER (the answer to every question).
+# (a comma list of tools to treat as missing), CLAUDE_BASE_ANSWER (the answer to every question) and
+# CLAUDE_BASE_USER_PATH_FILE (a file standing in for the user PATH in the registry).
 param(
     [string]$Dir = $(if ($env:CLAUDE_BASE_DIR) { $env:CLAUDE_BASE_DIR } else { Join-Path $env:USERPROFILE 'claude-base' }),
     [string]$Repo = $(if ($env:CLAUDE_BASE_REPO) { $env:CLAUDE_BASE_REPO } else { 'https://github.com/ElkinDev/claude-base.git' }),
@@ -74,10 +75,39 @@ function Find-GetPython {
     return $null
 }
 
+function Get-GetUserPath {
+    if ($env:CLAUDE_BASE_USER_PATH_FILE) {
+        if (Test-Path -LiteralPath $env:CLAUDE_BASE_USER_PATH_FILE) { return (Get-Content -LiteralPath $env:CLAUDE_BASE_USER_PATH_FILE -Raw).Trim() }
+        return ''
+    }
+    return [Environment]::GetEnvironmentVariable('Path', 'User')
+}
+
+function Set-GetUserPath {
+    param([string]$Value)
+    if ($env:CLAUDE_BASE_USER_PATH_FILE) { Set-Content -LiteralPath $env:CLAUDE_BASE_USER_PATH_FILE -Value $Value -Encoding ascii; return }
+    [Environment]::SetEnvironmentVariable('Path', $Value, 'User')
+}
+
+function Add-GetClaudePath {
+    # The native installer puts claude.exe in %USERPROFILE%\.local\bin and has been seen to leave that
+    # folder off PATH (it prints how to add it). Add it to this session and to the user PATH once.
+    $bin = Join-Path $env:USERPROFILE '.local\bin'
+    if (-not (Test-Path -LiteralPath (Join-Path $bin 'claude.exe'))) { return $false }
+    if (-not (($env:Path -split ';') -contains $bin)) { $env:Path = "$env:Path;$bin" }
+    $user = Get-GetUserPath
+    if (-not (($user -split ';') -contains $bin)) {
+        Set-GetUserPath ((@($user, $bin) | Where-Object { $_ }) -join ';')
+        Write-Host "  added $bin to your user PATH"
+    }
+    return $true
+}
+
 function Test-GetTool {
     param([string]$Tool)
     if (Test-GetMissing $Tool) { return $false }
     if ($Tool -eq 'python') { return [bool](Find-GetPython) }
+    if ($Tool -eq 'claude' -and -not (Get-Command claude -ErrorAction SilentlyContinue)) { return (Add-GetClaudePath) }
     return [bool](Get-Command $Tool -ErrorAction SilentlyContinue)
 }
 
@@ -164,7 +194,7 @@ function Invoke-GetMain {
         if ($NoHerdr) { $installArgs += '-NoHerdr' }
         elseif ($Herdr) { $installArgs += '-Herdr' }
         elseif ($DryRun) { }
-        elseif (Read-GetYes 'Add Herdr, the terminal workspace for agents, set up the way this kit uses it?') { $installArgs += '-Herdr' }
+        elseif (Read-GetYes 'Add Herdr, the terminal workspace for agents, on its preview channel and set up the way this kit uses it?') { $installArgs += '-Herdr' }
         else { $installArgs += '-NoHerdr' }
         & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Dir 'install.ps1') @installArgs | Out-Host
         if ($LASTEXITCODE -ne 0) { Write-Host "Stopped: install.ps1 exited $LASTEXITCODE."; return 1 }
@@ -188,7 +218,10 @@ function Invoke-GetMain {
 }
 
 $getExit = Invoke-GetMain
-# Run as a file, the exit code reaches the caller. Run through iex or a script block it shares the
-# caller's session, where exit would close the window, so it only says how it ended.
-if ($MyInvocation.MyCommand.Path) { exit $getExit }
+# Run as this file (powershell -File get.ps1), the exit code reaches the caller. Run through iex, a
+# script block, or dot-sourced, it shares the caller's session or script, where exit would end it,
+# so it only sets LASTEXITCODE and says how it ended.
+$global:LASTEXITCODE = $getExit
+if ($MyInvocation.InvocationName -ne '.' -and $MyInvocation.MyCommand.Path -and
+    [IO.Path]::GetFileName($MyInvocation.MyCommand.Path) -eq 'get.ps1') { exit $getExit }
 if ($getExit -ne 0) { Write-Host "claude-base install did not finish (code $getExit)." }

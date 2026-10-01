@@ -29,6 +29,12 @@ $env:Path = (($realPath -split ';') | Where-Object { $_ -and $_ -notmatch 'herdr
 $env:KIT_HERDR_EXE        = Join-Path $stubs 'herdr.cmd'
 $env:KIT_HERDR_HOTKEY     = Join-Path $stubs 'hotkey.ps1'
 $env:KIT_HERDR_CONFIG_DIR = Join-Path $base 'appdata\herdr'
+$env:KIT_HERDR_LNK_DIR    = Join-Path $base 'startmenu'
+# Failing stand-ins stay set for the whole suite, so no phase can reach the real winget or the real
+# Claude Code installer, whatever this machine is missing.
+Set-Content -LiteralPath (Join-Path $stubs 'winget-fails.cmd') -Encoding ascii -Value @('@echo off', 'echo stub winget failing', 'exit /b 1')
+Set-Content -LiteralPath (Join-Path $stubs 'claude-installer-fails.ps1') -Encoding ascii -Value "'stub claude installer failing'; exit 1"
+$env:CLAUDE_BASE_USER_PATH_FILE = Join-Path $base 'user-path.txt'
 
 function Invoke-Get {
     param([string[]]$Arguments = @())
@@ -42,9 +48,9 @@ function Invoke-Get {
 }
 
 function Clear-GetEnv {
-    foreach ($name in @('CLAUDE_BASE_MISSING', 'CLAUDE_BASE_ANSWER', 'CLAUDE_BASE_WINGET', 'CLAUDE_BASE_CLAUDE_INSTALLER')) {
-        Set-Item -Path "Env:$name" -Value $null
-    }
+    foreach ($name in @('CLAUDE_BASE_MISSING', 'CLAUDE_BASE_ANSWER')) { Set-Item -Path "Env:$name" -Value $null }
+    $env:CLAUDE_BASE_WINGET = Join-Path $stubs 'winget-fails.cmd'
+    $env:CLAUDE_BASE_CLAUDE_INSTALLER = Join-Path $stubs 'claude-installer-fails.ps1'
 }
 
 try {
@@ -111,7 +117,6 @@ try {
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $base 'cb2'))) 'nothing was cloned'
 
     Remove-Item -LiteralPath $wingetLog
-    Set-Content -LiteralPath (Join-Path $stubs 'winget-fails.cmd') -Encoding ascii -Value @('@echo off', 'echo stub winget failing', 'exit /b 1')
     $env:CLAUDE_BASE_WINGET = Join-Path $stubs 'winget-fails.cmd'
     $out = Invoke-Get @('-Dir', (Join-Path $base 'cb2'), '-NoHerdr')
     Assert-Exit 1 'a failing winget stops the run'
@@ -134,6 +139,20 @@ try {
     $null = Invoke-Get @('-Dir', (Join-Path $base 'cb3'), '-NoHerdr')
     Assert-True (Test-Path -LiteralPath $claudeMark) 'the Claude Code installer ran'
 
+    Write-Host "`r`nphase 7b, a claude.exe the installer left off PATH is found and its folder added"
+    Clear-GetEnv
+    $bin = Join-Path $env:USERPROFILE '.local\bin'
+    New-Item -ItemType Directory -Force -Path $bin | Out-Null
+    Set-Content -LiteralPath (Join-Path $bin 'claude.exe') -Value 'stand-in' -Encoding ascii
+    $savedPath = $env:Path
+    $env:Path = (($env:Path -split ';') | Where-Object { $_ -and -not (Test-Path -LiteralPath (Join-Path $_ 'claude.cmd')) -and -not (Test-Path -LiteralPath (Join-Path $_ 'claude.exe')) -and -not (Test-Path -LiteralPath (Join-Path $_ 'claude')) }) -join ';'
+    $out = Invoke-Get @('-Dir', (Join-Path $base 'cb4'), '-DryRun')
+    $env:Path = $savedPath
+    Assert-Exit 0 'the dry run with claude only in .local\bin succeeds'
+    Assert-Match $out '  ok    Claude Code' 'claude is found in .local\bin'
+    Assert-Match ((Get-Content -LiteralPath $env:CLAUDE_BASE_USER_PATH_FILE -Raw)) $bin 'its folder is added to the user PATH'
+    Remove-Item -LiteralPath (Join-Path $bin 'claude.exe')
+
     Write-Host "`r`nphase 8, the Herdr question: n passes -NoHerdr, y and -Yes pass -Herdr"
     Clear-GetEnv
     $env:CLAUDE_BASE_ANSWER = 'n'
@@ -144,14 +163,35 @@ try {
     $out = Invoke-Get @('-Dir', $dir)
     Assert-Exit 0 'the run answered y succeeds'
     Assert-Match ((Get-Content -LiteralPath $herdrLog -Raw)) 'integration install claude' 'y sets Herdr up (stub)'
+    Remove-Item -LiteralPath $herdrLog
+    $env:CLAUDE_BASE_ANSWER = ' '  # Enter: an empty value would unset the variable
+    $out = Invoke-Get @('-Dir', $dir)
+    Assert-Exit 0 'the run answered with Enter succeeds'
+    Assert-True (Test-Path -LiteralPath $herdrLog) 'Enter means yes (stub)'
     Clear-GetEnv
     Remove-Item -LiteralPath $herdrLog
     $out = Invoke-Get @('-Dir', $dir, '-Yes')
     Assert-Exit 0 'the run with -Yes succeeds'
     Assert-True (Test-Path -LiteralPath $herdrLog) '-Yes sets Herdr up (stub)'
+
+    Write-Host "`r`nphase 9, run as a script block or dot-sourced, a failing run never ends the caller"
+    $caller = Join-Path $base 'caller.ps1'
+    Set-Content -LiteralPath $caller -Encoding ascii -Value @(
+        'param([string]$Get, [string]$Repo, [string]$Dir)',
+        '& ([scriptblock]::Create((Get-Content -LiteralPath $Get -Raw))) -Repo $Repo -Dir $Dir -Herdr -NoHerdr',
+        "'after the block, exit ' + `$LASTEXITCODE",
+        '. $Get -Repo $Repo -Dir $Dir -Herdr -NoHerdr',
+        "'after the dot-source, exit ' + `$LASTEXITCODE",
+        'exit 7')
+    $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $text = ((& powershell -NoProfile -ExecutionPolicy Bypass -File $caller -Get $getScript -Repo $repo -Dir (Join-Path $base 'cb5') 2>&1) | Out-String)
+    $script:LastExit = $LASTEXITCODE; $ErrorActionPreference = $previous
+    Assert-Match $text 'after the block, exit 1' 'the script block form returns to its caller with the exit code'
+    Assert-Match $text 'after the dot-source, exit 1' 'the dot-sourced form returns to its caller with the exit code'
+    Assert-Exit 7 'the caller ends on its own exit'
 } finally {
     Clear-GetEnv
-    foreach ($name in @('KIT_HERDR_EXE', 'KIT_HERDR_HOTKEY', 'KIT_HERDR_CONFIG_DIR')) { Set-Item -Path "Env:$name" -Value $null }
+    foreach ($name in @('KIT_HERDR_EXE', 'KIT_HERDR_HOTKEY', 'KIT_HERDR_CONFIG_DIR', 'KIT_HERDR_LNK_DIR', 'CLAUDE_BASE_WINGET', 'CLAUDE_BASE_CLAUDE_INSTALLER', 'CLAUDE_BASE_USER_PATH_FILE')) { Set-Item -Path "Env:$name" -Value $null }
     $env:Path = $realPath
     Close-KitSandbox $realProfile
 }

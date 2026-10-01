@@ -25,17 +25,22 @@ New-Item -ItemType Directory -Force -Path $stubs | Out-Null
 Set-Content -LiteralPath (Join-Path $stubs 'herdr.cmd') -Encoding ascii -Value @(
     '@echo off',
     ('echo %* ^|%CLAUDE_CONFIG_DIR%>>"' + $herdrLog + '"'),
+    'if "%1 %2"=="channel show" (if defined HERDR_STUB_CHANNEL (echo %HERDR_STUB_CHANNEL%) else (echo preview)) & exit /b 0',
     'echo stub herdr %*')
 Set-Content -LiteralPath (Join-Path $stubs 'hotkey.ps1') -Encoding ascii -Value ("Set-Content -LiteralPath '" + $hotkeyMark + "' -Value ran; 'Created: stub hotkey'")
-Set-Content -LiteralPath (Join-Path $stubs 'installer-fails.ps1') -Encoding ascii -Value "'stub installer failing'; exit 3"
+$channelSeen = Join-Path $base 'installer-channel.txt'
+Set-Content -LiteralPath (Join-Path $stubs 'installer-fails.ps1') -Encoding ascii -Value ("Set-Content -LiteralPath '" + $channelSeen + "' -Value `$env:HERDR_CHANNEL; 'stub installer failing'; exit 3")
+$lnkDir = Join-Path $base 'startmenu'
+New-Item -ItemType Directory -Force -Path $lnkDir | Out-Null
 # The PATH of every run in this file holds no herdr, so a slip in the code cannot reach the real one.
 $env:Path = (($realPath -split ';') | Where-Object { $_ -and $_ -notmatch 'herdr' }) -join ';'
 
 function Clear-HerdrEnv {
-    foreach ($name in @('KIT_HERDR_EXE', 'KIT_HERDR_HOTKEY', 'KIT_HERDR_INSTALLER', 'KIT_HERDR_ANSWER', 'KIT_ASSUME_INTERACTIVE')) {
+    foreach ($name in @('KIT_HERDR_EXE', 'KIT_HERDR_HOTKEY', 'KIT_HERDR_INSTALLER', 'KIT_HERDR_ANSWER', 'KIT_ASSUME_INTERACTIVE', 'HERDR_STUB_CHANNEL')) {
         Set-Item -Path "Env:$name" -Value $null
     }
     $env:KIT_HERDR_CONFIG_DIR = $configDir
+    $env:KIT_HERDR_LNK_DIR = $lnkDir
 }
 
 function Use-HerdrStubs {
@@ -71,11 +76,39 @@ try {
     Assert-Exit 0 'the install with -Herdr succeeds'
     Assert-Match $out ('  ok    already installed at ' + $env:KIT_HERDR_EXE) 'it does not reinstall a present herdr'
     $calls = if (Test-Path -LiteralPath $herdrLog) { Get-Content -LiteralPath $herdrLog -Raw } else { '' }
-    Assert-Regex $calls '(?m)^channel set preview \|' 'it sets the preview channel'
+    Assert-Regex $calls '(?m)^channel show \|' 'it reads the channel of the installed herdr'
+    Assert-True ($calls -notmatch 'channel set') 'it never changes the channel of an installed herdr'
+    Assert-Match $out '  ok    channel preview' 'it reports the preview channel'
     Assert-Match $calls ('integration install claude |' + $kitHome) 'the integration lands in the kit home'
     Assert-True ((Test-Path -LiteralPath $config) -and ((Get-FileHash -LiteralPath $config).Hash -eq (Get-FileHash -LiteralPath $kitConfig).Hash)) 'config.toml is the kit version'
     Assert-True (Test-Path -LiteralPath $hotkeyMark) 'the hotkey script ran'
     Assert-Match $out '  ok    hotkey Ctrl+Alt+N' 'it reports the hotkey'
+
+    Write-Host "`r`nphase 4b, a herdr on stable is left on stable, and the integration follows the kit home"
+    $env:HERDR_STUB_CHANNEL = 'stable'
+    $env:CLAUDE_CONFIG_DIR = Join-Path $base 'another-profile'
+    Remove-Item -LiteralPath $herdrLog -ErrorAction SilentlyContinue
+    $out = Invoke-Install @('-Herdr')
+    $env:CLAUDE_CONFIG_DIR = $null
+    $env:HERDR_STUB_CHANNEL = $null
+    Assert-Exit 0 'the install over a stable herdr succeeds'
+    Assert-Match $out "your Herdr follows 'stable'; this kit is verified on preview" 'it names the channel and changes nothing'
+    $calls = Get-Content -LiteralPath $herdrLog -Raw
+    Assert-True ($calls -notmatch 'channel set') 'no channel set on a stable herdr'
+    Assert-Match $calls ('integration install claude |' + $kitHome) 'the integration goes to the kit home, not the shell profile'
+
+    Write-Host "`r`nphase 4c, a hotkey shortcut of yours that points elsewhere is kept; the same target is skipped"
+    $lnk = Join-Path $lnkDir 'herdr (Ctrl+Alt+N).lnk'
+    $shell = New-Object -ComObject WScript.Shell
+    $sc = $shell.CreateShortcut($lnk); $sc.TargetPath = 'C:\Windows\notepad.exe'; $sc.Save()
+    Remove-Item -LiteralPath $hotkeyMark -ErrorAction SilentlyContinue
+    $out = Invoke-Install @('-Herdr')
+    Assert-Match $out 'keep  hotkey: keep yours' 'a shortcut pointing elsewhere is kept'
+    Assert-True (-not (Test-Path -LiteralPath $hotkeyMark)) 'the hotkey script did not run over it'
+    $sc = $shell.CreateShortcut($lnk); $sc.TargetPath = (Join-Path $script:RepoRoot 'herdr\hotkey\launch-herdr.cmd'); $sc.Save()
+    $out = Invoke-Install @('-Herdr')
+    Assert-Match $out 'ok    hotkey: skip same' 'a shortcut to this clone is left as it is'
+    Remove-Item -LiteralPath $lnk
 
     Write-Host "`r`nphase 5, a config.toml of yours that differs is kept; the kit version lands as .new"
     Set-Content -LiteralPath $config -Value 'mine = true' -Encoding ascii
@@ -106,6 +139,7 @@ try {
     Assert-Match $out 'FAIL  the Herdr installer (exit 3)' 'it reports the installer exit'
     Assert-Match $out 'skip  the rest of the Herdr setup' 'it skips the rest'
     Assert-True (-not (Test-Path -LiteralPath $hotkeyMark)) 'no hotkey after a failed install'
+    Assert-True ((Get-Content -LiteralPath $channelSeen -Raw).Trim() -eq 'preview') 'the installer was asked for the preview channel'
 
     Write-Host "`r`nphase 8, -Herdr and -NoHerdr together are refused"
     Clear-HerdrEnv
@@ -114,6 +148,7 @@ try {
 } finally {
     Clear-HerdrEnv
     $env:KIT_HERDR_CONFIG_DIR = $null
+    $env:KIT_HERDR_LNK_DIR = $null
     $env:Path = $realPath
     Close-KitSandbox $realProfile
 }
