@@ -278,6 +278,58 @@ try {
         }
         Assert-True ($written.Count -gt 20) ('a fresh record was written over ' + $shape.Key)
     }
+
+    # --------------------------------------------------------------------- cc ----
+    Write-Host "`r`nphase 15, cc is a command: cc.cmd in the kit's bin folder, that folder on the user PATH once"
+    $bin = Join-Path $kitHome 'bin'
+    $ccCmd = Join-Path $bin 'cc.cmd'
+    # The sandbox's stand-in for HKCU\Environment (KIT_ENV_KEY), seeded the way Windows keeps the user PATH.
+    $envKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($env:KIT_ENV_KEY)
+    $envKey.SetValue('Path', '%USERPROFILE%\keep-me;C:\other', [Microsoft.Win32.RegistryValueKind]::ExpandString)
+    $envKey.Close()
+    function Read-TestUserPath {
+        $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($env:KIT_ENV_KEY)
+        try { return @{ Raw = [string]$k.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames); Kind = [string]$k.GetValueKind('Path') } }
+        finally { $k.Close() }
+    }
+    $out = Invoke-Install @('-DryRun')
+    Assert-Exit 0 'the dry run succeeds'
+    Assert-Match $out "path         would add $bin to your user PATH" 'the dry run names the PATH change'
+    Assert-True ((Read-TestUserPath).Raw -eq '%USERPROFILE%\keep-me;C:\other') 'the dry run left the user PATH alone'
+    $out = Invoke-Install
+    Assert-Exit 0 'the run succeeds'
+    Assert-Match $out "path         added $bin to your user PATH" 'the run says it added the folder'
+    $userPath = Read-TestUserPath
+    Assert-True ($userPath.Raw -eq "%USERPROFILE%\keep-me;C:\other;$bin") ('the folder is appended and the rest kept unexpanded: ' + $userPath.Raw)
+    Assert-True ($userPath.Kind -eq 'ExpandString') ('the value kept its type: ' + $userPath.Kind)
+    $out = Invoke-Install
+    Assert-True ((Read-TestUserPath).Raw -eq "%USERPROFILE%\keep-me;C:\other;$bin") 'a second run adds nothing'
+    Assert-True ($out -notmatch 'your user PATH') 'and says nothing about the PATH'
+    $text = Get-Content -LiteralPath $ccCmd -Raw
+    Assert-Match $text '"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass' 'cc.cmd starts Windows PowerShell by its full path, under any policy'
+    Assert-Match $text '-File "%USERPROFILE%\.claude\cc-launch.ps1" %*' 'it names the launcher from %USERPROFILE%'
+    Assert-True (-not ([IO.File]::ReadAllBytes($ccCmd) | Where-Object { $_ -gt 127 })) 'cc.cmd is ASCII'
+    Assert-True (Test-Path -LiteralPath (Join-Path $kitHome 'cc-launch.ps1')) 'the launcher landed beside claude-account.ps1'
+    # Run as a person types it: the separator and every word after it reach claude untouched, a quote and a
+    # space included, where powershell -File on claude-account.ps1 itself stops on the separator.
+    $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        $text = (& cmd /c "`"$ccCmd`" work -ShowEnv -- -r `"it's a b`" --model opus" 2>&1 | Out-String)
+        $code = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previous }
+    Assert-True ($code -eq 0) ("cc.cmd work -ShowEnv exits 0 (exit $code)")
+    Assert-Match $text "EXTRA=-r it's a b --model opus" 'every word after -- reaches claude as typed'
+    Assert-Match $text 'FRESH=false' 'the -r after the separator reads as a resume'
+    $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $text = (& cmd /c "`"$ccCmd`" ?" 2>&1 | Out-String); $code = $LASTEXITCODE } finally { $ErrorActionPreference = $previous }
+    Assert-True ($code -eq 0) ("cc.cmd ? exits 0 (exit $code)")
+    Assert-Match $text 'switch Claude Code accounts without logging out' 'cc ? prints the help'
+    # A kit home under the temp folder is a test's: with no stand-in key its folder never reaches the real user
+    # PATH. Asked as a dry run, so a broken guard still writes nothing.
+    . (Join-Path $script:RepoRoot 'install\lib.ps1')
+    $savedKey = $env:KIT_ENV_KEY; $env:KIT_ENV_KEY = $null
+    try { $line = Add-KitUserPath (Join-Path ([IO.Path]::GetTempPath()) 'kit-guard\bin') -DryRun } finally { $env:KIT_ENV_KEY = $savedKey }
+    Assert-Match "$line" 'is under the temp folder, so it is not added to your user PATH' 'a temp kit home never reaches the real user PATH'
 } finally {
     Close-KitSandbox $realProfile
 }
