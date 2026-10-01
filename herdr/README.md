@@ -46,8 +46,8 @@ When Herdr updates:
 1. `python scripts/doctor.py`.
 2. A `warn herdr` line only says the build moved. A `FAIL herdr <subcommand>` says the surface
    moved: read the new `--help` and fix the code that drives it, which is one of
-   `claude/claude-account.ps1`, `scripts/compact-at-boundary.py`, `claude/hooks/landing.py`,
-   `claude/hooks/alarm-big-result.py`.
+   `claude/claude-account.ps1`, `scripts/compact-at-boundary.py` (through `scripts/herdr_panes.py`),
+   `scripts/quota-wake.py`, `claude/hooks/landing.py`, `claude/hooks/alarm-big-result.py`.
 3. When every line is `ok` again, update `cli-surface.txt` and `verified-version.txt` in the same
    commit as the fix, so the two files always describe a build that was actually driven.
 

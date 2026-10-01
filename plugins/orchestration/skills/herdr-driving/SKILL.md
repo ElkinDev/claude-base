@@ -27,7 +27,8 @@ kit unchanged.
 Herdr renumbers workspaces when it restarts: a pane that was `w3:p1` came back as `w4:p1` overnight.
 A pane id is therefore valid only for the call you resolved it in.
 
-The commands take a pane id as their target. The Claude Code session name is not a target:
+The commands take a pane id as their target; on 0.9.2 the agent commands also take a unique live Herdr
+agent name (the `name` below). The Claude Code session name is not a target:
 `herdr agent get <session name>` answers `agent_not_found`. So the shape of every call is: read
 `herdr agent list`, find the pane by name, use the `pane_id` from that same read.
 
@@ -35,7 +36,8 @@ The commands take a pane id as their target. The Claude Code session name is not
 
 - `pane_id`: the target for every other command. Never cache it across a Herdr restart.
 - `name`: Herdr's own agent name, set with `herdr agent rename <pane> <name>` and removed with
-  `herdr agent rename <pane> --clear`. Null until something sets it.
+  `herdr agent rename <pane> --clear`. The key is absent until something sets it (0.9.2), so read it
+  with `.get`, never as `item["name"]`.
 - `terminal_title_stripped`: the Claude Code session name, from `claude --name <name>` at launch or
   `/rename` inside the session. With no name it is an automatic summary of the current task, so it
   is a reliable selector only when the session was named on purpose.
@@ -133,8 +135,9 @@ Herdr is a preview build and its CLI moves. The routine, in order:
 2. A `warn herdr` line means the installed version differs from `herdr/verified-version.txt`. That
    alone is not a problem, it is a reason to read the next lines carefully.
 3. A `FAIL herdr <subcommand>` means that subcommand is gone or renamed. Read its new `--help` and
-   re-verify the code that drives it: `claude/claude-account.ps1`, `scripts/compact-at-boundary.py`,
-   `claude/hooks/landing.py`, `claude/hooks/alarm-big-result.py`.
+   re-verify the code that drives it: `claude/claude-account.ps1`, `scripts/compact-at-boundary.py`
+   (through `scripts/herdr_panes.py`), `scripts/quota-wake.py`, `claude/hooks/landing.py`,
+   `claude/hooks/alarm-big-result.py`.
 4. When the doctor is clean again, update `herdr/cli-surface.txt` and `herdr/verified-version.txt` in
    the same commit as the fix, so the two files never describe a build nobody drove.
 
