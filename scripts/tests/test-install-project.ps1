@@ -83,6 +83,11 @@ try {
     Assert-True ((Get-FileHash -LiteralPath (Join-Path $company '.git\hooks\pre-push') -Algorithm SHA256).Hash -eq $hookBefore) `
         'the company pre-push hook is untouched'
     Assert-True (Test-Path -LiteralPath (Join-Path $company '.claude\settings.local.json')) 'the project wiring landed'
+    # the branch hooks run through Git Bash, which finds a bare powershell only on PATH
+    $fullPs = ([IO.Path]::Combine($env:SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')).Replace([string][char]92, '/')
+    $projSettings = Get-Content -LiteralPath (Join-Path $company '.claude\settings.local.json') -Raw
+    Assert-True ($projSettings -notmatch '"command": "powershell([.]exe)? ') 'no project hook starts PowerShell by its PATH name'
+    Assert-Match $projSettings ('"command": "' + $fullPs + ' -NoProfile') 'the project hooks start it by its full path'
     Assert-True (Test-Path -LiteralPath (Join-Path $company 'CLAUDE.project.md')) 'the profile to fill landed'
     Assert-Match $out "check your team's policy" 'the run tells the adopter to check the team policy'
     $stampCompany = Get-LastStamp

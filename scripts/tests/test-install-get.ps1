@@ -98,7 +98,14 @@ try {
     Assert-True (Test-Path -LiteralPath (Join-Path $kitHome 'skills')) 'the kit landed in the kit home'
     Assert-Match $out 'herdr        not added.' 'Herdr was not added'
     Assert-Regex $out '(?m)^(ok|warn|FAIL) +git' 'the doctor ran'
+    # the hooks and the status line run through Git Bash, which finds a bare powershell only on PATH
+    $fullPs = ([IO.Path]::Combine($env:SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')).Replace([string][char]92, '/')
+    $kitSettings = Get-Content -LiteralPath (Join-Path $kitHome 'settings.json') -Raw
+    Assert-True ($kitSettings -notmatch '"command": "powershell([.]exe)? ') 'no settings command starts PowerShell by its PATH name'
+    Assert-Match $kitSettings ('"command": "' + $fullPs + ' -NoProfile') 'the settings commands start it by its full path'
     Assert-Match $out 'Left to do by hand:' 'it ends with the steps left by hand'
+    $psFull = [IO.Path]::Combine($env:SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    Assert-Match $out ('Scaffold a project: ' + $psFull + ' -ExecutionPolicy Bypass -File') 'the scaffold step names PowerShell by its full path'
 
     Write-Host "`r`nphase 3, a second run updates the clone it made"
     # a claude from npm: its claude.ps1 resolves first, so the last steps name claude.cmd
@@ -348,6 +355,24 @@ try {
     $text = ((& powershell -NoProfile -ExecutionPolicy Bypass -File $renamed -Repo $repo -Dir (Join-Path $base 'cb5') -Herdr -NoHerdr 2>&1) | Out-String)
     $script:LastExit = $LASTEXITCODE; $ErrorActionPreference = $previous
     Assert-Exit 1 'a renamed copy run as a file passes its exit code'
+    Write-Host "`r`nphase 10, every child PowerShell starts by its full path, and a PATH that lost the WindowsPowerShell folder still installs"
+    # get.ps1 also refreshes the session PATH from the registry (Update-GetSessionPath), which puts the folder back here,
+    # so the run below passes on the old code too; the source checks are the pins of the full-path start.
+    foreach ($file in @($getScript, (Join-Path $script:RepoRoot 'install/herdr.ps1'))) {
+        Assert-True (-not (Select-String -LiteralPath $file -Pattern "&[ ]*['`"]?(powershell|pwsh)([.]exe)?['`"]?[ ]" -Quiet)) ("$(Split-Path -Leaf $file) starts no PowerShell by its PATH name")
+    }
+    Clear-GetEnv
+    $ps = [IO.Path]::Combine($env:SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    $savedPath = $env:Path
+    $env:Path = (($env:Path -split ';') | Where-Object { $_ -and $_ -notmatch 'WindowsPowerShell' }) -join ';'
+    $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        $text = ((& $ps -NoProfile -ExecutionPolicy Bypass -File $getScript -Repo $repo -Dir (Join-Path $base 'cb6') -NoHerdr 2>&1) | Out-String)
+        $script:LastExit = $LASTEXITCODE
+    } finally { $env:Path = $savedPath; $ErrorActionPreference = $previous }
+    Assert-Exit 0 'the install succeeds with no WindowsPowerShell folder on PATH'
+    Assert-True ($text -notmatch 'Stopped: install.ps1') 'install.ps1 ran'
+    Assert-Match $text 'Left to do by hand:' 'it reaches the last steps'
 } finally {
     Clear-GetEnv
     foreach ($name in @('KIT_HERDR_EXE', 'KIT_HERDR_HOTKEY', 'KIT_HERDR_CONFIG_DIR', 'KIT_HERDR_LNK_DIR', 'CLAUDE_BASE_WINGET', 'CLAUDE_BASE_CLAUDE_INSTALLER', 'CLAUDE_BASE_NPM', 'CLAUDE_BASE_ENV_KEY')) { Set-Item -Path "Env:$name" -Value $null }

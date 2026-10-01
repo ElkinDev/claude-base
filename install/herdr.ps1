@@ -19,6 +19,16 @@
 #   KIT_HERDR_ANSWER      the answer to the question, instead of reading the console
 #   KIT_ASSUME_INTERACTIVE  1 or 0, instead of asking the console whether a person is there
 
+function Get-KitPowerShell {
+    # Windows PowerShell by its full path, for the Herdr installer and the hotkey script: a machine whose PATH lost
+    # the WindowsPowerShell folder still finds it (the Run box does through App Paths, a PATH lookup does not).
+    if ($env:SystemRoot) {
+        $full = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        if (Test-Path -LiteralPath $full) { return $full }
+    }
+    return 'powershell'
+}
+
 function Test-KitInteractive {
     if ($env:KIT_ASSUME_INTERACTIVE -eq '1') { return $true }
     if ($env:KIT_ASSUME_INTERACTIVE -eq '0') { return $false }
@@ -85,7 +95,8 @@ function Get-KitHotkeyPlan {
     if (-not (Test-Path -LiteralPath $lnk)) { return "write $lnk" }
     try { $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath } catch { $target = '' }
     if ($target -eq $Launcher) { return "skip same $lnk" }
-    return "keep yours $lnk, it points at $target; to repoint it run herdr\hotkey\setup-hotkey.ps1 from this clone"
+    $setup = Join-Path (Split-Path -Parent $Launcher) 'setup-hotkey.ps1'
+    return "keep yours $lnk, it points at $target; to repoint it run: $(Get-KitPowerShell) -ExecutionPolicy Bypass -File `"$setup`""
 }
 
 function Get-KitHerdrChannel {
@@ -163,10 +174,10 @@ function Install-KitHerdr {
         $env:HERDR_CHANNEL = 'preview'
         if ($env:KIT_HERDR_INSTALLER) {
             $installer = $env:KIT_HERDR_INSTALLER
-            Invoke-KitHerdrCommand 'the Herdr installer' { & powershell -NoProfile -ExecutionPolicy Bypass -File $installer }
+            Invoke-KitHerdrCommand 'the Herdr installer' { & (Get-KitPowerShell) -NoProfile -ExecutionPolicy Bypass -File $installer }
         } else {
             Invoke-KitHerdrCommand 'the Herdr installer, https://herdr.dev/install.ps1' {
-                & powershell -NoProfile -ExecutionPolicy Bypass -Command 'irm https://herdr.dev/install.ps1 | iex'
+                & (Get-KitPowerShell) -NoProfile -ExecutionPolicy Bypass -Command 'irm https://herdr.dev/install.ps1 | iex'
             }
         }
         $env:HERDR_CHANNEL = $savedChannel
@@ -216,5 +227,5 @@ function Install-KitHerdr {
     $hotkeyPlan = Get-KitHotkeyPlan $launcher
     if ($hotkeyPlan.StartsWith('keep yours')) { Write-Output "  keep  hotkey: $hotkeyPlan" }
     elseif ($hotkeyPlan.StartsWith('skip same')) { Write-Output "  ok    hotkey: $hotkeyPlan" }
-    else { Invoke-KitHerdrCommand 'hotkey Ctrl+Alt+N' { & powershell -NoProfile -ExecutionPolicy Bypass -File $hotkey } }
+    else { Invoke-KitHerdrCommand 'hotkey Ctrl+Alt+N' { & (Get-KitPowerShell) -NoProfile -ExecutionPolicy Bypass -File $hotkey } }
 }

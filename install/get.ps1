@@ -176,6 +176,16 @@ function Test-GetTool {
     return [bool](Get-Command $Tool -ErrorAction SilentlyContinue)
 }
 
+function Get-GetPowerShell {
+    # Windows PowerShell by its full path, for the installers this script starts: a machine whose PATH lost the
+    # WindowsPowerShell folder still finds it (the Run box does through App Paths, a PATH lookup does not).
+    if ($env:SystemRoot) {
+        $full = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        if (Test-Path -LiteralPath $full) { return $full }
+    }
+    return 'powershell'
+}
+
 function Find-GetNpm {
     # npm.cmd, never npm.ps1, which an execution policy can block.
     if ($env:CLAUDE_BASE_NPM) { if ($env:CLAUDE_BASE_NPM -eq 'none') { return $null } return $env:CLAUDE_BASE_NPM }
@@ -205,9 +215,9 @@ function Install-GetTool {
             & $npm install -g '@anthropic-ai/claude-code' | Out-Host
         } elseif ($Tool -eq 'claude') {
             if ($env:CLAUDE_BASE_CLAUDE_INSTALLER) {
-                & powershell -NoProfile -ExecutionPolicy Bypass -File $env:CLAUDE_BASE_CLAUDE_INSTALLER | Out-Host
+                & (Get-GetPowerShell) -NoProfile -ExecutionPolicy Bypass -File $env:CLAUDE_BASE_CLAUDE_INSTALLER | Out-Host
             } else {
-                & powershell -NoProfile -ExecutionPolicy Bypass -Command 'irm https://claude.ai/install.ps1 | iex' | Out-Host
+                & (Get-GetPowerShell) -NoProfile -ExecutionPolicy Bypass -Command 'irm https://claude.ai/install.ps1 | iex' | Out-Host
             }
         } else {
             if (-not $env:CLAUDE_BASE_WINGET -and -not (Get-Command winget -ErrorAction SilentlyContinue)) {
@@ -281,7 +291,7 @@ function Invoke-GetMain {
         elseif ($DryRun) { }
         elseif (Read-GetYes 'Add Herdr, the terminal workspace for agents, on its preview channel and set up the way this kit uses it?') { $installArgs += '-Herdr' }
         else { $installArgs += '-NoHerdr' }
-        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Dir 'install.ps1') @installArgs | Out-Host
+        & (Get-GetPowerShell) -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Dir 'install.ps1') @installArgs | Out-Host
         if ($LASTEXITCODE -ne 0) { Write-Host "Stopped: install.ps1 exited $LASTEXITCODE."; return 1 }
         if ($DryRun) { return 0 }
 
@@ -301,7 +311,7 @@ function Invoke-GetMain {
     $found = Get-Command claude -ErrorAction SilentlyContinue | Select-Object -First 1
     $run = if ($found -and $found.Source -like '*.ps1') { 'claude.cmd' } else { 'claude' }
     Write-Host "  1. Open a new terminal and run $run, then sign in (one sign-in per account)."
-    Write-Host "  2. Scaffold a project: powershell -ExecutionPolicy Bypass -File `"$Dir\install.ps1`" -Project <path>"
+    Write-Host "  2. Scaffold a project: $(Get-GetPowerShell) -ExecutionPolicy Bypass -File `"$Dir\install.ps1`" -Project <path>"
     Write-Host "  3. Several accounts on one machine: $Dir\docs\ACCOUNTS.md"
     return 0
 }
