@@ -31,3 +31,10 @@ users.noreply.github.com
 # reported. Keep them to orgs whose repositories are public by default.
 ElkinDev
 Gentleman-Programming
+
+# Public projects that a private product's feature spec cites as prior art, in blobs of 2026-09-26 (the spec
+# now names them without links). Personal accounts whose cited repositories are public (gh api, 2026-09-30):
+# decimen-optical-transfer, txqr, libcimbar.
+bashalarmistalt
+divan
+sz3
