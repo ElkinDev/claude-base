@@ -52,10 +52,37 @@ function Read-GetYes {
     return -not ($answer -match '^\s*(n|no)\s*$')
 }
 
+function Read-GetUserPath {
+    # The user PATH as the registry holds it, unexpanded: HKCU\Environment, or the tests' key.
+    $name = if ($env:CLAUDE_BASE_ENV_KEY) { $env:CLAUDE_BASE_ENV_KEY } else { 'Environment' }
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($name)
+    if (-not $key) { return '' }
+    try { return [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) }
+    finally { $key.Close() }
+}
+
+function Test-GetPathHas {
+    # Whether a PATH list holds a folder, whatever its case, a trailing backslash or a %VARIABLE% spelling.
+    param([string]$List, [string]$Folder)
+    $want = $Folder.TrimEnd('\')
+    foreach ($entry in ($List -split ';')) {
+        if ($entry -and [Environment]::ExpandEnvironmentVariables($entry).TrimEnd('\') -eq $want) { return $true }
+    }
+    return $false
+}
+
 function Update-GetSessionPath {
-    $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-    $user    = [Environment]::GetEnvironmentVariable('Path', 'User')
-    $env:Path = (@($machine, $user) | Where-Object { $_ }) -join ';'
+    # After an install the session keeps every folder it had, a Node from fnm lives only in the session
+    # PATH, and gains the folders the installer added to the machine and user PATH.
+    $have = $env:Path
+    foreach ($list in @([Environment]::GetEnvironmentVariable('Path', 'Machine'), (Read-GetUserPath))) {
+        foreach ($entry in ("$list" -split ';')) {
+            if (-not $entry) { continue }
+            $folder = [Environment]::ExpandEnvironmentVariables($entry)
+            if (-not (Test-GetPathHas $have $folder)) { $have = "$($have.TrimEnd(';'));$folder" }
+        }
+    }
+    $env:Path = $have
 }
 
 function Test-GetMissing {
@@ -99,8 +126,7 @@ function Add-GetUserPath {
     $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($name)
     try {
         $raw = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-        $entries = @($raw -split ';') + @([Environment]::ExpandEnvironmentVariables($raw) -split ';')
-        if ($entries -contains $Folder) { return }
+        if (Test-GetPathHas $raw $Folder) { return }
         if ($DryRun) { Write-Host "  would add $Folder to your user PATH"; return }
         $kind = if ($key.GetValueNames() -contains 'Path') { $key.GetValueKind('Path') } else { [Microsoft.Win32.RegistryValueKind]::ExpandString }
         $key.SetValue('Path', ((@($raw.TrimEnd(';'), $Folder) | Where-Object { $_ }) -join ';'), $kind)
@@ -114,9 +140,24 @@ function Add-GetClaudePath {
     # folder off PATH (it prints how to add it). Add it to this session and to the user PATH once.
     $bin = Join-Path $env:USERPROFILE '.local\bin'
     if (-not (Test-Path -LiteralPath (Join-Path $bin 'claude.exe'))) { return $false }
-    if (-not (($env:Path -split ';') -contains $bin)) { $env:Path = "$env:Path;$bin" }
+    if (-not (Test-GetPathHas $env:Path $bin)) { $env:Path = "$env:Path;$bin" }
     Add-GetUserPath $bin
     return $true
+}
+
+function Add-GetNpmPath {
+    # After npm install -g: npm puts claude.cmd in its global prefix, which can be on no PATH (a Node
+    # unpacked from a zip, an .npmrc prefix). When claude.cmd is there and the session cannot see the
+    # folder, add it to the session and to the user PATH. A folder the session already has, such as
+    # fnm's, is left alone: it is not the user PATH's to hold.
+    param([string]$Npm)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $prefix = ((& $Npm prefix -g 2>$null) | Out-String).Trim() } catch { $prefix = '' } finally { $ErrorActionPreference = $previous }
+    if (-not $prefix -or -not (Test-Path -LiteralPath (Join-Path $prefix 'claude.cmd'))) { return }
+    if (Test-GetPathHas $env:Path $prefix) { return }
+    $env:Path = "$($env:Path.TrimEnd(';'));$prefix"
+    Add-GetUserPath $prefix
 }
 
 function Test-GetTool {
@@ -172,6 +213,7 @@ function Install-GetTool {
     } finally { $ErrorActionPreference = $previous }
     if ($code -ne 0) { Write-Host "  the $Name installer exited $code"; return $false }
     Update-GetSessionPath
+    if ($npm) { Add-GetNpmPath $npm }
     if (Test-GetTool $Tool) { Write-Host "  ok    $Name"; return $true }
     Write-Host "  $Name installed, but this window cannot see it yet. Open a new PowerShell window and run the same command again."
     return $false
@@ -246,7 +288,11 @@ function Invoke-GetMain {
 
     Write-Host ''
     Write-Host 'Left to do by hand:'
-    Write-Host '  1. Open a new terminal and run claude, then sign in (one sign-in per account).'
+    # npm puts a claude.ps1 beside claude.cmd, and PowerShell picks the .ps1, which a Restricted
+    # execution policy (the Windows default) refuses; claude.cmd runs under any policy.
+    $found = Get-Command claude -ErrorAction SilentlyContinue | Select-Object -First 1
+    $run = if ($found -and $found.Source -like '*.ps1') { 'claude.cmd' } else { 'claude' }
+    Write-Host "  1. Open a new terminal and run $run, then sign in (one sign-in per account)."
     Write-Host "  2. Scaffold a project: powershell -ExecutionPolicy Bypass -File `"$Dir\install.ps1`" -Project <path>"
     Write-Host "  3. Several accounts on one machine: $Dir\docs\ACCOUNTS.md"
     return 0

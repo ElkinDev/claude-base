@@ -36,7 +36,18 @@ Set-Content -LiteralPath (Join-Path $stubs 'winget-fails.cmd') -Encoding ascii -
 Set-Content -LiteralPath (Join-Path $stubs 'claude-installer-fails.ps1') -Encoding ascii -Value "'stub claude installer failing'; exit 1"
 Set-Content -LiteralPath (Join-Path $stubs 'npm-fails.cmd') -Encoding ascii -Value @('@echo off', 'echo stub npm failing', 'exit /b 1')
 $npmLog = Join-Path $base 'npm-calls.txt'
-Set-Content -LiteralPath (Join-Path $stubs 'npm.cmd') -Encoding ascii -Value @('@echo off', ('echo %*>>"' + $npmLog + '"'))
+# The npm stand-in answers prefix -g with NPM_STUB_PREFIX and, when NPM_STUB_WRITES is set, an install
+# puts a stand-in claude.cmd there, as npm install -g does.
+Set-Content -LiteralPath (Join-Path $stubs 'claude-stub.cmd') -Encoding ascii -Value @('@echo off', 'echo stub claude')
+$npmStub = @('@echo off', ('echo %*>>"' + $npmLog + '"'),
+    'if "%1 %2"=="prefix -g" goto prefix',
+    ('if "%1"=="install" if defined NPM_STUB_WRITES copy /y "' + (Join-Path $stubs 'claude-stub.cmd') + '" "%NPM_STUB_PREFIX%\claude.cmd" >nul'),
+    'exit /b 0', ':prefix', 'echo %NPM_STUB_PREFIX%', 'exit /b 0')
+Set-Content -LiteralPath (Join-Path $stubs 'npm.cmd') -Encoding ascii -Value $npmStub
+function Get-NoClaudePath {
+    # This session's PATH without any folder holding a claude or an npm, so no real one is reachable.
+    return (($env:Path -split ';') | Where-Object { $dir = $_; $dir -and -not (@('claude.cmd', 'claude.exe', 'claude.ps1', 'claude', 'npm.cmd', 'npm.ps1', 'npm') | Where-Object { Test-Path -LiteralPath (Join-Path $dir $_) }) }) -join ';'
+}
 # The user PATH lives in a throwaway key under HKCU for the whole suite, removed at the end.
 $envKeyRoot = "Software\claude-base-test-$PID"
 $env:CLAUDE_BASE_ENV_KEY = "$envKeyRoot\Environment"
@@ -90,7 +101,15 @@ try {
     Assert-Match $out 'Left to do by hand:' 'it ends with the steps left by hand'
 
     Write-Host "`r`nphase 3, a second run updates the clone it made"
-    $out = Invoke-Get @('-Dir', $dir, '-NoHerdr')
+    # a claude from npm: its claude.ps1 resolves first, so the last steps name claude.cmd
+    $shims = Join-Path $base 'npm-shims'
+    New-Item -ItemType Directory -Force -Path $shims | Out-Null
+    Copy-Item -LiteralPath (Join-Path $stubs 'claude-stub.cmd') -Destination (Join-Path $shims 'claude.cmd')
+    Set-Content -LiteralPath (Join-Path $shims 'claude.ps1') -Encoding ascii -Value "'stub claude ps1'"
+    $savedPath = $env:Path
+    $env:Path = "$shims;$env:Path"
+    try { $out = Invoke-Get @('-Dir', $dir, '-NoHerdr') } finally { $env:Path = $savedPath }
+    Assert-Match $out 'run claude.cmd, then sign in' 'the last steps name claude.cmd beside an npm claude.ps1'
     Assert-Exit 0 'the second run succeeds'
     Assert-Match $out "updating $dir" 'it pulled the clone it made'
 
@@ -172,7 +191,12 @@ try {
     Assert-Exit 1 'declining Claude Code stops the run'
     Assert-True (-not (Test-Path -LiteralPath $npmLog)) 'no means npm is not called'
     Clear-GetEnv
-    $out = Invoke-Get @('-Dir', (Join-Path $base 'cb3'), '-DryRun')
+    $onPath = Join-Path $base 'claude-on-path'
+    New-Item -ItemType Directory -Force -Path $onPath | Out-Null
+    Copy-Item -LiteralPath (Join-Path $stubs 'claude-stub.cmd') -Destination (Join-Path $onPath 'claude.cmd')
+    $savedPath = $env:Path
+    $env:Path = "$onPath;" + (Get-NoClaudePath)
+    try { $out = Invoke-Get @('-Dir', (Join-Path $base 'cb3'), '-DryRun') } finally { $env:Path = $savedPath }
     Assert-Match $out '  ok    Claude Code' 'a Claude Code already installed is left as it is'
     Assert-True ($out -notmatch 'offer to install Claude Code') 'nothing is offered for it'
 
@@ -200,10 +224,51 @@ try {
         $out = Invoke-Get @('-Dir', $other, '-NoHerdr')
         Assert-True ($out -notmatch 'added .* to your user PATH') 'a second run adds nothing'
         Assert-True ((Read-TestUserPath).Raw -eq $reg.Raw) 'the user PATH holds the folder once'
+        $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($env:CLAUDE_BASE_ENV_KEY)
+        $k.SetValue('Path', ('%USERPROFILE%\keep-me;' + $bin + '\'), [Microsoft.Win32.RegistryValueKind]::ExpandString); $k.Close()
+        $out = Invoke-Get @('-Dir', $other, '-NoHerdr')
+        Assert-True ($out -notmatch 'added .* to your user PATH') 'the folder written with a trailing backslash is recognised'
     } finally {
         $env:Path = $savedPath
         Remove-Item -LiteralPath (Join-Path $bin 'claude.exe')
     }
+
+    Write-Host "`r`nphase 7c, npm in a folder only the session has (fnm): the folder is kept, found by npm.cmd"
+    Clear-GetEnv
+    $sessionOnly = Join-Path $base 'fnm-session'
+    New-Item -ItemType Directory -Force -Path $sessionOnly | Out-Null
+    Set-Content -LiteralPath (Join-Path $sessionOnly 'npm.cmd') -Encoding ascii -Value $npmStub
+    Set-Content -LiteralPath (Join-Path $sessionOnly 'npm.ps1') -Encoding ascii -Value ("Add-Content -LiteralPath '" + $npmLog + "' -Value 'npm.ps1 ran'")
+    $env:CLAUDE_BASE_NPM = $null
+    $env:CLAUDE_BASE_ANSWER = 'y'
+    $env:NPM_STUB_WRITES = '1'
+    $env:NPM_STUB_PREFIX = $sessionOnly
+    $before = (Read-TestUserPath).Raw
+    $savedPath = $env:Path
+    $env:Path = "$sessionOnly;" + (Get-NoClaudePath)
+    try { $out = Invoke-Get @('-Dir', $other, '-NoHerdr') } finally { $env:Path = $savedPath }
+    $calls = if (Test-Path -LiteralPath $npmLog) { Get-Content -LiteralPath $npmLog -Raw } else { '' }
+    Assert-Match $calls 'install -g @anthropic-ai/claude-code' 'the npm on PATH ran the install'
+    Assert-True ($calls -notmatch 'npm.ps1 ran') 'npm.cmd ran, never npm.ps1'
+    Assert-True ($out -notmatch 'cannot see it yet') 'the session still sees the folder after the install'
+    Assert-Match $out '  ok    Claude Code' 'claude is found where npm put it'
+    Assert-Match $out 'is not a claude-base clone' 'the run went on to the folder check'
+    Assert-True ((Read-TestUserPath).Raw -eq $before) 'a folder the session has is not added to the user PATH'
+    Remove-Item -LiteralPath $npmLog
+
+    Write-Host "`r`nphase 7d, npm whose global folder is on no PATH: the folder is found and added"
+    $npmPrefix = Join-Path $base 'npm-global'
+    New-Item -ItemType Directory -Force -Path $npmPrefix | Out-Null
+    $env:NPM_STUB_PREFIX = $npmPrefix
+    $env:CLAUDE_BASE_NPM = Join-Path $stubs 'npm.cmd'
+    $savedPath = $env:Path
+    $env:Path = Get-NoClaudePath
+    try { $out = Invoke-Get @('-Dir', $other, '-NoHerdr') } finally { $env:Path = $savedPath }
+    Assert-Match $out "added $npmPrefix to your user PATH" 'the npm global folder is added'
+    Assert-Match $out '  ok    Claude Code' 'claude is found in it'
+    Assert-True ((Read-TestUserPath).Raw -eq ($before + ';' + $npmPrefix)) 'the user PATH gains that folder once'
+    foreach ($name in @('NPM_STUB_WRITES', 'NPM_STUB_PREFIX')) { Set-Item -Path "Env:$name" -Value $null }
+    Remove-Item -LiteralPath $npmLog
 
     Write-Host "`r`nphase 8, the Herdr question: n passes -NoHerdr, y and -Yes pass -Herdr"
     Clear-GetEnv
