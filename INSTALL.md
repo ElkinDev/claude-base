@@ -1,21 +1,29 @@
 # Install
 
 ## One command (Windows)
-In PowerShell. Nothing needs administrator rights except installing Git for Windows, whose installer
-asks for them when git is missing:
+Press Windows + R, paste this whole line and press Enter. It also works in a PowerShell window. Nothing needs
+administrator rights except installing Git for Windows, whose installer asks for them when git is missing:
 ```
-irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 | iex
+powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "ri ~\claude-base-get.ps1 -ea 0; irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 -OutFile ~\claude-base-get.ps1; ~\claude-base-get.ps1"
 ```
-Or press Windows + R, paste this whole line and press Enter. The Run box finds PowerShell through Windows' own
-App Paths entry, so it works on a machine whose PATH lost the PowerShell folder, where the Command Prompt answers
-that `powershell` is not recognized. `irm` alone is not recognized in the Command Prompt either, since it exists
-only in PowerShell. `-NoExit` keeps the window open at the end, so the result can be read:
-```
-powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 | iex"
-```
-A local execution policy does not stop it: the downloaded script is not a file, and it starts the installer it clones
-with `-ExecutionPolicy Bypass` itself. A policy set by Group Policy on a managed PC still applies and can refuse the
-installer.
+The Run box finds PowerShell through Windows' own App Paths entry, so it works on a machine whose PATH lost the
+PowerShell folder, where the Command Prompt answers that `powershell` is not recognized. `irm` alone is not
+recognized in the Command Prompt either, since it exists only in PowerShell. `-NoExit` keeps the window open at the
+end, so the result can be read.
+
+The line removes a copy left by an earlier run, saves `get.ps1` as `claude-base-get.ps1` in your user folder and
+runs it from there; you can delete that file when it ends. It never pipes the download into `iex`: Microsoft
+Defender stops `irm ... | iex` on a command line (it reports Trojan:Win32/Commando.A!ml), and nothing is installed.
+For the same reason the Claude Code installer (in `get.ps1`) and the Herdr installer (in `install/herdr.ps1`) are
+saved to the temp folder, run as a file and removed. If the antivirus stops the line, update its definitions and try
+again, or download `install/get.ps1` from the repository page and, in a PowerShell window opened in that folder, run
+`powershell -ExecutionPolicy Bypass -File .\get.ps1`, which keeps the result on screen. Right-click and Run with
+PowerShell works too, but that window closes the moment the run ends. With options, a long line is safer in a
+PowerShell window than in the Run box, which cuts a line past its length limit.
+
+A local execution policy does not stop it: the line runs PowerShell with `-ExecutionPolicy Bypass`, and so does every
+script it starts. A policy set by Group Policy on a managed PC still applies, and one set to AllSigned or Restricted
+refuses the saved file.
 `install/get.ps1` does sections 0, 1 and 3 below in one run:
 1. It checks git (Git for Windows, which also brings the Git Bash the hooks run in), Python 3.8+
    and Claude Code, and offers to install a missing one: git and Python through winget, Claude
@@ -29,9 +37,10 @@ installer.
 4. It asks whether to add Herdr, on its preview channel. Enter is yes: section 3 runs for you.
 5. It runs the doctor and lists what is left by hand: signing in to Claude Code, and a project.
 
-Options go through a script block:
+Options go after the file name at the end of the line, inside its quotes, for example
+`~\claude-base-get.ps1 -NoHerdr` or `~\claude-base-get.ps1 -Dir 'C:\Repo\claude-base'`:
 ```
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1))) -NoHerdr
+powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "ri ~\claude-base-get.ps1 -ea 0; irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 -OutFile ~\claude-base-get.ps1; ~\claude-base-get.ps1 -NoHerdr"
 ```
 `-Herdr` or `-NoHerdr` answers the Herdr question, `-Yes` answers yes to every question, `-Dir`
 picks another folder, `-Permissions ask` keeps Claude Code's prompts, and `-DryRun` installs nothing

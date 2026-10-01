@@ -36,7 +36,8 @@ Set-Content -LiteralPath (Join-Path $stubs 'herdr.cmd') -Encoding ascii -Value @
     'echo stub herdr %*')
 Set-Content -LiteralPath (Join-Path $stubs 'hotkey.ps1') -Encoding ascii -Value ("Set-Content -LiteralPath '" + $hotkeyMark + "' -Value ran; 'Created: stub hotkey'")
 $channelSeen = Join-Path $base 'installer-channel.txt'
-Set-Content -LiteralPath (Join-Path $stubs 'installer-fails.ps1') -Encoding ascii -Value ("Set-Content -LiteralPath '" + $channelSeen + "' -Value `$env:HERDR_CHANNEL; 'stub installer failing'; exit 3")
+$installerSeen = Join-Path $base 'installer-path.txt'
+Set-Content -LiteralPath (Join-Path $stubs 'installer-fails.ps1') -Encoding ascii -Value ("Set-Content -LiteralPath '" + $channelSeen + "' -Value `$env:HERDR_CHANNEL; Set-Content -LiteralPath '" + $installerSeen + "' -Value `$PSCommandPath; 'stub installer failing'; exit 3")
 $lnkDir = Join-Path $base 'startmenu'
 New-Item -ItemType Directory -Force -Path $lnkDir | Out-Null
 # The PATH of every run in this file holds no herdr, so a slip in the code cannot reach the real one.
@@ -154,12 +155,25 @@ try {
     $env:KIT_HERDR_INSTALLER = Join-Path $stubs 'installer-fails.ps1'
     $env:KIT_HERDR_HOTKEY = Join-Path $stubs 'hotkey.ps1'
     Remove-Item -LiteralPath $hotkeyMark -ErrorAction SilentlyContinue
-    $out = Invoke-Install @('-Herdr')
+    # The installer is saved to the temp folder and run as a file, then removed.
+    $tmp = Join-Path $base 'tmp'
+    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+    $savedInstaller = Join-Path $tmp 'claude-base-herdr-install.ps1'
+    $savedTmp = $env:TMP; $savedTemp = $env:TEMP
+    $env:TMP = $tmp; $env:TEMP = $tmp
+    try { $out = Invoke-Install @('-Herdr') } finally { $env:TMP = $savedTmp; $env:TEMP = $savedTemp }
     Assert-Exit 0 'the install still succeeds'
     Assert-Match $out 'FAIL  the Herdr installer (exit 3)' 'it reports the installer exit'
     Assert-Match $out 'skip  the rest of the Herdr setup' 'it skips the rest'
     Assert-True (-not (Test-Path -LiteralPath $hotkeyMark)) 'no hotkey after a failed install'
     Assert-True ((Get-Content -LiteralPath $channelSeen -Raw).Trim() -eq 'preview') 'the installer was asked for the preview channel'
+    Assert-True ((Get-Content -LiteralPath $installerSeen -Raw).Trim() -eq $savedInstaller) 'it ran as the file saved in the temp folder'
+    Assert-True (-not (Test-Path -LiteralPath $savedInstaller)) 'the saved installer is removed after the run'
+    $env:KIT_HERDR_INSTALLER = Join-Path $stubs 'no-such-installer.ps1'
+    $out = Invoke-Install @('-Herdr')
+    Assert-Exit 0 'an installer that cannot be downloaded never fails the install'
+    Assert-Match $out 'FAIL  the Herdr installer (exit 1)' 'it reports the failed download'
+    Assert-Match $out 'skip  the rest of the Herdr setup' 'and skips the rest'
 
     Write-Host "`r`nphase 8, -Herdr and -NoHerdr together are refused"
     Clear-HerdrEnv

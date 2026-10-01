@@ -98,18 +98,21 @@ install/                    what the installer runs on: lib.ps1 the ownership ru
 ```
 
 ## Quickstart
-On a new Windows machine, one command in PowerShell does all of it: it checks git, Python and Claude Code
-and offers to install a missing one, clones the kit into `%USERPROFILE%\claude-base`, runs the installer,
-asks whether to add Herdr (Enter is yes) and ends with the doctor. `INSTALL.md` has the options.
+On a new Windows machine, one line does all of it: it checks git, Python and Claude Code and offers to install a
+missing one, clones the kit into `%USERPROFILE%\claude-base`, runs the installer, asks whether to add Herdr (Enter
+is yes) and ends with the doctor. `INSTALL.md` has the options.
+
+Press Windows + R, paste this whole line and press Enter. It also works in a PowerShell window. The Run box finds
+PowerShell even on a machine whose PATH lost its folder, where the Command Prompt answers that `powershell` is not
+recognized:
 ```
-irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 | iex
+powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "ri ~\claude-base-get.ps1 -ea 0; irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 -OutFile ~\claude-base-get.ps1; ~\claude-base-get.ps1"
 ```
-Or press Windows + R, paste this whole line and press Enter. The Run box finds PowerShell even on a machine whose
-PATH lost its folder, where the Command Prompt answers that `powershell` (or `irm`, which exists only in PowerShell)
-is not recognized:
-```
-powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 | iex"
-```
+The line saves the installer as `claude-base-get.ps1` in your user folder and runs it from there; you can delete
+that file when it ends. The window stays open so you can read the result. The shorter form that pipes `irm` into
+`iex` is stopped by Microsoft Defender (it reports Trojan:Win32/Commando.A!ml), and nothing is installed. If the
+antivirus stops this line too, update its definitions and try again, or download `install/get.ps1` from the
+repository page and run it as `INSTALL.md` shows.
 The kit lands in your user profile (`%USERPROFILE%\.claude`), so Claude Code picks it up in whatever folder you
 open it. Keep the clone all the same: updates, `-Project` and the Herdr hotkey run from it. To keep it in another
 folder, pass `-Dir` (`INSTALL.md`).
