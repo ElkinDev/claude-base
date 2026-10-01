@@ -112,7 +112,7 @@ The line saves the installer as `claude-base-get.ps1` in your user folder and ru
 that file when it ends. The window stays open so you can read the result. The shorter form that pipes `irm` into
 `iex` is stopped by Microsoft Defender (it reports Trojan:Win32/Commando.A!ml), and nothing is installed. If the
 antivirus stops this line too, update its definitions and try again, or download `install/get.ps1` from the
-repository page, right-click it and choose Run with PowerShell.
+repository page and run it as `INSTALL.md` shows.
 The kit lands in your user profile (`%USERPROFILE%\.claude`), so Claude Code picks it up in whatever folder you
 open it. Keep the clone all the same: updates, `-Project` and the Herdr hotkey run from it. To keep it in another
 folder, pass `-Dir` (`INSTALL.md`).

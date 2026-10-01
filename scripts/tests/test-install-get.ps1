@@ -207,17 +207,24 @@ try {
     $env:TMP = $tmp; $env:TEMP = $tmp
     try { $out = Invoke-Get @('-Dir', (Join-Path $base 'cb3'), '-NoHerdr') } finally { $env:TMP = $savedTmp; $env:TEMP = $savedTemp }
     Assert-True (Test-Path -LiteralPath $claudeMark) 'the Claude Code installer ran'
-    Assert-True ((Get-Content -LiteralPath $claudeMark -Raw).Trim() -eq $savedInstaller) 'it ran as the file saved in the temp folder, not the stale copy'
+    Assert-True ((Get-Content -LiteralPath $claudeMark -Raw).Trim() -eq $savedInstaller) 'it ran as the file saved in the temp folder, the fresh download'
     Assert-True (-not (Test-Path -LiteralPath $savedInstaller)) 'the saved installer is removed after the run'
     Assert-Match $out 'Install it with its official installer' 'the question names the installer'
+    # A failed download runs nothing: neither a copy left in the temp folder nor a missing file.
+    Remove-Item -LiteralPath $claudeMark
+    Set-Content -LiteralPath $savedInstaller -Encoding ascii -Value ("Set-Content -LiteralPath '" + $claudeMark + "' -Value stale")
     $env:CLAUDE_BASE_CLAUDE_INSTALLER = Join-Path $stubs 'no-such-installer.ps1'
-    $out = Invoke-Get @('-Dir', (Join-Path $base 'cb3'), '-NoHerdr')
+    $env:TMP = $tmp; $env:TEMP = $tmp
+    try { $out = Invoke-Get @('-Dir', (Join-Path $base 'cb3'), '-NoHerdr') } finally { $env:TMP = $savedTmp; $env:TEMP = $savedTemp }
     Assert-Exit 1 'an installer that cannot be downloaded stops the run'
     Assert-Match $out 'could not download the Claude Code installer from' 'it says the download failed'
+    Assert-True (-not (Test-Path -LiteralPath $claudeMark)) 'the copy left in the temp folder did not run'
+    Assert-True ($out -notmatch 'installer exited') 'no installer was started after the failed download'
+    Remove-Item -LiteralPath $savedInstaller -ErrorAction SilentlyContinue
     $env:CLAUDE_BASE_CLAUDE_INSTALLER = Join-Path $stubs 'claude-installer.ps1'
 
     Write-Host "`r`nphase 7a, with npm on PATH a missing Claude Code is offered through npm"
-    Remove-Item -LiteralPath $claudeMark
+    Remove-Item -LiteralPath $claudeMark -ErrorAction SilentlyContinue
     $env:CLAUDE_BASE_NPM = Join-Path $stubs 'npm.cmd'
     $out = Invoke-Get @('-Dir', (Join-Path $base 'cb3'), '-DryRun')
     Assert-Match $out 'would offer to install Claude Code with npm (npm install -g @anthropic-ai/claude-code)' 'the dry run names the npm route'

@@ -14,12 +14,16 @@ end, so the result can be read.
 The line removes a copy left by an earlier run, saves `get.ps1` as `claude-base-get.ps1` in your user folder and
 runs it from there; you can delete that file when it ends. It never pipes the download into `iex`: Microsoft
 Defender stops `irm ... | iex` on a command line (it reports Trojan:Win32/Commando.A!ml), and nothing is installed.
-For the same reason `get.ps1` saves the Claude Code installer and the Herdr installer to the temp folder and runs
-each as a file, then removes it. If the antivirus stops the line, update its definitions and try again, or download
-`install/get.ps1` from the repository page, right-click it and choose Run with PowerShell.
+For the same reason the Claude Code installer (in `get.ps1`) and the Herdr installer (in `install/herdr.ps1`) are
+saved to the temp folder, run as a file and removed. If the antivirus stops the line, update its definitions and try
+again, or download `install/get.ps1` from the repository page and, in a PowerShell window opened in that folder, run
+`powershell -ExecutionPolicy Bypass -File .\get.ps1`, which keeps the result on screen. Right-click and Run with
+PowerShell works too, but that window closes the moment the run ends. With options, a long line is safer in a
+PowerShell window than in the Run box, which cuts a line past its length limit.
 
 A local execution policy does not stop it: the line runs PowerShell with `-ExecutionPolicy Bypass`, and so does every
-script it starts. A policy set by Group Policy on a managed PC still applies and refuses the saved file.
+script it starts. A policy set by Group Policy on a managed PC still applies, and one set to AllSigned or Restricted
+refuses the saved file.
 `install/get.ps1` does sections 0, 1 and 3 below in one run:
 1. It checks git (Git for Windows, which also brings the Git Bash the hooks run in), Python 3.8+
    and Claude Code, and offers to install a missing one: git and Python through winget, Claude
