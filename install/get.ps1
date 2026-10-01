@@ -167,8 +167,9 @@ function Invoke-GetMain {
         if ($LASTEXITCODE -ne 0) { Write-Host "Stopped: install.ps1 exited $LASTEXITCODE."; return 1 }
         if ($DryRun) { return 0 }
 
-        $python = Find-GetPython
-        if ($python) {
+        # A one-item array comes back from a function as a plain string, so wrap it again.
+        $python = @(Find-GetPython)
+        if ($python.Count -gt 0) {
             Write-Host ''
             $pyArgs = @($python | Select-Object -Skip 1) + @((Join-Path $Dir 'scripts\doctor.py'))
             & $python[0] @pyArgs | Out-Host
