@@ -172,7 +172,9 @@ one per window. Shared skills, plugins and agent memory stay in one place.
 
 It works with any number of accounts. With one account there is nothing to set up: `claude` keeps
 using `~/.claude` and the script sits unused. With two or more, the account already in `~/.claude`
-is `default` and every other one is a profile you create once.
+is `default` and every other one is a profile you create once. The installer makes `cc` a command
+in any terminal opened after it runs (`cc.cmd` in `~/.claude/bin`, on the user PATH), with no
+PowerShell profile line and no execution policy change. Each machine signs in to each account once.
 ```
 cc work -p        create the profile
 cc work           open it here (signs in the first time)

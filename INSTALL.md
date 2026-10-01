@@ -83,6 +83,10 @@ keys and add the `statusLine` block and the `worklog` SessionStart / PreCompact 
 hooks, and the compaction hooks (PreCompact checkpoint with summary steering, PostCompact summary
 persistence, SessionStart recovery; see `docs/CONTEXT-ECONOMICS.md`).
 
+It also makes `cc`, the account switcher, a command: `cc.cmd` lands in `<kit home>\bin` and that folder is
+added to your user PATH once, keeping the other entries as they were. A terminal opened after the run finds `cc`
+with no PowerShell profile line and under any execution policy (`docs/ACCOUNTS.md`).
+
 Requirements: Windows PowerShell 5.1+, `git` on PATH, and a terminal font with emoji for the status
 line glyphs.
 
@@ -332,6 +336,9 @@ everything else as yours.
   tree, without ever duplicating a line. Everything under `.claude/` goes in as the single folder
   line `.claude/`, so whatever the team later puts in that folder is hidden with it.
 - It does not write the Herdr hook (`herdr-agent-state.ps1`); Herdr's own integration owns that file.
+- Outside the kit home and the Herdr step (section 3), it changes one thing, the user PATH, where it
+  appends `<kit home>\bin` once. A rollback does not take that entry out; remove it in the environment
+  variables settings if you remove the kit.
 
 Every run that wrote anything ends by naming its backup folder and the command that reverses it:
 ```

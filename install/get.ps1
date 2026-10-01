@@ -317,7 +317,7 @@ function Invoke-GetMain {
     $run = if ($found -and $found.Source -like '*.ps1') { 'claude.cmd' } else { 'claude' }
     Write-Host "  1. Open a new terminal and run $run, then sign in (one sign-in per account)."
     Write-Host "  2. Scaffold a project: $(Get-GetPowerShell) -ExecutionPolicy Bypass -File `"$Dir\install.ps1`" -Project <path>"
-    Write-Host "  3. Several accounts on one machine: $Dir\docs\ACCOUNTS.md"
+    Write-Host "  3. Several accounts on one machine: cc in a new terminal (cc ? lists the options), $Dir\docs\ACCOUNTS.md"
     return 0
 }
 

@@ -158,7 +158,13 @@ Step 4 goes last on purpose: until the sign-in in step 3 is confirmed, that prof
 
 ## Wiring up the `cc` command
 
-The script takes the current folder by default, so the natural flow is `cd` then `cc <account>`. To call it from anywhere, add this to your PowerShell profile (`$PROFILE`):
+The installer does it. The user-scope install writes `cc.cmd` into `<kit home>\bin` and adds that folder to your user PATH once, so `cc` works in any Command Prompt or PowerShell window opened after the run, on any machine. `cc.cmd` starts Windows PowerShell by its full path with `-ExecutionPolicy Bypass` on `cc-launch.ps1`, beside `claude-account.ps1`, so it needs no line in your PowerShell profile and no change to the execution policy, whose Windows default refuses to load a profile at all.
+
+The launcher exists because `powershell -File` reads the `--` separator as a parameter with an empty name, and `cc work -- -r` would stop on "the parameter name '' is ambiguous". `cc-launch.ps1` declares no parameters, takes every argument as text and rebuilds the command for the PowerShell parser: the separator and every flag bare, every other word single-quoted, so a path with a space or a prompt with an apostrophe arrives as typed.
+
+One thing differs from a profile function: `cc.cmd` runs the account in a child PowerShell, so when `claude` exits the window is back on the default account. A `cc` function in your PowerShell profile wins over `cc.cmd` in PowerShell, so a machine that already has one keeps it.
+
+The script takes the current folder by default, so the natural flow is `cd` then `cc <account>`. To keep the window on the account after `claude` exits, add this to your PowerShell profile (`$PROFILE`) instead; it needs an execution policy that loads the profile, such as `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`:
 
 ```powershell
 $script:CcScript = "$env:USERPROFILE\.claude\claude-account.ps1"
