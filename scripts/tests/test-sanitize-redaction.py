@@ -91,6 +91,23 @@ class RedactionTest(GuardCase):
         self.assertIn("private-path", rules_of(result.stdout))
         self.assertNoTerm(result)
 
+    def test_a_project_folder_named_home_or_users_is_not_a_home_path(self):
+        # a relative path never names a home directory; these are ordinary app folders, joined here
+        # so this file holds no home-shaped text of its own
+        for parts in (["app", "src", "main", "java", "com", "acme", "ui", "home", "HomeScreen.kt"],
+                      ["web", "src", "pages", "home", "index.tsx"], ["web", "src", "Users", "UserList.tsx"]):
+            self.file("/".join(parts), "a clean body\n")
+        result = self.run_guard("app", "web")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn("home-", result.stdout)
+
+    def test_a_home_path_in_a_body_is_still_caught_beside_a_home_folder(self):
+        self.file("/".join(["app", "ui", "home", "Notes.kt"]), "// built in /home/" + "someone/src\n")
+        result = self.run_guard("app")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual(rules_of(result.stdout), ["home-linux"])
+        self.assertNotIn("(name)", result.stdout)
+
     def test_an_address_in_a_file_name_is_caught(self):
         self.file("docs/" + ADDRESS + ".md", "a clean body\n")
         result = self.run_guard("docs")

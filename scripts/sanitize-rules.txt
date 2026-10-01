@@ -23,9 +23,12 @@
 # matches in the first place; the bare-word placeholders (you, username, ...) are cleared by the
 # allowlist through the captured name. Windows paths are written with one backslash in a shell,
 # two in JSON and four in JSON that carries JSON, so any run of them is matched.
-home-windows	(?i)[a-z]:\\+users\\+(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})	name
-home-mac	/Users(?:/)(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})	name
-home-linux	/home(?:/)(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})	name
+# They carry no `name` flag: a scanned path is relative to the repository, so a folder named home
+# or Users inside it is a folder of the project, such as the home screen of an app, never a home
+# directory, and a real user name in a path is the private denylist's to catch.
+home-windows	(?i)[a-z]:\\+users\\+(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})
+home-mac	/Users(?:/)(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})
+home-linux	/home(?:/)(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})
 
 # Real email addresses, with the domain captured. `git@host` is the ssh form of a git remote,
 # a service account and never a personal address, so it is not an address at all here; that is
