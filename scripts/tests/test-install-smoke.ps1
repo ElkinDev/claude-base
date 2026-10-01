@@ -359,6 +359,17 @@ try {
     finally { $ErrorActionPreference = $previous; Pop-Location; $env:Path = $savedPath }
     Assert-True ($code -eq 0) ("a quoted cc found on PATH exits 0 (exit $code)")
     Assert-Match $text 'switch Claude Code accounts without logging out' 'and prints the help'
+    # A cc.cmd with no launcher beside it and none on PATH names the path it looked at and exits 1.
+    $lone = Join-Path $base 'lone\bin'
+    New-Item -ItemType Directory -Force -Path $lone | Out-Null
+    Copy-Item -LiteralPath $ccCmd -Destination $lone
+    $savedPath = $env:Path
+    $env:Path = Join-Path $env:SystemRoot 'System32'
+    $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $text = (& cmd /c "`"$(Join-Path $lone 'cc.cmd')`" ?" 2>&1 | Out-String); $code = $LASTEXITCODE }
+    finally { $ErrorActionPreference = $previous; $env:Path = $savedPath }
+    Assert-True ($code -eq 1) ("a cc.cmd with no launcher exits 1 (exit $code)")
+    Assert-Match $text 'cc: the launcher is not at' 'and says where it looked'
     # A failure is a failure: an account name the switcher refuses exits 1 through the launcher and cc.cmd.
     $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     try { $text = (& cmd /c "`"$ccCmd`" bad*name" 2>&1 | Out-String); $code = $LASTEXITCODE } finally { $ErrorActionPreference = $previous }
