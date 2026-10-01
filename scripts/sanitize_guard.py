@@ -23,6 +23,7 @@ class Scan(object):
         self.allows = allows
         self.private = [rule for rule in rules if rule.private]
         self.by_name = [rule for rule in rules if rule.names]
+        self.content = [rule for rule in rules if rule.content]
         self.findings = []
         self.waivers = []
         self.notices = []
@@ -68,7 +69,7 @@ class Scan(object):
                 return
             self.findings.append(Finding("waiver-abuse", label, number, "", False))
         self.files += 1
-        self.scan_lines(label, lines, self.rules)
+        self.scan_lines(label, lines, self.content)
 
     def scan_lines(self, label, lines, rules):
         for number, line in enumerate(lines, 1):

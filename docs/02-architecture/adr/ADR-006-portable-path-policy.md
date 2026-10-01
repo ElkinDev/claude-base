@@ -8,7 +8,7 @@ The content today mixes `%USERPROFILE%`, `$env:USERPROFILE`, and Windows-style j
 
 ## Decision
 
-All shipped content uses portable forms, in this order of preference: `~` in prose and docs, `$CLAUDE_PROJECT_DIR` for project-relative hook wiring, render tokens (`{HOME}`, `{GITBASH}`) in templates the installer processes, and profile variables for anything the user may relocate. The evidence root is the profile's `Evidence root:` line, a spec in the token grammar of `docs/EVIDENCE.md` defaulting to `{repo_parent}/evidence`, resolved per machine by `scripts/evidence-path.py` and created on demand, so evidence sits beside the repository and never inside it. Absolute personal paths and drive-letter paths are forbidden outside clearly marked OS-specific examples, and the sanitization guard flags personal home paths in any form.
+All shipped content uses portable forms, in this order of preference: `~` in prose and docs, `$CLAUDE_PROJECT_DIR` for project-relative hook wiring, render tokens (`{HOME}`, `{GITBASH}`) in templates the installer processes, and profile variables for anything the user may relocate. The evidence root is the profile's `Evidence root:` line, a spec in the token grammar of `docs/EVIDENCE.md` defaulting to `{repo_parent}/evidence`, resolved per machine by `scripts/evidence-path.py` and created on demand, so evidence sits beside the repository and never inside it. Absolute personal paths and drive-letter paths are forbidden outside clearly marked OS-specific examples, and the sanitization guard flags personal home paths written in any file, commit or tag, and a home tree copied into the repository's own paths (a project folder that is merely named home or Users is not one).
 
 ## Alternatives considered
 

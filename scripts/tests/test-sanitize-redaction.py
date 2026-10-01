@@ -91,6 +91,54 @@ class RedactionTest(GuardCase):
         self.assertIn("private-path", rules_of(result.stdout))
         self.assertNoTerm(result)
 
+    def test_a_project_folder_named_home_or_users_is_not_a_home_path(self):
+        # a relative path never names a home directory; these are ordinary app folders, joined here
+        # so this file holds no home-shaped text of its own
+        for parts in (["app", "src", "main", "java", "com", "acme", "ui", "home", "HomeScreen.kt"],
+                      ["web", "src", "pages", "home", "index.tsx"], ["web", "src", "Users", "UserList.tsx"]):
+            self.file("/".join(parts), "a clean body\n")
+        result = self.run_guard("app", "web")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn("home-", result.stdout)
+
+    def test_a_home_tree_copied_into_the_repository_is_caught_by_its_path(self):
+        # no denylist: the generic layer alone catches a mirrored home tree, each path once
+        self.file("/".join(["dotfiles", "home", "jdoe", ".bashrc"]), "a clean body\n")
+        self.file("/".join(["backup", "Users", "jdoe", "Desktop", "notes.txt"]), "a clean body\n")
+        self.file("/".join(["app", "home", "settings", ".gitkeep"]), "a clean body\n")
+        result = self.run_guard("dotfiles", "backup", "app")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual(sorted(rules_of(result.stdout)), ["home-tree", "home-tree-users"], result.stdout)
+        self.assertNotIn("gitkeep", result.stdout)
+
+    def test_project_folders_inside_a_home_folder_are_not_a_home_tree(self):
+        for parts in (["features", "home", "widgets", "Library", "a.kt"], ["features", "home", "profile", "Documents", "b.kt"],
+                      ["tools", "home", "project", ".config", "c.json"], ["svc", "home", "compose", ".docker", "d.yml"],
+                      ["pkg", "home", "cli", ".local", "e.txt"]):
+            self.file("/".join(parts), "a clean body\n")
+        result = self.run_guard("features", "tools", "svc", "pkg")
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_a_dotfiles_tree_of_editor_files_is_caught(self):
+        self.file("/".join(["dots", "home", "jdoe", ".vimrc"]), "a clean body\n")
+        self.file("/".join(["pics", "Users", "jdoe", "Pictures", "p.txt"]), "a clean body\n")
+        result = self.run_guard("dots", "pics")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual(sorted(rules_of(result.stdout)), ["home-tree", "home-tree-users"], result.stdout)
+
+    def test_a_home_tree_in_a_body_is_reported_once(self):
+        self.file("notes.md", "copied from /home/" + "jdoe/.bashrc\n")
+        result = self.run_guard("notes.md")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual(rules_of(result.stdout), ["home-linux"], result.stdout)
+
+    def test_a_home_path_in_a_body_is_still_caught_beside_a_home_folder(self):
+        self.file("/".join(["app", "ui", "home", "Notes.kt"]), "// built in /home/" + "someone/src\n")
+        result = self.run_guard("app")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual(rules_of(result.stdout), ["home-linux"])
+        self.assertNotIn("(name)", result.stdout)
+
     def test_an_address_in_a_file_name_is_caught(self):
         self.file("docs/" + ADDRESS + ".md", "a clean body\n")
         result = self.run_guard("docs")

@@ -3,7 +3,8 @@
 # `(?i)` to make that rule case-insensitive. Lines starting with `#` are comments.
 #
 # Flags. `name` also applies the rule to every component of a scanned path, so a leak in a file
-# or directory name is caught the way one in the body is.
+# or directory name is caught the way one in the body is. `path` applies the rule to scanned paths
+# only, never to a body.
 #
 # Captures. A rule that captures a group called `name` can be cleared by an entry in
 # sanitize-allow.txt when that entry full-matches the captured name: the user in a home path,
@@ -23,9 +24,21 @@
 # matches in the first place; the bare-word placeholders (you, username, ...) are cleared by the
 # allowlist through the captured name. Windows paths are written with one backslash in a shell,
 # two in JSON and four in JSON that carries JSON, so any run of them is matched.
-home-windows	(?i)[a-z]:\\+users\\+(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})	name
-home-mac	/Users(?:/)(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})	name
-home-linux	/home(?:/)(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})	name
+# They carry no `name` flag: a scanned path is relative to the repository, where a folder named
+# home or Users is most often a folder of the project, such as the home screen of an app. A home
+# tree copied into the repository is caught on paths by home-tree below instead.
+home-windows	(?i)[a-z]:\\+users\\+(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})
+home-mac	/Users(?:/)(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})
+home-linux	/home(?:/)(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})
+
+# A home tree inside a repository path (a mirrored dotfiles tree, an attached profile or log tree):
+# a home folder, a name, then a dotfile of a personal home; or a Users folder, a name, then such a
+# dotfile or a profile folder (Desktop, Documents, AppData, Library and the like). A project can
+# hold a home/<module>/Documents or .config folder, so the profile folders are read under Users
+# only and the generic dotfiles (.config, .local, .docker, .cache) not at all. Paths only, so a body
+# line is left to the three rules above and never reported twice.
+home-tree	(?:^|/)home/(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})/\.(?:bashrc|bash_profile|bash_history|profile|zshrc|zsh_history|vimrc|tmux\.conf|ssh|gnupg|gitconfig|netrc|npmrc|npm|aws|kube|m2|android|gradle)(?:/|$)	path
+home-tree-users	(?:^|/)Users/(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})/(?:\.(?:bashrc|bash_profile|bash_history|profile|zshrc|zsh_history|vimrc|tmux\.conf|ssh|gnupg|gitconfig|netrc|npmrc|npm|aws|kube|m2|android|gradle)|Desktop|Documents|Downloads|AppData|Library|Pictures|Music|Movies|Videos|OneDrive)(?:/|$)	path
 
 # Real email addresses, with the domain captured. `git@host` is the ssh form of a git remote,
 # a service account and never a personal address, so it is not an address at all here; that is
