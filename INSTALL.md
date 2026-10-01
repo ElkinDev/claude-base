@@ -6,6 +6,14 @@ asks for them when git is missing:
 ```
 irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 | iex
 ```
+In the classic Command Prompt (cmd.exe) `irm` is not recognized, since it exists only in PowerShell. From there
+the same command runs through PowerShell, in one line:
+```
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 | iex"
+```
+A local execution policy does not stop it: the downloaded script is not a file, and it starts the installer it clones
+with `-ExecutionPolicy Bypass` itself. A policy set by Group Policy on a managed PC still applies and can refuse the
+installer.
 `install/get.ps1` does sections 0, 1 and 3 below in one run:
 1. It checks git (Git for Windows, which also brings the Git Bash the hooks run in), Python 3.8+
    and Claude Code, and offers to install a missing one: git and Python through winget, Claude

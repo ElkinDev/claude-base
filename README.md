@@ -104,6 +104,11 @@ asks whether to add Herdr (Enter is yes) and ends with the doctor. `INSTALL.md` 
 ```
 irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 | iex
 ```
+From the classic Command Prompt (cmd.exe), where `irm` is not recognized because it exists only in PowerShell,
+the same command goes through PowerShell:
+```
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 | iex"
+```
 By hand, from a clone:
 ```
 # check the machine has what the kit needs (git, python, claude, Git Bash, optionally Herdr)
