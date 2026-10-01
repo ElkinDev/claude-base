@@ -34,7 +34,20 @@ $env:KIT_HERDR_LNK_DIR    = Join-Path $base 'startmenu'
 # Claude Code installer, whatever this machine is missing.
 Set-Content -LiteralPath (Join-Path $stubs 'winget-fails.cmd') -Encoding ascii -Value @('@echo off', 'echo stub winget failing', 'exit /b 1')
 Set-Content -LiteralPath (Join-Path $stubs 'claude-installer-fails.ps1') -Encoding ascii -Value "'stub claude installer failing'; exit 1"
-$env:CLAUDE_BASE_USER_PATH_FILE = Join-Path $base 'user-path.txt'
+Set-Content -LiteralPath (Join-Path $stubs 'npm-fails.cmd') -Encoding ascii -Value @('@echo off', 'echo stub npm failing', 'exit /b 1')
+$npmLog = Join-Path $base 'npm-calls.txt'
+Set-Content -LiteralPath (Join-Path $stubs 'npm.cmd') -Encoding ascii -Value @('@echo off', ('echo %*>>"' + $npmLog + '"'))
+# The user PATH lives in a throwaway key under HKCU for the whole suite, removed at the end.
+$envKeyRoot = "Software\claude-base-test-$PID"
+$env:CLAUDE_BASE_ENV_KEY = "$envKeyRoot\Environment"
+$envKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($env:CLAUDE_BASE_ENV_KEY)
+$envKey.SetValue('Path', '%USERPROFILE%\keep-me;C:\other', [Microsoft.Win32.RegistryValueKind]::ExpandString)
+$envKey.Close()
+function Read-TestUserPath {
+    $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($env:CLAUDE_BASE_ENV_KEY)
+    try { return @{ Raw = [string]$k.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames); Kind = [string]$k.GetValueKind('Path') } }
+    finally { $k.Close() }
+}
 
 function Invoke-Get {
     param([string[]]$Arguments = @())
@@ -51,6 +64,7 @@ function Clear-GetEnv {
     foreach ($name in @('CLAUDE_BASE_MISSING', 'CLAUDE_BASE_ANSWER')) { Set-Item -Path "Env:$name" -Value $null }
     $env:CLAUDE_BASE_WINGET = Join-Path $stubs 'winget-fails.cmd'
     $env:CLAUDE_BASE_CLAUDE_INSTALLER = Join-Path $stubs 'claude-installer-fails.ps1'
+    $env:CLAUDE_BASE_NPM = Join-Path $stubs 'npm-fails.cmd'
 }
 
 try {
@@ -132,12 +146,35 @@ try {
     Assert-Exit 1 'both Herdr switches are refused'
     Assert-Match $out 'cannot both be given' 'it says why'
 
-    Write-Host "`r`nphase 7, a missing Claude Code is offered through its official installer"
+    Write-Host "`r`nphase 7, a missing Claude Code is offered through its official installer when there is no npm"
     $env:CLAUDE_BASE_MISSING = 'claude'
     $env:CLAUDE_BASE_ANSWER = 'y'
+    $env:CLAUDE_BASE_NPM = 'none'
     $env:CLAUDE_BASE_CLAUDE_INSTALLER = Join-Path $stubs 'claude-installer.ps1'
-    $null = Invoke-Get @('-Dir', (Join-Path $base 'cb3'), '-NoHerdr')
+    $out = Invoke-Get @('-Dir', (Join-Path $base 'cb3'), '-NoHerdr')
     Assert-True (Test-Path -LiteralPath $claudeMark) 'the Claude Code installer ran'
+    Assert-Match $out 'Install it with its official installer' 'the question names the installer'
+
+    Write-Host "`r`nphase 7a, with npm on PATH a missing Claude Code is offered through npm"
+    Remove-Item -LiteralPath $claudeMark
+    $env:CLAUDE_BASE_NPM = Join-Path $stubs 'npm.cmd'
+    $out = Invoke-Get @('-Dir', (Join-Path $base 'cb3'), '-DryRun')
+    Assert-Match $out 'would offer to install Claude Code with npm (npm install -g @anthropic-ai/claude-code)' 'the dry run names the npm route'
+    Assert-True (-not (Test-Path -LiteralPath $npmLog)) 'the dry run did not call npm'
+    $out = Invoke-Get @('-Dir', (Join-Path $base 'cb3'), '-NoHerdr')
+    Assert-Match $out 'Install it with npm' 'the question names npm'
+    Assert-Match ((Get-Content -LiteralPath $npmLog -Raw)) 'install -g @anthropic-ai/claude-code' 'yes runs npm install -g'
+    Assert-True (-not (Test-Path -LiteralPath $claudeMark)) 'the official installer did not run'
+    Assert-Match $out 'cannot see it yet' 'a claude still missing after npm asks for a new window'
+    Remove-Item -LiteralPath $npmLog
+    $env:CLAUDE_BASE_ANSWER = 'n'
+    $out = Invoke-Get @('-Dir', (Join-Path $base 'cb3'), '-NoHerdr')
+    Assert-Exit 1 'declining Claude Code stops the run'
+    Assert-True (-not (Test-Path -LiteralPath $npmLog)) 'no means npm is not called'
+    Clear-GetEnv
+    $out = Invoke-Get @('-Dir', (Join-Path $base 'cb3'), '-DryRun')
+    Assert-Match $out '  ok    Claude Code' 'a Claude Code already installed is left as it is'
+    Assert-True ($out -notmatch 'offer to install Claude Code') 'nothing is offered for it'
 
     Write-Host "`r`nphase 7b, a claude.exe the installer left off PATH is found and its folder added"
     Clear-GetEnv
@@ -146,12 +183,27 @@ try {
     Set-Content -LiteralPath (Join-Path $bin 'claude.exe') -Value 'stand-in' -Encoding ascii
     $savedPath = $env:Path
     $env:Path = (($env:Path -split ';') | Where-Object { $_ -and -not (Test-Path -LiteralPath (Join-Path $_ 'claude.cmd')) -and -not (Test-Path -LiteralPath (Join-Path $_ 'claude.exe')) -and -not (Test-Path -LiteralPath (Join-Path $_ 'claude')) }) -join ';'
-    $out = Invoke-Get @('-Dir', (Join-Path $base 'cb4'), '-DryRun')
-    $env:Path = $savedPath
-    Assert-Exit 0 'the dry run with claude only in .local\bin succeeds'
-    Assert-Match $out '  ok    Claude Code' 'claude is found in .local\bin'
-    Assert-Match ((Get-Content -LiteralPath $env:CLAUDE_BASE_USER_PATH_FILE -Raw)) $bin 'its folder is added to the user PATH'
-    Remove-Item -LiteralPath (Join-Path $bin 'claude.exe')
+    try {
+        $out = Invoke-Get @('-Dir', (Join-Path $base 'cb4'), '-DryRun')
+        Assert-Exit 0 'the dry run with claude only in .local\bin succeeds'
+        Assert-Match $out '  ok    Claude Code' 'claude is found in .local\bin'
+        Assert-Match $out "would add $bin to your user PATH" 'the dry run only says it would add the folder'
+        $reg = Read-TestUserPath
+        Assert-True ($reg.Raw -eq '%USERPROFILE%\keep-me;C:\other') 'the dry run left the user PATH as it was'
+        # a real run up to the folder refusal of phase 5: the tool check runs, nothing is cloned
+        $out = Invoke-Get @('-Dir', $other, '-NoHerdr')
+        Assert-Exit 1 'the run stops at the folder that is not a clone'
+        Assert-Match $out "added $bin to your user PATH" 'the real run adds the folder'
+        $reg = Read-TestUserPath
+        Assert-True ($reg.Raw -eq ('%USERPROFILE%\keep-me;C:\other;' + $bin)) 'the user PATH keeps its %USERPROFILE% entry unexpanded'
+        Assert-True ($reg.Kind -eq 'ExpandString') 'the user PATH stays REG_EXPAND_SZ'
+        $out = Invoke-Get @('-Dir', $other, '-NoHerdr')
+        Assert-True ($out -notmatch 'added .* to your user PATH') 'a second run adds nothing'
+        Assert-True ((Read-TestUserPath).Raw -eq $reg.Raw) 'the user PATH holds the folder once'
+    } finally {
+        $env:Path = $savedPath
+        Remove-Item -LiteralPath (Join-Path $bin 'claude.exe')
+    }
 
     Write-Host "`r`nphase 8, the Herdr question: n passes -NoHerdr, y and -Yes pass -Herdr"
     Clear-GetEnv
@@ -189,9 +241,30 @@ try {
     Assert-Match $text 'after the block, exit 1' 'the script block form returns to its caller with the exit code'
     Assert-Match $text 'after the dot-source, exit 1' 'the dot-sourced form returns to its caller with the exit code'
     Assert-Exit 7 'the caller ends on its own exit'
+    # the one-liner itself, iex inside a caller script: there MyCommand.Path names the caller
+    Set-Content -LiteralPath $caller -Encoding ascii -Value @(
+        'param([string]$Get, [string]$Repo, [string]$Dir)',
+        '$env:CLAUDE_BASE_REPO = $Repo; $env:CLAUDE_BASE_DIR = $Dir',
+        '$env:CLAUDE_BASE_MISSING = "git"; $env:CLAUDE_BASE_ANSWER = "n"',
+        'Get-Content -LiteralPath $Get -Raw | Invoke-Expression',
+        "'after iex, exit ' + `$LASTEXITCODE",
+        'exit 7')
+    $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $text = ((& powershell -NoProfile -ExecutionPolicy Bypass -File $caller -Get $getScript -Repo $repo -Dir (Join-Path $base 'cb5') 2>&1) | Out-String)
+    $script:LastExit = $LASTEXITCODE; $ErrorActionPreference = $previous
+    Assert-Match $text 'after iex, exit 1' 'iex inside a script returns to it with the exit code'
+    Assert-Exit 7 'and the script ends on its own exit'
+    # run as a file under another name, the exit code still reaches the caller
+    $renamed = Join-Path $base 'bootstrap.ps1'
+    Copy-Item -LiteralPath $getScript -Destination $renamed
+    $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $text = ((& powershell -NoProfile -ExecutionPolicy Bypass -File $renamed -Repo $repo -Dir (Join-Path $base 'cb5') -Herdr -NoHerdr 2>&1) | Out-String)
+    $script:LastExit = $LASTEXITCODE; $ErrorActionPreference = $previous
+    Assert-Exit 1 'a renamed copy run as a file passes its exit code'
 } finally {
     Clear-GetEnv
-    foreach ($name in @('KIT_HERDR_EXE', 'KIT_HERDR_HOTKEY', 'KIT_HERDR_CONFIG_DIR', 'KIT_HERDR_LNK_DIR', 'CLAUDE_BASE_WINGET', 'CLAUDE_BASE_CLAUDE_INSTALLER', 'CLAUDE_BASE_USER_PATH_FILE')) { Set-Item -Path "Env:$name" -Value $null }
+    foreach ($name in @('KIT_HERDR_EXE', 'KIT_HERDR_HOTKEY', 'KIT_HERDR_CONFIG_DIR', 'KIT_HERDR_LNK_DIR', 'CLAUDE_BASE_WINGET', 'CLAUDE_BASE_CLAUDE_INSTALLER', 'CLAUDE_BASE_NPM', 'CLAUDE_BASE_ENV_KEY')) { Set-Item -Path "Env:$name" -Value $null }
+    [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($envKeyRoot, $false)
     $env:Path = $realPath
     Close-KitSandbox $realProfile
 }

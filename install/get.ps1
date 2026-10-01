@@ -8,7 +8,9 @@
 #
 # What it does, in order:
 #   1. Checks git, Python 3.8+ and Claude Code, and offers to install a missing one: git and Python
-#      through winget, Claude Code through its official installer (https://claude.ai/install.ps1).
+#      through winget; Claude Code through npm when npm is on PATH (npm install -g, which works on
+#      machines that allow no installers), else through its official installer
+#      (https://claude.ai/install.ps1). A Claude Code already installed, either way, is left as it is.
 #   2. Clones the kit into -Dir (default %USERPROFILE%\claude-base), or updates a clone already there.
 #   3. Runs install.ps1 at user scope. It never overwrites a file of yours: the kit version lands
 #      beside it as <name>.new. It then asks whether to add Herdr, and Enter is yes.
@@ -19,8 +21,9 @@
 #
 # The tests replace the external commands through the environment: CLAUDE_BASE_WINGET (winget),
 # CLAUDE_BASE_CLAUDE_INSTALLER (a .ps1 instead of the Claude Code installer), CLAUDE_BASE_MISSING
-# (a comma list of tools to treat as missing), CLAUDE_BASE_ANSWER (the answer to every question) and
-# CLAUDE_BASE_USER_PATH_FILE (a file standing in for the user PATH in the registry).
+# (a comma list of tools to treat as missing), CLAUDE_BASE_NPM (an npm instead of the one on PATH, or
+# 'none' for no npm), CLAUDE_BASE_ANSWER (the answer to every question) and
+# CLAUDE_BASE_ENV_KEY (a throwaway key under HKCU standing in for HKCU\Environment, the user PATH).
 param(
     [string]$Dir = $(if ($env:CLAUDE_BASE_DIR) { $env:CLAUDE_BASE_DIR } else { Join-Path $env:USERPROFILE 'claude-base' }),
     [string]$Repo = $(if ($env:CLAUDE_BASE_REPO) { $env:CLAUDE_BASE_REPO } else { 'https://github.com/ElkinDev/claude-base.git' }),
@@ -43,7 +46,7 @@ function Read-GetYes {
     # True on yes. Enter is yes; with no console and no -Yes the answer is no.
     param([string]$Question)
     if ($Yes) { Write-Host "$Question yes (-Yes)"; return $true }
-    if ($null -ne $env:CLAUDE_BASE_ANSWER) { $answer = $env:CLAUDE_BASE_ANSWER }
+    if ($null -ne $env:CLAUDE_BASE_ANSWER) { $answer = $env:CLAUDE_BASE_ANSWER; Write-Host "$Question '$answer' (CLAUDE_BASE_ANSWER)" }
     elseif (Test-GetInteractive) { $answer = Read-Host "$Question [Y/n]" }
     else { Write-Host "$Question no (no console to ask; pass -Yes)"; return $false }
     return -not ($answer -match '^\s*(n|no)\s*$')
@@ -75,18 +78,35 @@ function Find-GetPython {
     return $null
 }
 
-function Get-GetUserPath {
-    if ($env:CLAUDE_BASE_USER_PATH_FILE) {
-        if (Test-Path -LiteralPath $env:CLAUDE_BASE_USER_PATH_FILE) { return (Get-Content -LiteralPath $env:CLAUDE_BASE_USER_PATH_FILE -Raw).Trim() }
-        return ''
-    }
-    return [Environment]::GetEnvironmentVariable('Path', 'User')
+function Send-GetSettingChange {
+    # Tells Explorer the environment changed, so a window opened from it sees the new PATH.
+    if ($env:CLAUDE_BASE_ENV_KEY) { return }
+    try {
+        Add-Type -Namespace ClaudeBaseGet -Name Native -MemberDefinition @'
+[DllImport("user32.dll", CharSet = CharSet.Unicode)]
+public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+'@
+        $result = [UIntPtr]::Zero
+        [void][ClaudeBaseGet.Native]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result)
+    } catch { }
 }
 
-function Set-GetUserPath {
-    param([string]$Value)
-    if ($env:CLAUDE_BASE_USER_PATH_FILE) { Set-Content -LiteralPath $env:CLAUDE_BASE_USER_PATH_FILE -Value $Value -Encoding ascii; return }
-    [Environment]::SetEnvironmentVariable('Path', $Value, 'User')
+function Add-GetUserPath {
+    # Appends a folder to the user PATH as written in the registry, unexpanded, keeping the value's type:
+    # a REG_EXPAND_SZ Path keeps its %VARIABLE% entries. A dry run only says what it would add.
+    param([string]$Folder)
+    $name = if ($env:CLAUDE_BASE_ENV_KEY) { $env:CLAUDE_BASE_ENV_KEY } else { 'Environment' }
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($name)
+    try {
+        $raw = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        $entries = @($raw -split ';') + @([Environment]::ExpandEnvironmentVariables($raw) -split ';')
+        if ($entries -contains $Folder) { return }
+        if ($DryRun) { Write-Host "  would add $Folder to your user PATH"; return }
+        $kind = if ($key.GetValueNames() -contains 'Path') { $key.GetValueKind('Path') } else { [Microsoft.Win32.RegistryValueKind]::ExpandString }
+        $key.SetValue('Path', ((@($raw.TrimEnd(';'), $Folder) | Where-Object { $_ }) -join ';'), $kind)
+    } finally { $key.Close() }
+    Send-GetSettingChange
+    Write-Host "  added $Folder to your user PATH"
 }
 
 function Add-GetClaudePath {
@@ -95,11 +115,7 @@ function Add-GetClaudePath {
     $bin = Join-Path $env:USERPROFILE '.local\bin'
     if (-not (Test-Path -LiteralPath (Join-Path $bin 'claude.exe'))) { return $false }
     if (-not (($env:Path -split ';') -contains $bin)) { $env:Path = "$env:Path;$bin" }
-    $user = Get-GetUserPath
-    if (-not (($user -split ';') -contains $bin)) {
-        Set-GetUserPath ((@($user, $bin) | Where-Object { $_ }) -join ';')
-        Write-Host "  added $bin to your user PATH"
-    }
+    Add-GetUserPath $bin
     return $true
 }
 
@@ -111,15 +127,34 @@ function Test-GetTool {
     return [bool](Get-Command $Tool -ErrorAction SilentlyContinue)
 }
 
+function Find-GetNpm {
+    # npm.cmd, never npm.ps1, which an execution policy can block.
+    if ($env:CLAUDE_BASE_NPM) { if ($env:CLAUDE_BASE_NPM -eq 'none') { return $null } return $env:CLAUDE_BASE_NPM }
+    $c = Get-Command npm.cmd -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($c) { return $c.Source }
+    return $null
+}
+
+function Get-GetRoute {
+    # How a missing tool would be installed, as the question and the dry run name it.
+    param([string]$Tool)
+    if ($Tool -ne 'claude') { return 'through winget' }
+    if (Find-GetNpm) { return 'with npm (npm install -g @anthropic-ai/claude-code)' }
+    return 'with its official installer (https://claude.ai/install.ps1)'
+}
+
 function Install-GetTool {
     # Offers one missing tool; returns $true when it is there afterwards.
     param([string]$Tool, [string]$Name)
-    if (-not (Read-GetYes "$Name is missing. Install it?")) { return $false }
+    if (-not (Read-GetYes ("$Name is missing. Install it {0}?" -f (Get-GetRoute $Tool)))) { return $false }
     $winget = if ($env:CLAUDE_BASE_WINGET) { $env:CLAUDE_BASE_WINGET } else { 'winget' }
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        if ($Tool -eq 'claude') {
+        $npm = if ($Tool -eq 'claude') { Find-GetNpm } else { $null }
+        if ($npm) {
+            & $npm install -g '@anthropic-ai/claude-code' | Out-Host
+        } elseif ($Tool -eq 'claude') {
             if ($env:CLAUDE_BASE_CLAUDE_INSTALLER) {
                 & powershell -NoProfile -ExecutionPolicy Bypass -File $env:CLAUDE_BASE_CLAUDE_INSTALLER | Out-Host
             } else {
@@ -153,7 +188,7 @@ function Invoke-GetMain {
         @{ Tool = 'claude'; Name = 'Claude Code' })
     foreach ($t in $tools) {
         if (Test-GetTool $t.Tool) { Write-Host ("  ok    {0}" -f $t.Name); continue }
-        if ($DryRun) { Write-Host ("  would offer to install {0}" -f $t.Name); continue }
+        if ($DryRun) { Write-Host ("  would offer to install {0} {1}" -f $t.Name, (Get-GetRoute $t.Tool)); continue }
         if (-not (Install-GetTool $t.Tool $t.Name)) {
             Write-Host ("Stopped: {0} is required. Nothing of the kit was installed." -f $t.Name)
             return 1
@@ -218,10 +253,13 @@ function Invoke-GetMain {
 }
 
 $getExit = Invoke-GetMain
-# Run as this file (powershell -File get.ps1), the exit code reaches the caller. Run through iex, a
-# script block, or dot-sourced, it shares the caller's session or script, where exit would end it,
-# so it only sets LASTEXITCODE and says how it ended.
+# Run as this file (powershell -File get.ps1, under any name), the exit code reaches the caller. Run
+# through iex, a script block, or dot-sourced, it shares the caller's session or script, where exit
+# would end it, so it only sets LASTEXITCODE and says how it ended. Under iex inside a script,
+# MyCommand.Path names that script, so the file must also be this one: it holds the line below.
 $global:LASTEXITCODE = $getExit
-if ($MyInvocation.InvocationName -ne '.' -and $MyInvocation.MyCommand.Path -and
-    [IO.Path]::GetFileName($MyInvocation.MyCommand.Path) -eq 'get.ps1') { exit $getExit }
+$getSelf = $MyInvocation.MyCommand.Path
+if ($MyInvocation.InvocationName -ne '.' -and $getSelf -and (Test-Path -LiteralPath $getSelf) -and
+    (Select-String -LiteralPath $getSelf -SimpleMatch -Quiet -Pattern ('claude-base get.ps1 ' + 'exit marker'))) { exit $getExit }
+# claude-base get.ps1 exit marker
 if ($getExit -ne 0) { Write-Host "claude-base install did not finish (code $getExit)." }

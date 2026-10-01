@@ -25,7 +25,14 @@ New-Item -ItemType Directory -Force -Path $stubs | Out-Null
 Set-Content -LiteralPath (Join-Path $stubs 'herdr.cmd') -Encoding ascii -Value @(
     '@echo off',
     ('echo %* ^|%CLAUDE_CONFIG_DIR%>>"' + $herdrLog + '"'),
-    'if "%1 %2"=="channel show" (if defined HERDR_STUB_CHANNEL (echo %HERDR_STUB_CHANNEL%) else (echo preview)) & exit /b 0',
+    'if not "%1 %2"=="channel show" goto run',
+    'if "%HERDR_STUB_CHANNEL%"=="stderr" goto err',
+    'if defined HERDR_STUB_CHANNEL (echo %HERDR_STUB_CHANNEL%) else (echo preview)',
+    'exit /b 0',
+    ':err',
+    'echo error: unknown subcommand show 1>&2',
+    'exit /b 2',
+    ':run',
     'echo stub herdr %*')
 Set-Content -LiteralPath (Join-Path $stubs 'hotkey.ps1') -Encoding ascii -Value ("Set-Content -LiteralPath '" + $hotkeyMark + "' -Value ran; 'Created: stub hotkey'")
 $channelSeen = Join-Path $base 'installer-channel.txt'
@@ -85,10 +92,14 @@ try {
     Assert-Match $out '  ok    hotkey Ctrl+Alt+N' 'it reports the hotkey'
 
     Write-Host "`r`nphase 4b, a herdr on stable is left on stable, and the integration follows the kit home"
+    # KIT_HOME unset: the kit home is then %USERPROFILE%\.claude, the same sandbox folder, and only
+    # CLAUDE_CONFIG_DIR points elsewhere, the shell of a user with a second profile.
     $env:HERDR_STUB_CHANNEL = 'stable'
     $env:CLAUDE_CONFIG_DIR = Join-Path $base 'another-profile'
+    $savedKitHome = $env:KIT_HOME
+    $env:KIT_HOME = $null
     Remove-Item -LiteralPath $herdrLog -ErrorAction SilentlyContinue
-    $out = Invoke-Install @('-Herdr')
+    try { $out = Invoke-Install @('-Herdr') } finally { $env:KIT_HOME = $savedKitHome }
     $env:CLAUDE_CONFIG_DIR = $null
     $env:HERDR_STUB_CHANNEL = $null
     Assert-Exit 0 'the install over a stable herdr succeeds'
@@ -96,6 +107,13 @@ try {
     $calls = Get-Content -LiteralPath $herdrLog -Raw
     Assert-True ($calls -notmatch 'channel set') 'no channel set on a stable herdr'
     Assert-Match $calls ('integration install claude |' + $kitHome) 'the integration goes to the kit home, not the shell profile'
+
+    Write-Host "`r`nphase 4d, a herdr whose channel show fails on stderr never fails the install"
+    $env:HERDR_STUB_CHANNEL = 'stderr'
+    try { $out = Invoke-Install @('-Herdr') } finally { $env:HERDR_STUB_CHANNEL = $null }
+    Assert-Exit 0 'the install over a herdr with no channel show succeeds'
+    Assert-Match $out 'could not read the channel of your Herdr' 'it says the channel could not be read'
+    Assert-Match $out 'integration install claude' 'the next steps still run'
 
     Write-Host "`r`nphase 4c, a hotkey shortcut of yours that points elsewhere is kept; the same target is skipped"
     $lnk = Join-Path $lnkDir 'herdr (Ctrl+Alt+N).lnk'

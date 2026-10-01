@@ -1,7 +1,8 @@
 # herdr.ps1 - the optional Herdr step of the user-scope install, dot-sourced by install.ps1.
 #
-# On yes it installs Herdr with its official installer (https://herdr.dev/install.ps1) unless a herdr
-# is already on PATH, follows the preview channel this kit is verified on (herdr\verified-version.txt),
+# On yes it installs Herdr with its official installer (https://herdr.dev/install.ps1), on the preview
+# channel this kit is verified on (herdr\verified-version.txt), unless a herdr is already on PATH, which
+# keeps its own channel (the run says when it is not preview),
 # puts herdr\config.toml in place, wires the Claude Code integration and creates the Ctrl+Alt+N
 # hotkey. A config.toml you already have and that differs is never touched: the kit version lands
 # beside it as config.toml.new, the same rule as every other file the installer writes.
@@ -85,6 +86,19 @@ function Get-KitHotkeyPlan {
     try { $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath } catch { $target = '' }
     if ($target -eq $Launcher) { return "skip same $lnk" }
     return "keep yours $lnk, it points at $target; to repoint it run herdr\hotkey\setup-hotkey.ps1 from this clone"
+}
+
+function Get-KitHerdrChannel {
+    # herdr channel show, read so that a stderr line or a failure can never stop the install: under
+    # install.ps1's ErrorActionPreference Stop, PowerShell 5.1 turns a native stderr line into an error.
+    param([string]$Exe)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $lines = @(& $Exe channel show 2>$null)
+        if ($LASTEXITCODE -ne 0) { return '' }
+        return (($lines | Out-String).Trim())
+    } catch { return '' } finally { $ErrorActionPreference = $previous }
 }
 
 function Invoke-KitHerdrCommand {
@@ -171,9 +185,10 @@ function Install-KitHerdr {
     # An installed Herdr keeps the channel its owner chose; the run only says when it is not the
     # preview channel this kit is verified on.
     if (-not $fresh) {
-        $channel = (& $exe channel show 2>$null | Out-String).Trim()
+        $channel = Get-KitHerdrChannel $exe
         if ($channel -eq 'preview') { Write-Output '  ok    channel preview' }
-        else { Write-Output ("  note  your Herdr follows '{0}'; this kit is verified on preview. To follow it: herdr channel set preview" -f $channel) }
+        elseif ($channel) { Write-Output ("  note  your Herdr follows '{0}'; this kit is verified on preview. To follow it: herdr channel set preview" -f $channel) }
+        else { Write-Output '  note  could not read the channel of your Herdr; this kit is verified on preview' }
     }
 
     $plan = Get-KitHerdrConfigPlan $kitConfig $config

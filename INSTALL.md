@@ -9,8 +9,10 @@ irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 
 `install/get.ps1` does sections 0, 1 and 3 below in one run:
 1. It checks git (Git for Windows, which also brings the Git Bash the hooks run in), Python 3.8+
    and Claude Code, and offers to install a missing one: git and Python through winget, Claude
-   Code through its official installer. A tool you decline stops the run before anything of the
-   kit is written.
+   Code through npm when npm is on PATH (`npm install -g @anthropic-ai/claude-code`, which works
+   on machines that allow npm but no installers), else through its official installer. A Claude
+   Code already installed, from npm or the installer, is left as it is. A tool you decline stops
+   the run before anything of the kit is written.
 2. It clones the kit into `%USERPROFILE%\claude-base`, or updates a clone of this repository that
    is already there. A folder there that is not a clone of this repository is refused, never touched.
 3. It runs `install.ps1` at user scope (section 1), which overwrites nothing of yours.
