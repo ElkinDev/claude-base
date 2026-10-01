@@ -38,3 +38,7 @@ Gentleman-Programming
 bashalarmistalt
 divan
 sz3
+
+# A public project whose license URL a private product's open source notices carry (python-holidays, MIT). An
+# organization whose repositories are public (gh api, 2026-10-01).
+vacanza
