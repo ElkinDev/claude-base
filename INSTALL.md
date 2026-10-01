@@ -6,10 +6,12 @@ asks for them when git is missing:
 ```
 irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 | iex
 ```
-In the classic Command Prompt (cmd.exe) `irm` is not recognized, since it exists only in PowerShell. From there
-the same command runs through PowerShell, in one line:
+Or press Windows + R, paste this whole line and press Enter. The Run box finds PowerShell through Windows' own
+App Paths entry, so it works on a machine whose PATH lost the PowerShell folder, where the Command Prompt answers
+that `powershell` is not recognized. `irm` alone is not recognized in the Command Prompt either, since it exists
+only in PowerShell. `-NoExit` keeps the window open at the end, so the result can be read:
 ```
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 | iex"
+powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 | iex"
 ```
 A local execution policy does not stop it: the downloaded script is not a file, and it starts the installer it clones
 with `-ExecutionPolicy Bypass` itself. A policy set by Group Policy on a managed PC still applies and can refuse the
@@ -34,6 +36,13 @@ Options go through a script block:
 `-Herdr` or `-NoHerdr` answers the Herdr question, `-Yes` answers yes to every question, `-Dir`
 picks another folder, `-Permissions ask` keeps Claude Code's prompts, and `-DryRun` installs nothing
 and shows the installer's plan when a clone is already there.
+
+Where the clone lives does not change where the kit works: the installer copies the kit into your user profile
+(`%USERPROFILE%\.claude`), and Claude Code reads it there in whatever folder you open it. To keep the clone in
+another folder, such as `C:\Repo\claude-base`, run the command with `-Dir C:\Repo\claude-base`, and set the user
+variable `CLAUDE_BASE_DIR` to the same folder so a later run updates that clone and does not make a new one in the
+default folder. Then delete the old clone. With Herdr, the run says when the Ctrl+Alt+N shortcut still points at
+the old clone and names the line that repoints it.
 
 ## 0. Check the machine first
 ```

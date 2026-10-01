@@ -104,11 +104,15 @@ asks whether to add Herdr (Enter is yes) and ends with the doctor. `INSTALL.md` 
 ```
 irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 | iex
 ```
-From the classic Command Prompt (cmd.exe), where `irm` is not recognized because it exists only in PowerShell,
-the same command goes through PowerShell:
+Or press Windows + R, paste this whole line and press Enter. The Run box finds PowerShell even on a machine whose
+PATH lost its folder, where the Command Prompt answers that `powershell` (or `irm`, which exists only in PowerShell)
+is not recognized:
 ```
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 | iex"
+powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 | iex"
 ```
+The clone is only the kit's source for updates: the kit itself lands in your user profile (`%USERPROFILE%\.claude`),
+so Claude Code picks it up in whatever folder you open it. To keep the clone elsewhere, pass `-Dir` (`INSTALL.md`).
+
 By hand, from a clone:
 ```
 # check the machine has what the kit needs (git, python, claude, Git Bash, optionally Herdr)

@@ -163,6 +163,19 @@ try {
     Clear-HerdrEnv
     $null = Invoke-Install @('-Herdr', '-NoHerdr')
     Assert-True ($script:LastExit -ne 0) ("both switches fail the run (exit $($script:LastExit))")
+    Write-Host "`r`nphase 9, a PATH that lost the WindowsPowerShell folder still runs the hotkey script, started by its full path"
+    Use-HerdrStubs
+    Remove-Item -LiteralPath $hotkeyMark -ErrorAction SilentlyContinue
+    $ps = [IO.Path]::Combine($env:SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    $savedPath = $env:Path
+    $env:Path = (($env:Path -split ';') | Where-Object { $_ -and $_ -notmatch 'WindowsPowerShell' }) -join ';'
+    $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        $text = ((& $ps -NoProfile -ExecutionPolicy Bypass -File $script:Installer -Herdr 2>&1) | Out-String)
+        $script:LastExit = $LASTEXITCODE
+    } finally { $env:Path = $savedPath; $ErrorActionPreference = $previous }
+    Assert-Exit 0 'the install with -Herdr succeeds with no WindowsPowerShell folder on PATH'
+    Assert-True (Test-Path -LiteralPath $hotkeyMark) 'the hotkey script ran'
 } finally {
     Clear-HerdrEnv
     $env:KIT_HERDR_CONFIG_DIR = $null

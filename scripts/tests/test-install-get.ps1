@@ -348,6 +348,24 @@ try {
     $text = ((& powershell -NoProfile -ExecutionPolicy Bypass -File $renamed -Repo $repo -Dir (Join-Path $base 'cb5') -Herdr -NoHerdr 2>&1) | Out-String)
     $script:LastExit = $LASTEXITCODE; $ErrorActionPreference = $previous
     Assert-Exit 1 'a renamed copy run as a file passes its exit code'
+    Write-Host "`r`nphase 10, every child PowerShell starts by its full path, and a PATH that lost the WindowsPowerShell folder still installs"
+    # get.ps1 also refreshes the session PATH from the registry (Update-GetSessionPath), which puts the folder back here,
+    # so the run below passes on the old code too; the source checks are the pins of the full-path start.
+    foreach ($file in @($getScript, (Join-Path $script:RepoRoot 'install/herdr.ps1'))) {
+        Assert-True (-not (Select-String -LiteralPath $file -SimpleMatch -Pattern '& powershell ' -Quiet)) ("$(Split-Path -Leaf $file) starts no PowerShell by its PATH name")
+    }
+    Clear-GetEnv
+    $ps = [IO.Path]::Combine($env:SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    $savedPath = $env:Path
+    $env:Path = (($env:Path -split ';') | Where-Object { $_ -and $_ -notmatch 'WindowsPowerShell' }) -join ';'
+    $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        $text = ((& $ps -NoProfile -ExecutionPolicy Bypass -File $getScript -Repo $repo -Dir (Join-Path $base 'cb6') -NoHerdr 2>&1) | Out-String)
+        $script:LastExit = $LASTEXITCODE
+    } finally { $env:Path = $savedPath; $ErrorActionPreference = $previous }
+    Assert-Exit 0 'the install succeeds with no WindowsPowerShell folder on PATH'
+    Assert-True ($text -notmatch 'Stopped: install.ps1') 'install.ps1 ran'
+    Assert-Match $text 'Left to do by hand:' 'it reaches the last steps'
 } finally {
     Clear-GetEnv
     foreach ($name in @('KIT_HERDR_EXE', 'KIT_HERDR_HOTKEY', 'KIT_HERDR_CONFIG_DIR', 'KIT_HERDR_LNK_DIR', 'CLAUDE_BASE_WINGET', 'CLAUDE_BASE_CLAUDE_INSTALLER', 'CLAUDE_BASE_NPM', 'CLAUDE_BASE_ENV_KEY')) { Set-Item -Path "Env:$name" -Value $null }
