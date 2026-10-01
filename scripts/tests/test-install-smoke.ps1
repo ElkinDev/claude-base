@@ -307,7 +307,9 @@ try {
     Assert-True ($out -notmatch 'your user PATH') 'and says nothing about the PATH'
     $text = Get-Content -LiteralPath $ccCmd -Raw
     Assert-Match $text '"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass' 'cc.cmd starts Windows PowerShell by its full path, under any local policy'
-    Assert-Match $text '-File "%~dp0..\cc-launch.ps1" %*' 'it finds the launcher from its own folder and names no path'
+    Assert-Match $text 'set "CC_LAUNCH=%~dp0..\cc-launch.ps1"' 'it finds the launcher from its own folder and names no path'
+    Assert-Match $text '-File "%CC_LAUNCH%" %*' 'and hands it every argument'
+    Assert-True ($text -notmatch '(?im)^\s*exit\s+(?!/b)') 'it never ends the cmd that called it (exit /b only)'
     $launcher = Join-Path $kitHome 'cc-launch.ps1'
     Assert-True (Test-Path -LiteralPath $launcher) 'the launcher landed beside claude-account.ps1'
     # Windows PowerShell reads a script with no BOM in the ANSI code page, and cmd reads a batch file in the OEM one.
@@ -339,15 +341,24 @@ try {
     Assert-True ($code -eq 0) ("a word with typographic quotes exits 0 (exit $code)")
     Assert-Regex $text 'EXTRA=don.t stop x.; Write-Host PWNED-PS; . \$env:OS --no-chrome' 'typographic quotes and a $ arrive as text'
     Assert-True (-not (($text -split "\r?\n") | Where-Object { $_.Trim() -eq 'PWNED-PS' })) 'the text between them did not run'
-    # Started through cmd /c, cmd splits a & off the line before cc.cmd runs; cc.cmd ends cmd, so the tail never runs.
+    # cc never ends the cmd that called it: a batch of the user's, run through cmd /c, goes on after call cc.
+    $userBatch = Join-Path $base 'start-my-day.cmd'
+    [IO.File]::WriteAllText($userBatch, ("@echo off`r`necho BEFORE-CC`r`ncall `"$ccCmd`" ?`r`necho AFTER-CC`r`nexit /b 5`r`n"))
     $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    try { $text = (& cmd /c "`"$ccCmd`" work -ShowEnv -- a&echo PWNED-CMD" 2>&1 | Out-String) } finally { $ErrorActionPreference = $previous }
-    Assert-Match $text 'EXTRA=a --no-chrome' 'the words before the & reach claude'
-    Assert-True (-not (($text -split "\r?\n") | Where-Object { $_.Trim() -eq 'PWNED-CMD' })) 'the command cmd split off after it never runs'
-    # An interactive Command Prompt stays open after cc: here cmd /k reads its next command from the pipe.
+    try { $text = (& cmd /c "`"$userBatch`"" 2>&1 | Out-String); $code = $LASTEXITCODE } finally { $ErrorActionPreference = $previous }
+    Assert-Match $text 'switch Claude Code accounts without logging out' 'a batch that calls cc runs it'
+    Assert-Match $text 'AFTER-CC' 'and goes on after it'
+    Assert-True ($code -eq 5) ("and ends on its own exit (exit $code)")
+    # Found on PATH under a quoted name from another folder, where cmd's %~dp0 names the current folder,
+    # cc.cmd still finds the launcher through the first cc.cmd on PATH.
+    $savedPath = $env:Path
+    $env:Path = "$bin;$env:Path"
+    Push-Location -LiteralPath $base
     $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    try { $null = ('exit 7' | & cmd /k "`"$ccCmd`" ?" 2>&1 | Out-String); $code = $LASTEXITCODE } finally { $ErrorActionPreference = $previous }
-    Assert-True ($code -eq 7) ("an interactive Command Prompt runs its next command after cc (exit $code)")
+    try { $text = (& cmd /c '"cc" ?' 2>&1 | Out-String); $code = $LASTEXITCODE }
+    finally { $ErrorActionPreference = $previous; Pop-Location; $env:Path = $savedPath }
+    Assert-True ($code -eq 0) ("a quoted cc found on PATH exits 0 (exit $code)")
+    Assert-Match $text 'switch Claude Code accounts without logging out' 'and prints the help'
     # A failure is a failure: an account name the switcher refuses exits 1 through the launcher and cc.cmd.
     $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     try { $text = (& cmd /c "`"$ccCmd`" bad*name" 2>&1 | Out-String); $code = $LASTEXITCODE } finally { $ErrorActionPreference = $previous }
