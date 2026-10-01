@@ -115,6 +115,7 @@ function Install-GetTool {
 function Invoke-GetMain {
     Write-Host "claude-base: one-command install into $Dir"
     if ($PSVersionTable.PSVersion.Major -lt 5) { Write-Host 'Windows PowerShell 5.1 or later is required.'; return 1 }
+    if ($Herdr -and $NoHerdr) { Write-Host '-Herdr and -NoHerdr cannot both be given.'; return 1 }
 
     $tools = @(
         @{ Tool = 'git';    Name = 'Git for Windows (git, and the Git Bash the hooks run in)' },

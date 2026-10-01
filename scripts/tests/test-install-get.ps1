@@ -110,6 +110,23 @@ try {
     Assert-Exit 1 'and the run stops there'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $base 'cb2'))) 'nothing was cloned'
 
+    Remove-Item -LiteralPath $wingetLog
+    Set-Content -LiteralPath (Join-Path $stubs 'winget-fails.cmd') -Encoding ascii -Value @('@echo off', 'echo stub winget failing', 'exit /b 1')
+    $env:CLAUDE_BASE_WINGET = Join-Path $stubs 'winget-fails.cmd'
+    $out = Invoke-Get @('-Dir', (Join-Path $base 'cb2'), '-NoHerdr')
+    Assert-Exit 1 'a failing winget stops the run'
+    Assert-Match $out 'the Python 3 installer exited 1' 'it reports the winget exit'
+
+    Write-Host "`r`nphase 6b, a folder with a space, and both Herdr switches"
+    Clear-GetEnv
+    $spaced = Join-Path $base 'my kit'
+    $out = Invoke-Get @('-Dir', $spaced, '-NoHerdr')
+    Assert-Exit 0 'a folder with a space installs'
+    Assert-True (Test-Path -LiteralPath (Join-Path $spaced 'install.ps1')) 'the clone is in the folder with a space'
+    $out = Invoke-Get @('-Dir', $spaced, '-Herdr', '-NoHerdr')
+    Assert-Exit 1 'both Herdr switches are refused'
+    Assert-Match $out 'cannot both be given' 'it says why'
+
     Write-Host "`r`nphase 7, a missing Claude Code is offered through its official installer"
     $env:CLAUDE_BASE_MISSING = 'claude'
     $env:CLAUDE_BASE_CLAUDE_INSTALLER = Join-Path $stubs 'claude-installer.ps1'

@@ -98,6 +98,13 @@ install/                    what the installer runs on: lib.ps1 the ownership ru
 ```
 
 ## Quickstart
+On a new Windows machine, one command in PowerShell does all of it: it checks git, Python and Claude Code
+and offers to install a missing one, clones the kit into `%USERPROFILE%\claude-base`, runs the installer,
+asks whether to add Herdr (Enter is yes) and ends with the doctor. `INSTALL.md` has the options.
+```
+irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 | iex
+```
+By hand, from a clone:
 ```
 # check the machine has what the kit needs (git, python, claude, Git Bash, optionally Herdr)
 python scripts\doctor.py
