@@ -129,6 +129,7 @@ try {
 
     Write-Host "`r`nphase 7, a missing Claude Code is offered through its official installer"
     $env:CLAUDE_BASE_MISSING = 'claude'
+    $env:CLAUDE_BASE_ANSWER = 'y'
     $env:CLAUDE_BASE_CLAUDE_INSTALLER = Join-Path $stubs 'claude-installer.ps1'
     $null = Invoke-Get @('-Dir', (Join-Path $base 'cb3'), '-NoHerdr')
     Assert-True (Test-Path -LiteralPath $claudeMark) 'the Claude Code installer ran'
