@@ -62,6 +62,7 @@ try {
     $out = Invoke-Get @('-Dir', $dir, '-NoHerdr')
     Assert-Exit 0 'the install succeeds'
     Assert-True (Test-Path -LiteralPath (Join-Path $dir '.git')) 'the kit was cloned'
+    Assert-True ($out -notmatch 'RemoteException') 'git progress is not shown as an error record'
     Assert-True (Test-Path -LiteralPath (Join-Path $dir 'install\get.ps1')) 'the clone carries this branch'
     Assert-True (Test-Path -LiteralPath (Join-Path $kitHome 'skills')) 'the kit landed in the kit home'
     Assert-Match $out 'herdr        not added.' 'Herdr was not added'
@@ -71,7 +72,7 @@ try {
     Write-Host "`r`nphase 3, a second run updates the clone it made"
     $out = Invoke-Get @('-Dir', $dir, '-NoHerdr')
     Assert-Exit 0 'the second run succeeds'
-    Assert-Regex $out '(?i)already up to date' 'it pulled the clone'
+    Assert-Match $out "updating $dir" 'it pulled the clone it made'
 
     Write-Host "`r`nphase 4, a dry run over the clone runs install.ps1 -DryRun"
     $out = Invoke-Get @('-Dir', $dir, '-DryRun')

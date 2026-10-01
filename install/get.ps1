@@ -140,7 +140,8 @@ function Invoke-GetMain {
             }
             if ($DryRun) { Write-Host "would update $Dir (git pull --ff-only)" }
             else {
-                & git -C $Dir pull --ff-only | Out-Host
+                Write-Host "updating $Dir"
+                & git -C $Dir pull --ff-only --quiet 2>&1 | ForEach-Object { "$_" } | Out-Host
                 if ($LASTEXITCODE -ne 0) { Write-Host "Stopped: git pull in $Dir failed; it has changes of its own. Resolve them or pass -Dir."; return 1 }
             }
         } elseif ((Test-Path -LiteralPath $Dir) -and @(Get-ChildItem -LiteralPath $Dir -Force).Count -gt 0) {
@@ -150,7 +151,8 @@ function Invoke-GetMain {
             Write-Host "would clone $Repo into $Dir, then run install.ps1"
             return 0
         } else {
-            & git clone $Repo $Dir 2>&1 | Out-Host
+            Write-Host "cloning $Repo into $Dir"
+            & git clone --quiet $Repo $Dir 2>&1 | ForEach-Object { "$_" } | Out-Host
             if ($LASTEXITCODE -ne 0) { Write-Host "Stopped: git clone of $Repo failed."; return 1 }
         }
 
