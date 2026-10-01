@@ -278,6 +278,121 @@ try {
         }
         Assert-True ($written.Count -gt 20) ('a fresh record was written over ' + $shape.Key)
     }
+
+    # --------------------------------------------------------------------- cc ----
+    Write-Host "`r`nphase 15, cc is a command: cc.cmd in the kit's bin folder, that folder on the user PATH once"
+    $bin = Join-Path $kitHome 'bin'
+    $ccCmd = Join-Path $bin 'cc.cmd'
+    # The sandbox's stand-in for HKCU\Environment (KIT_ENV_KEY), seeded the way Windows keeps the user PATH.
+    $envKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($env:KIT_ENV_KEY)
+    $envKey.SetValue('Path', '%USERPROFILE%\keep-me;C:\other', [Microsoft.Win32.RegistryValueKind]::ExpandString)
+    $envKey.Close()
+    function Read-TestUserPath {
+        $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($env:KIT_ENV_KEY)
+        try { return @{ Raw = [string]$k.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames); Kind = [string]$k.GetValueKind('Path') } }
+        finally { $k.Close() }
+    }
+    $out = Invoke-Install @('-DryRun')
+    Assert-Exit 0 'the dry run succeeds'
+    Assert-Match $out "path         would add $bin to your user PATH" 'the dry run names the PATH change'
+    Assert-True ((Read-TestUserPath).Raw -eq '%USERPROFILE%\keep-me;C:\other') 'the dry run left the user PATH alone'
+    $out = Invoke-Install
+    Assert-Exit 0 'the run succeeds'
+    Assert-Match $out "path         added $bin to your user PATH" 'the run says it added the folder'
+    $userPath = Read-TestUserPath
+    Assert-True ($userPath.Raw -eq "%USERPROFILE%\keep-me;C:\other;$bin") ('the folder is appended and the rest kept unexpanded: ' + $userPath.Raw)
+    Assert-True ($userPath.Kind -eq 'ExpandString') ('the value kept its type: ' + $userPath.Kind)
+    $out = Invoke-Install
+    Assert-True ((Read-TestUserPath).Raw -eq "%USERPROFILE%\keep-me;C:\other;$bin") 'a second run adds nothing'
+    Assert-True ($out -notmatch 'your user PATH') 'and says nothing about the PATH'
+    $text = Get-Content -LiteralPath $ccCmd -Raw
+    Assert-Match $text '"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass' 'cc.cmd starts Windows PowerShell by its full path, under any local policy'
+    Assert-Match $text 'set "CC_LAUNCH=%~dp0..\cc-launch.ps1"' 'it finds the launcher from its own folder and names no path'
+    Assert-Match $text '-File "%CC_LAUNCH%" %*' 'and hands it every argument'
+    Assert-True ($text -notmatch '(?im)^\s*exit\s+(?!/b)') 'it never ends the cmd that called it (exit /b only)'
+    $launcher = Join-Path $kitHome 'cc-launch.ps1'
+    Assert-True (Test-Path -LiteralPath $launcher) 'the launcher landed beside claude-account.ps1'
+    # Windows PowerShell reads a script with no BOM in the ANSI code page, and cmd reads a batch file in the OEM one.
+    foreach ($file in @($ccCmd, $launcher)) {
+        Assert-True (-not ([IO.File]::ReadAllBytes($file) | Where-Object { $_ -gt 127 })) ("$(Split-Path -Leaf $file) is ASCII")
+    }
+    # Run as a person types it: the separator and every word after it reach claude untouched, a quote and a
+    # space included, where powershell -File on claude-account.ps1 itself stops on the separator.
+    $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        $text = (& cmd /c "`"$ccCmd`" work -ShowEnv -- -r `"it's a b`" --model opus" 2>&1 | Out-String)
+        $code = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previous }
+    Assert-True ($code -eq 0) ("cc.cmd work -ShowEnv exits 0 (exit $code)")
+    Assert-Match $text "EXTRA=-r it's a b --model opus" 'every word after -- reaches claude as typed'
+    Assert-Match $text 'FRESH=false' 'the -r after the separator reads as a resume'
+    $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $text = (& cmd /c "`"$ccCmd`" ?" 2>&1 | Out-String); $code = $LASTEXITCODE } finally { $ErrorActionPreference = $previous }
+    Assert-True ($code -eq 0) ("cc.cmd ? exits 0 (exit $code)")
+    Assert-Match $text 'switch Claude Code accounts without logging out' 'cc ? prints the help'
+    # A typographic apostrophe closes a PowerShell single-quoted string too: a pasted prompt holding two of them
+    # must arrive as text and never run. The output pipe may not carry the character itself, so it is matched as any.
+    $apos = [char]0x2019
+    $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        $text = (& cmd /c "`"$ccCmd`" work -ShowEnv -- `"don$($apos)t stop`" `"x$apos; Write-Host PWNED-PS; $apos`" `$env:OS" 2>&1 | Out-String)
+        $code = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previous }
+    Assert-True ($code -eq 0) ("a word with typographic quotes exits 0 (exit $code)")
+    Assert-Regex $text 'EXTRA=don.t stop x.; Write-Host PWNED-PS; . \$env:OS --no-chrome' 'typographic quotes and a $ arrive as text'
+    Assert-True (-not (($text -split "\r?\n") | Where-Object { $_.Trim() -eq 'PWNED-PS' })) 'the text between them did not run'
+    # cc never ends the cmd that called it: a batch of the user's, run through cmd /c, goes on after call cc.
+    $userBatch = Join-Path $base 'start-my-day.cmd'
+    [IO.File]::WriteAllText($userBatch, ("@echo off`r`necho BEFORE-CC`r`ncall `"$ccCmd`" ?`r`necho AFTER-CC`r`nexit /b 5`r`n"))
+    $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $text = (& cmd /c "`"$userBatch`"" 2>&1 | Out-String); $code = $LASTEXITCODE } finally { $ErrorActionPreference = $previous }
+    Assert-Match $text 'switch Claude Code accounts without logging out' 'a batch that calls cc runs it'
+    Assert-Match $text 'AFTER-CC' 'and goes on after it'
+    Assert-True ($code -eq 5) ("and ends on its own exit (exit $code)")
+    # Found on PATH under a quoted name from another folder, where cmd's %~dp0 names the current folder,
+    # cc.cmd still finds the launcher through the first cc.cmd on PATH.
+    $savedPath = $env:Path
+    $env:Path = "$bin;$env:Path"
+    Push-Location -LiteralPath $base
+    $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $text = (& cmd /c '"cc" ?' 2>&1 | Out-String); $code = $LASTEXITCODE }
+    finally { $ErrorActionPreference = $previous; Pop-Location; $env:Path = $savedPath }
+    Assert-True ($code -eq 0) ("a quoted cc found on PATH exits 0 (exit $code)")
+    Assert-Match $text 'switch Claude Code accounts without logging out' 'and prints the help'
+    # A cc.cmd with no launcher beside it and none on PATH names the path it looked at and exits 1.
+    $lone = Join-Path $base 'lone\bin'
+    New-Item -ItemType Directory -Force -Path $lone | Out-Null
+    Copy-Item -LiteralPath $ccCmd -Destination $lone
+    $savedPath = $env:Path
+    $env:Path = Join-Path $env:SystemRoot 'System32'
+    $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $text = (& cmd /c "`"$(Join-Path $lone 'cc.cmd')`" ?" 2>&1 | Out-String); $code = $LASTEXITCODE }
+    finally { $ErrorActionPreference = $previous; $env:Path = $savedPath }
+    Assert-True ($code -eq 1) ("a cc.cmd with no launcher exits 1 (exit $code)")
+    Assert-Match $text 'cc: the launcher is not at' 'and says where it looked'
+    # A failure is a failure: an account name the switcher refuses exits 1 through the launcher and cc.cmd.
+    $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $text = (& cmd /c "`"$ccCmd`" bad*name" 2>&1 | Out-String); $code = $LASTEXITCODE } finally { $ErrorActionPreference = $previous }
+    Assert-True ($code -eq 1) ("a refused account name exits 1 (exit $code)")
+    Assert-Match $text 'invalid name' 'and says why'
+    # cc.cmd from a kit home outside the profile is the same file: it names no path.
+    $moved = Join-Path $base 'elsewhere\kit'
+    $env:KIT_HOME = $moved
+    try { $out = Invoke-Install } finally { $env:KIT_HOME = $kitHome }
+    Assert-Exit 0 'an install into a kit home outside the profile succeeds'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $moved 'bin\cc.cmd') -Raw) -eq (Get-Content -LiteralPath $ccCmd -Raw)) 'its cc.cmd is the same file'
+    Remove-Item -LiteralPath (Join-Path $base 'elsewhere') -Recurse -Force
+    # A kit home under the temp folder is a test's: with no stand-in key its folder never reaches the real user
+    # PATH. Asked as a dry run, so a broken guard still writes nothing.
+    . (Join-Path $script:RepoRoot 'install\lib.ps1')
+    $savedKey = $env:KIT_ENV_KEY; $env:KIT_ENV_KEY = $null
+    try { $line = Add-KitUserPath (Join-Path ([IO.Path]::GetTempPath()) 'kit-guard\bin') -DryRun } finally { $env:KIT_ENV_KEY = $savedKey }
+    Assert-Match "$line" 'is under the temp folder, so it is not added to your user PATH' 'a temp kit home never reaches the real user PATH'
+    # The key get.ps1's tests name covers the install.ps1 it starts, so neither key alone reaches HKCU\Environment.
+    $savedKey = $env:KIT_ENV_KEY; $savedBase = $env:CLAUDE_BASE_ENV_KEY
+    $env:KIT_ENV_KEY = $null; $env:CLAUDE_BASE_ENV_KEY = 'Software\claude-base-kit-test-stand-in\Environment'
+    try { $name = Get-KitEnvKeyName } finally { $env:KIT_ENV_KEY = $savedKey; $env:CLAUDE_BASE_ENV_KEY = $savedBase }
+    Assert-True ($name -eq 'Software\claude-base-kit-test-stand-in\Environment') ("CLAUDE_BASE_ENV_KEY stands in for HKCU\Environment too ($name)")
 } finally {
     Close-KitSandbox $realProfile
 }

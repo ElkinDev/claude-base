@@ -60,6 +60,9 @@ function New-KitSandbox {
     }
     $env:KIT_HOME    = $script:KitHome
     $env:USERPROFILE = $userRoot
+    # The user PATH the installer adds the cc folder to: a throwaway key under HKCU, never HKCU\Environment.
+    $script:KitTestEnvKeyRoot = 'Software\claude-base-kit-test-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $env:KIT_ENV_KEY = $script:KitTestEnvKeyRoot + '\Environment'
     Write-Host ("installer:    " + $script:Installer)
     Write-Host ("sandbox home: " + $script:KitHome)
     return $script:Base
@@ -139,6 +142,8 @@ function Close-KitSandbox {
     param([string]$RealProfile)
     $env:KIT_HOME    = $null
     $env:USERPROFILE = $RealProfile
+    $env:KIT_ENV_KEY = $null
+    if ($script:KitTestEnvKeyRoot) { [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($script:KitTestEnvKeyRoot, $false) }
     if ($script:Base -and (Test-Path -LiteralPath $script:Base)) {
         Remove-Item -LiteralPath $script:Base -Recurse -Force -ErrorAction SilentlyContinue
     }

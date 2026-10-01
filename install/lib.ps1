@@ -276,3 +276,66 @@ function Set-KitFile {
     if ($action -eq 'refresh') { return "refresh      $Target" }
     return "write        $Target"
 }
+
+# ---------------------------------------------------------------- the user PATH
+
+function Get-KitEnvKeyName {
+    # HKCU\Environment, where the user PATH lives, or the throwaway key under HKCU a test names: KIT_ENV_KEY, or
+    # CLAUDE_BASE_ENV_KEY, the one install\get.ps1 reads, so a test of get.ps1 covers the install.ps1 it starts.
+    # get.ps1 keeps its own copy of these helpers because it is downloaded and run alone.
+    if ($env:KIT_ENV_KEY) { return $env:KIT_ENV_KEY }
+    if ($env:CLAUDE_BASE_ENV_KEY) { return $env:CLAUDE_BASE_ENV_KEY }
+    return 'Environment'
+}
+
+function Test-KitPathHas {
+    # Whether a PATH list holds a folder, whatever its case, a trailing backslash or a %VARIABLE% spelling.
+    param([string]$List, [string]$Folder)
+    $want = $Folder.TrimEnd('\')
+    foreach ($entry in ($List -split ';')) {
+        if ($entry -and [Environment]::ExpandEnvironmentVariables($entry).TrimEnd('\') -eq $want) { return $true }
+    }
+    return $false
+}
+
+function Send-KitSettingChange {
+    # Tells Explorer the environment changed, so a window opened from it sees the new PATH.
+    if ((Get-KitEnvKeyName) -ne 'Environment') { return }
+    try {
+        Add-Type -Namespace ClaudeBaseKit -Name Native -MemberDefinition @'
+[DllImport("user32.dll", CharSet = CharSet.Unicode)]
+public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+'@
+        $result = [UIntPtr]::Zero
+        [void][ClaudeBaseKit.Native]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result)
+    } catch { }
+}
+
+function Add-KitUserPath {
+    # Appends a folder to the user PATH as the registry holds it, unexpanded, keeping the value's type, so a
+    # REG_EXPAND_SZ Path keeps its %VARIABLE% entries. Returns the line to print; nothing when the folder is there.
+    # A dry run reads the value and writes nothing.
+    param([string]$Folder, [switch]$DryRun)
+    $name = Get-KitEnvKeyName
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($name)
+    $raw = ''
+    if ($key) {
+        try { $raw = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) }
+        finally { $key.Close() }
+    }
+    if (Test-KitPathHas $raw $Folder) { return }
+    # A kit home under the temp folder is a test's: its folder never reaches the real user PATH.
+    $temp = [IO.Path]::GetTempPath().TrimEnd('\') + '\'
+    if ($name -eq 'Environment' -and $Folder.StartsWith($temp, [StringComparison]::OrdinalIgnoreCase)) {
+        return "path         skip $Folder is under the temp folder, so it is not added to your user PATH"
+    }
+    if ($DryRun) { return "path         would add $Folder to your user PATH" }
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($name)
+    try {
+        $raw = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        $kind = if ($key.GetValueNames() -contains 'Path') { $key.GetValueKind('Path') } else { [Microsoft.Win32.RegistryValueKind]::ExpandString }
+        $key.SetValue('Path', ((@($raw.TrimEnd(';'), $Folder) | Where-Object { $_ }) -join ';'), $kind)
+    } finally { $key.Close() }
+    Send-KitSettingChange
+    return "path         added $Folder to your user PATH"
+}

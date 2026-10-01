@@ -14,6 +14,10 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import uuid
+
+if os.name == "nt":
+    import winreg
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "..", "kit-restore.py")
@@ -45,11 +49,19 @@ class InstallerRollbackTest(unittest.TestCase):
         self.saved = os.environ.copy()
         os.environ["KIT_HOME"] = self.home
         os.environ["USERPROFILE"] = self.profile
+        # The user PATH the installer adds the cc folder to: a throwaway key under HKCU.
+        self.env_root = "Software\\claude-base-kit-test-" + uuid.uuid4().hex[:8]
+        os.environ["KIT_ENV_KEY"] = self.env_root + "\\Environment"
 
     def tearDown(self):
         os.environ.clear()
         os.environ.update(self.saved)
         shutil.rmtree(self.base, ignore_errors=True)
+        for name in (self.env_root + "\\Environment", self.env_root):
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, name)
+            except OSError:
+                pass
 
     def install(self):
         done = subprocess.run(

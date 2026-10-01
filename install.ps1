@@ -250,9 +250,11 @@ if (Test-Path -LiteralPath $pluginRoot) {
         $pairs += Get-KitPairs (Join-Path $plugin.FullName 'skills') (Join-Path $kitHome 'skills')
     }
 }
-# The account switcher and its settings merger are optional: nothing else depends on them, they
-# sit unused until the cc function is wired up (see docs/ACCOUNTS.md).
-foreach ($file in @('statusline.ps1', 'claude-account.ps1', 'merge-settings.py', 'CLAUDE.md')) {
+# The account switcher and its settings merger are optional: nothing else depends on them. cc.cmd in
+# <kit home>\bin, a folder the run puts on the user PATH, makes cc a command in any new terminal: it starts
+# cc-launch.ps1 with -ExecutionPolicy Bypass, so no PowerShell profile and no policy change is needed
+# (docs/ACCOUNTS.md). cc.cmd finds the launcher from its own folder, so it names no path.
+foreach ($file in @('statusline.ps1', 'claude-account.ps1', 'cc-launch.ps1', 'merge-settings.py', 'CLAUDE.md', 'bin\cc.cmd')) {
     $pairs += New-KitPair (Join-Path $root "claude\$file") (Join-Path $kitHome $file)
 }
 
@@ -276,6 +278,13 @@ $pairs += New-KitPair $null (Join-Path $kitHome 'settings.json') $settingsText
 
 Write-Output "Kit home: $kitHome"
 Invoke-KitPlan $pairs 'user scope install'
+# The folder of cc.cmd goes on the user PATH once; a terminal opened after this run finds cc.
+$ccPath = Add-KitUserPath (Join-Path $kitHome 'bin') -DryRun:$DryRun
+if ($ccPath) {
+    Write-Output ""
+    Write-Output "  $ccPath"
+    if (-not $DryRun) { Write-Output "  cc, the account switcher, works in any terminal opened from now on (docs/ACCOUNTS.md)." }
+}
 
 if ($Permissions -eq 'bypass') {
     Write-Output ""
