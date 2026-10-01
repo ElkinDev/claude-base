@@ -3,7 +3,8 @@
 # `(?i)` to make that rule case-insensitive. Lines starting with `#` are comments.
 #
 # Flags. `name` also applies the rule to every component of a scanned path, so a leak in a file
-# or directory name is caught the way one in the body is.
+# or directory name is caught the way one in the body is. `path` applies the rule to scanned paths
+# only, never to a body.
 #
 # Captures. A rule that captures a group called `name` can be cleared by an entry in
 # sanitize-allow.txt when that entry full-matches the captured name: the user in a home path,
@@ -23,12 +24,17 @@
 # matches in the first place; the bare-word placeholders (you, username, ...) are cleared by the
 # allowlist through the captured name. Windows paths are written with one backslash in a shell,
 # two in JSON and four in JSON that carries JSON, so any run of them is matched.
-# They carry no `name` flag: a scanned path is relative to the repository, so a folder named home
-# or Users inside it is a folder of the project, such as the home screen of an app, never a home
-# directory, and a real user name in a path is the private denylist's to catch.
+# They carry no `name` flag: a scanned path is relative to the repository, where a folder named
+# home or Users is most often a folder of the project, such as the home screen of an app. A home
+# tree copied into the repository is caught on paths by home-tree below instead.
 home-windows	(?i)[a-z]:\\+users\\+(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})
 home-mac	/Users(?:/)(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})
 home-linux	/home(?:/)(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})
+
+# A home tree inside a repository path: a home or Users folder, a name, then a folder or dotfile
+# that only a personal home holds (a mirrored dotfiles tree, an attached profile or log tree).
+# Paths only, so a body line is left to the three rules above and never reported twice.
+home-tree	(?:^|/)(?:home|Users)/(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})/(?:\.(?:bashrc|bash_profile|bash_history|profile|zshrc|zsh_history|ssh|gnupg|gitconfig|netrc|npmrc|aws|kube|docker|config|local)|Desktop|Documents|Downloads|AppData|Library)(?:/|$)	path
 
 # Real email addresses, with the domain captured. `git@host` is the ssh form of a git remote,
 # a service account and never a personal address, so it is not an address at all here; that is

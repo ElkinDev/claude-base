@@ -101,6 +101,22 @@ class RedactionTest(GuardCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertNotIn("home-", result.stdout)
 
+    def test_a_home_tree_copied_into_the_repository_is_caught_by_its_path(self):
+        # no denylist: the generic layer alone catches a mirrored home tree, each path once
+        self.file("/".join(["dotfiles", "home", "jdoe", ".bashrc"]), "a clean body\n")
+        self.file("/".join(["backup", "Users", "jdoe", "Desktop", "notes.txt"]), "a clean body\n")
+        self.file("/".join(["app", "home", "settings", ".gitkeep"]), "a clean body\n")
+        result = self.run_guard("dotfiles", "backup", "app")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual(rules_of(result.stdout), ["home-tree", "home-tree"], result.stdout)
+        self.assertNotIn("gitkeep", result.stdout)
+
+    def test_a_home_tree_in_a_body_is_reported_once(self):
+        self.file("notes.md", "copied from /home/" + "jdoe/.bashrc\n")
+        result = self.run_guard("notes.md")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual(rules_of(result.stdout), ["home-linux"], result.stdout)
+
     def test_a_home_path_in_a_body_is_still_caught_beside_a_home_folder(self):
         self.file("/".join(["app", "ui", "home", "Notes.kt"]), "// built in /home/" + "someone/src\n")
         result = self.run_guard("app")

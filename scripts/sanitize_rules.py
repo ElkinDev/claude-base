@@ -14,7 +14,8 @@ from collections import namedtuple
 from pathlib import Path
 
 # id: the rule id printed in a finding. names: the rule is also applied to path components.
-Rule = namedtuple("Rule", "id regex private names")
+# content: the rule reads bodies; a `path` rule reads scanned paths only.
+Rule = namedtuple("Rule", "id regex private names content")
 Finding = namedtuple("Finding", "rule label line fragment private")
 Waived = namedtuple("Waived", "rule label line")
 
@@ -100,9 +101,9 @@ def nested_quantifier(pattern):
     return False
 
 
-def compile_rule(rule_id, pattern, private=False, names=False, flags=0):
+def compile_rule(rule_id, pattern, private=False, names=False, flags=0, content=True):
     try:
-        return Rule(rule_id, re.compile(pattern, flags), private, names)
+        return Rule(rule_id, re.compile(pattern, flags), private, names, content)
     except re.error as error:
         raise GuardError("rule %s does not compile: %s" % (rule_id, error))
 
@@ -123,7 +124,8 @@ def load_rules(path):
             raise GuardError("rule line without an id or a pattern in %s: %s"
                              % (path, line.strip()))
         flags = fields[2].split(",") if len(fields) > 2 and fields[2] else []
-        rules.append(compile_rule(rule_id, pattern, names="name" in flags))
+        rules.append(compile_rule(rule_id, pattern, names="name" in flags or "path" in flags,
+                                  content="path" not in flags))
     return rules
 
 
