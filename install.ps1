@@ -253,20 +253,10 @@ if (Test-Path -LiteralPath $pluginRoot) {
 # The account switcher and its settings merger are optional: nothing else depends on them. cc.cmd in
 # <kit home>\bin, a folder the run puts on the user PATH, makes cc a command in any new terminal: it starts
 # cc-launch.ps1 with -ExecutionPolicy Bypass, so no PowerShell profile and no policy change is needed
-# (docs/ACCOUNTS.md). The launcher is named from %USERPROFILE% when it lives there, which keeps the file
-# ASCII, the only text cmd reads safely, whatever the user name.
-foreach ($file in @('statusline.ps1', 'claude-account.ps1', 'cc-launch.ps1', 'merge-settings.py', 'CLAUDE.md')) {
+# (docs/ACCOUNTS.md). cc.cmd finds the launcher from its own folder, so it names no path.
+foreach ($file in @('statusline.ps1', 'claude-account.ps1', 'cc-launch.ps1', 'merge-settings.py', 'CLAUDE.md', 'bin\cc.cmd')) {
     $pairs += New-KitPair (Join-Path $root "claude\$file") (Join-Path $kitHome $file)
 }
-$ccLaunch = Join-Path $kitHome 'cc-launch.ps1'
-$userRoot = ("$env:USERPROFILE").TrimEnd('\')
-if ($userRoot -and $ccLaunch.StartsWith($userRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
-    $ccLaunch = '%USERPROFILE%' + $ccLaunch.Substring($userRoot.Length)
-}
-$ccText = "@echo off`r`n" +
-    "rem cc: switch Claude Code accounts (claude-base docs/ACCOUNTS.md). Written by the claude-base installer.`r`n" +
-    "`"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -ExecutionPolicy Bypass -File `"$ccLaunch`" %*`r`n"
-$pairs += New-KitPair $null (Join-Path $kitHome 'bin\cc.cmd') $ccText
 
 # Rendered from the kit home, not from the profile: KIT_HOME moves where the files land, so it has
 # to move what the hook commands inside settings.json point at, or they point at an empty tree.

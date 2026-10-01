@@ -280,8 +280,11 @@ function Set-KitFile {
 # ---------------------------------------------------------------- the user PATH
 
 function Get-KitEnvKeyName {
-    # HKCU\Environment, where the user PATH lives, or the throwaway key under HKCU the tests name in KIT_ENV_KEY.
+    # HKCU\Environment, where the user PATH lives, or the throwaway key under HKCU a test names: KIT_ENV_KEY, or
+    # CLAUDE_BASE_ENV_KEY, the one install\get.ps1 reads, so a test of get.ps1 covers the install.ps1 it starts.
+    # get.ps1 keeps its own copy of these helpers because it is downloaded and run alone.
     if ($env:KIT_ENV_KEY) { return $env:KIT_ENV_KEY }
+    if ($env:CLAUDE_BASE_ENV_KEY) { return $env:CLAUDE_BASE_ENV_KEY }
     return 'Environment'
 }
 
@@ -297,7 +300,7 @@ function Test-KitPathHas {
 
 function Send-KitSettingChange {
     # Tells Explorer the environment changed, so a window opened from it sees the new PATH.
-    if ($env:KIT_ENV_KEY) { return }
+    if ((Get-KitEnvKeyName) -ne 'Environment') { return }
     try {
         Add-Type -Namespace ClaudeBaseKit -Name Native -MemberDefinition @'
 [DllImport("user32.dll", CharSet = CharSet.Unicode)]
@@ -323,7 +326,7 @@ function Add-KitUserPath {
     if (Test-KitPathHas $raw $Folder) { return }
     # A kit home under the temp folder is a test's: its folder never reaches the real user PATH.
     $temp = [IO.Path]::GetTempPath().TrimEnd('\') + '\'
-    if (-not $env:KIT_ENV_KEY -and $Folder.StartsWith($temp, [StringComparison]::OrdinalIgnoreCase)) {
+    if ($name -eq 'Environment' -and $Folder.StartsWith($temp, [StringComparison]::OrdinalIgnoreCase)) {
         return "path         skip $Folder is under the temp folder, so it is not added to your user PATH"
     }
     if ($DryRun) { return "path         would add $Folder to your user PATH" }

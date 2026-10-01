@@ -18,3 +18,5 @@ claude/tools/tests/fixtures/xmlframe/** text eol=lf
 .gitignore text eol=lf
 .gitattributes text eol=lf
 *.ps1 text eol=crlf
+# cmd reads a batch file line by line and expects CRLF.
+*.cmd text eol=crlf

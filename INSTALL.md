@@ -85,7 +85,8 @@ persistence, SessionStart recovery; see `docs/CONTEXT-ECONOMICS.md`).
 
 It also makes `cc`, the account switcher, a command: `cc.cmd` lands in `<kit home>\bin` and that folder is
 added to your user PATH once, keeping the other entries as they were. A terminal opened after the run finds `cc`
-with no PowerShell profile line and under any execution policy (`docs/ACCOUNTS.md`).
+with no PowerShell profile line and under any local execution policy; one set by Group Policy still applies
+(`docs/ACCOUNTS.md`).
 
 Requirements: Windows PowerShell 5.1+, `git` on PATH, and a terminal font with emoji for the status
 line glyphs.
