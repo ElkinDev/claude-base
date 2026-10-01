@@ -11,7 +11,7 @@
 # and the next steps that depend on it are skipped.
 #
 # The external commands can be replaced through the environment, which is what the tests do:
-#   KIT_HERDR_INSTALLER   a .ps1 run instead of the official installer
+#   KIT_HERDR_INSTALLER   a .ps1 (a path or a URL) saved and run instead of the official installer
 #   KIT_HERDR_EXE         the herdr to call instead of the one found on PATH
 #   KIT_HERDR_CONFIG_DIR  the folder of config.toml instead of %APPDATA%\herdr
 #   KIT_HERDR_HOTKEY      a .ps1 run instead of herdr\hotkey\setup-hotkey.ps1
@@ -172,14 +172,18 @@ function Install-KitHerdr {
         # The installer's own parameter: a fresh install follows preview from the start (herdr.dev/install.ps1:3).
         $savedChannel = $env:HERDR_CHANNEL
         $env:HERDR_CHANNEL = 'preview'
-        if ($env:KIT_HERDR_INSTALLER) {
-            $installer = $env:KIT_HERDR_INSTALLER
-            Invoke-KitHerdrCommand 'the Herdr installer' { & (Get-KitPowerShell) -NoProfile -ExecutionPolicy Bypass -File $installer }
-        } else {
-            Invoke-KitHerdrCommand 'the Herdr installer, https://herdr.dev/install.ps1' {
-                & (Get-KitPowerShell) -NoProfile -ExecutionPolicy Bypass -Command 'irm https://herdr.dev/install.ps1 | iex'
+        # Saved to the temp folder and run as a file: Defender stops irm piped into iex on a command line
+        # (Trojan:Win32/Commando.A!ml, 2026-10-01). A failed download is a FAIL line like a failed run.
+        $source = if ($env:KIT_HERDR_INSTALLER) { $env:KIT_HERDR_INSTALLER } else { 'https://herdr.dev/install.ps1' }
+        $label = if ($env:KIT_HERDR_INSTALLER) { 'the Herdr installer' } else { "the Herdr installer, $source" }
+        $installer = Join-Path ([IO.Path]::GetTempPath()) 'claude-base-herdr-install.ps1'
+        Remove-Item -LiteralPath $installer -ErrorAction SilentlyContinue
+        try {
+            Invoke-KitHerdrCommand $label {
+                Invoke-RestMethod -Uri $source -OutFile $installer -ErrorAction Stop
+                & (Get-KitPowerShell) -NoProfile -ExecutionPolicy Bypass -File $installer
             }
-        }
+        } finally { Remove-Item -LiteralPath $installer -ErrorAction SilentlyContinue }
         $env:HERDR_CHANNEL = $savedChannel
         if (-not $script:KitHerdrOk) {
             Write-Output '  skip  the rest of the Herdr setup, since Herdr did not install'

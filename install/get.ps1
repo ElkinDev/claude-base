@@ -1,10 +1,11 @@
-# get.ps1 - install claude-base on a Windows machine with one command, from PowerShell:
+# get.ps1 - install claude-base on a Windows machine with one line, pasted into the Run box (Windows + R)
+# or a PowerShell window. It saves this file in the user folder and runs it from there:
 #
-#   irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 | iex
+#   powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "ri ~\claude-base-get.ps1 -ea 0; irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 -OutFile ~\claude-base-get.ps1; ~\claude-base-get.ps1"
 #
-# With options, run it as a script block, for example to skip the Herdr question:
-#
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1))) -NoHerdr
+# Options go after the file name at the end of the line, for example ~\claude-base-get.ps1 -NoHerdr.
+# The shorter form that pipes irm into iex is stopped by Defender on the command line
+# (Trojan:Win32/Commando.A!ml, 2026-10-01), so no line of the kit uses it.
 #
 # What it does, in order:
 #   1. Checks git, Python 3.8+ and Claude Code, and offers to install a missing one: git and Python
@@ -20,7 +21,7 @@
 # install.ps1 -DryRun when a clone is already there. -Permissions is passed to install.ps1.
 #
 # The tests replace the external commands through the environment: CLAUDE_BASE_WINGET (winget),
-# CLAUDE_BASE_CLAUDE_INSTALLER (a .ps1 instead of the Claude Code installer), CLAUDE_BASE_MISSING
+# CLAUDE_BASE_CLAUDE_INSTALLER (a .ps1, a path or a URL, saved and run instead of the Claude Code installer), CLAUDE_BASE_MISSING
 # (a comma list of tools to treat as missing), CLAUDE_BASE_NPM (an npm instead of the one on PATH, or
 # 'none' for no npm), CLAUDE_BASE_ANSWER (the answer to every question) and
 # CLAUDE_BASE_ENV_KEY (a throwaway key under HKCU standing in for HKCU\Environment, the user PATH).
@@ -214,11 +215,15 @@ function Install-GetTool {
         if ($npm) {
             & $npm install -g '@anthropic-ai/claude-code' | Out-Host
         } elseif ($Tool -eq 'claude') {
-            if ($env:CLAUDE_BASE_CLAUDE_INSTALLER) {
-                & (Get-GetPowerShell) -NoProfile -ExecutionPolicy Bypass -File $env:CLAUDE_BASE_CLAUDE_INSTALLER | Out-Host
-            } else {
-                & (Get-GetPowerShell) -NoProfile -ExecutionPolicy Bypass -Command 'irm https://claude.ai/install.ps1 | iex' | Out-Host
-            }
+            # Saved to the temp folder and run as a file: Defender stops irm piped into iex on a command line
+            # (Trojan:Win32/Commando.A!ml, 2026-10-01), and nothing is installed.
+            $source = if ($env:CLAUDE_BASE_CLAUDE_INSTALLER) { $env:CLAUDE_BASE_CLAUDE_INSTALLER } else { 'https://claude.ai/install.ps1' }
+            $installer = Join-Path ([IO.Path]::GetTempPath()) 'claude-base-claude-install.ps1'
+            Remove-Item -LiteralPath $installer -ErrorAction SilentlyContinue
+            try { Invoke-RestMethod -Uri $source -OutFile $installer -ErrorAction Stop }
+            catch { Write-Host "  could not download the $Name installer from ${source}: $($_.Exception.Message)"; return $false }
+            try { & (Get-GetPowerShell) -NoProfile -ExecutionPolicy Bypass -File $installer | Out-Host }
+            finally { Remove-Item -LiteralPath $installer -ErrorAction SilentlyContinue }
         } else {
             if (-not $env:CLAUDE_BASE_WINGET -and -not (Get-Command winget -ErrorAction SilentlyContinue)) {
                 Write-Host "  winget is not available, so $Name cannot be installed from here. Install it by hand and run this again."

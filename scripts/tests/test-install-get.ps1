@@ -22,7 +22,7 @@ $claudeMark  = Join-Path $base 'claude-installer-ran.txt'
 $herdrLog    = Join-Path $base 'herdr-calls.txt'
 New-Item -ItemType Directory -Force -Path $stubs | Out-Null
 Set-Content -LiteralPath (Join-Path $stubs 'winget.cmd') -Encoding ascii -Value @('@echo off', ('echo %*>>"' + $wingetLog + '"'))
-Set-Content -LiteralPath (Join-Path $stubs 'claude-installer.ps1') -Encoding ascii -Value ("Set-Content -LiteralPath '" + $claudeMark + "' -Value ran")
+Set-Content -LiteralPath (Join-Path $stubs 'claude-installer.ps1') -Encoding ascii -Value ("Set-Content -LiteralPath '" + $claudeMark + "' -Value `$PSCommandPath")
 Set-Content -LiteralPath (Join-Path $stubs 'herdr.cmd') -Encoding ascii -Value @('@echo off', ('echo %* ^|%CLAUDE_CONFIG_DIR%>>"' + $herdrLog + '"'))
 Set-Content -LiteralPath (Join-Path $stubs 'hotkey.ps1') -Encoding ascii -Value "'Created: stub hotkey'"
 $env:Path = (($realPath -split ';') | Where-Object { $_ -and $_ -notmatch 'herdr' }) -join ';'
@@ -198,9 +198,23 @@ try {
     $env:CLAUDE_BASE_ANSWER = 'y'
     $env:CLAUDE_BASE_NPM = 'none'
     $env:CLAUDE_BASE_CLAUDE_INSTALLER = Join-Path $stubs 'claude-installer.ps1'
-    $out = Invoke-Get @('-Dir', (Join-Path $base 'cb3'), '-NoHerdr')
+    # The installer is saved to the temp folder and run as a file; a copy left there by an earlier run never runs.
+    $tmp = Join-Path $base 'tmp'
+    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+    $savedInstaller = Join-Path $tmp 'claude-base-claude-install.ps1'
+    Set-Content -LiteralPath $savedInstaller -Encoding ascii -Value ("Set-Content -LiteralPath '" + $claudeMark + "' -Value stale")
+    $savedTmp = $env:TMP; $savedTemp = $env:TEMP
+    $env:TMP = $tmp; $env:TEMP = $tmp
+    try { $out = Invoke-Get @('-Dir', (Join-Path $base 'cb3'), '-NoHerdr') } finally { $env:TMP = $savedTmp; $env:TEMP = $savedTemp }
     Assert-True (Test-Path -LiteralPath $claudeMark) 'the Claude Code installer ran'
+    Assert-True ((Get-Content -LiteralPath $claudeMark -Raw).Trim() -eq $savedInstaller) 'it ran as the file saved in the temp folder, not the stale copy'
+    Assert-True (-not (Test-Path -LiteralPath $savedInstaller)) 'the saved installer is removed after the run'
     Assert-Match $out 'Install it with its official installer' 'the question names the installer'
+    $env:CLAUDE_BASE_CLAUDE_INSTALLER = Join-Path $stubs 'no-such-installer.ps1'
+    $out = Invoke-Get @('-Dir', (Join-Path $base 'cb3'), '-NoHerdr')
+    Assert-Exit 1 'an installer that cannot be downloaded stops the run'
+    Assert-Match $out 'could not download the Claude Code installer from' 'it says the download failed'
+    $env:CLAUDE_BASE_CLAUDE_INSTALLER = Join-Path $stubs 'claude-installer.ps1'
 
     Write-Host "`r`nphase 7a, with npm on PATH a missing Claude Code is offered through npm"
     Remove-Item -LiteralPath $claudeMark
@@ -373,6 +387,20 @@ try {
     Assert-Exit 0 'the install succeeds with no WindowsPowerShell folder on PATH'
     Assert-True ($text -notmatch 'Stopped: install.ps1') 'install.ps1 ran'
     Assert-Match $text 'Left to do by hand:' 'it reaches the last steps'
+
+    Write-Host "`r`nphase 11, no line of the kit pipes a download into iex, and the docs carry the saved-file line"
+    # Defender stops irm piped into iex on a command line (Trojan:Win32/Commando.A!ml, 2026-10-01).
+    foreach ($file in @($getScript, (Join-Path $script:RepoRoot 'install/herdr.ps1'))) {
+        $code = @(Get-Content -LiteralPath $file | Where-Object { $_ -notmatch '^\s*#' })
+        Assert-True (-not ($code -match '\|\s*(iex|Invoke-Expression)\b')) ("$(Split-Path -Leaf $file) pipes nothing into iex")
+    }
+    $line = 'powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "ri ~\claude-base-get.ps1 -ea 0; irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 -OutFile ~\claude-base-get.ps1; ~\claude-base-get.ps1"'
+    foreach ($doc in @('README.md', 'INSTALL.md')) {
+        $lines = @(Get-Content -LiteralPath (Join-Path $script:RepoRoot $doc))
+        Assert-True (-not ($lines -match '\.ps1\S*\s*\|\s*iex\b')) "$doc shows no install line piped into iex"
+        Assert-True ($lines -contains $line) "$doc carries the saved-file line"
+    }
+    Assert-True (@(Get-Content -LiteralPath $getScript) -contains ('#   ' + $line)) 'get.ps1 names the same line'
 } finally {
     Clear-GetEnv
     foreach ($name in @('KIT_HERDR_EXE', 'KIT_HERDR_HOTKEY', 'KIT_HERDR_CONFIG_DIR', 'KIT_HERDR_LNK_DIR', 'CLAUDE_BASE_WINGET', 'CLAUDE_BASE_CLAUDE_INSTALLER', 'CLAUDE_BASE_NPM', 'CLAUDE_BASE_ENV_KEY')) { Set-Item -Path "Env:$name" -Value $null }
