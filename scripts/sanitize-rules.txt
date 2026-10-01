@@ -31,10 +31,14 @@ home-windows	(?i)[a-z]:\\+users\\+(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})
 home-mac	/Users(?:/)(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})
 home-linux	/home(?:/)(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})
 
-# A home tree inside a repository path: a home or Users folder, a name, then a folder or dotfile
-# that only a personal home holds (a mirrored dotfiles tree, an attached profile or log tree).
-# Paths only, so a body line is left to the three rules above and never reported twice.
-home-tree	(?:^|/)(?:home|Users)/(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})/(?:\.(?:bashrc|bash_profile|bash_history|profile|zshrc|zsh_history|ssh|gnupg|gitconfig|netrc|npmrc|aws|kube|docker|config|local)|Desktop|Documents|Downloads|AppData|Library)(?:/|$)	path
+# A home tree inside a repository path (a mirrored dotfiles tree, an attached profile or log tree):
+# a home folder, a name, then a dotfile of a personal home; or a Users folder, a name, then such a
+# dotfile or a profile folder (Desktop, Documents, AppData, Library and the like). A project can
+# hold a home/<module>/Documents or .config folder, so the profile folders are read under Users
+# only and the generic dotfiles (.config, .local, .docker, .cache) not at all. Paths only, so a body
+# line is left to the three rules above and never reported twice.
+home-tree	(?:^|/)home/(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})/\.(?:bashrc|bash_profile|bash_history|profile|zshrc|zsh_history|vimrc|tmux\.conf|ssh|gnupg|gitconfig|netrc|npmrc|npm|aws|kube|m2|android|gradle)(?:/|$)	path
+home-tree-users	(?:^|/)Users/(?P<name>[^\[\](){}\\/\s"'`<>|*?:^]{1,64})/(?:\.(?:bashrc|bash_profile|bash_history|profile|zshrc|zsh_history|vimrc|tmux\.conf|ssh|gnupg|gitconfig|netrc|npmrc|npm|aws|kube|m2|android|gradle)|Desktop|Documents|Downloads|AppData|Library|Pictures|Music|Movies|Videos|OneDrive)(?:/|$)	path
 
 # Real email addresses, with the domain captured. `git@host` is the ssh form of a git remote,
 # a service account and never a personal address, so it is not an address at all here; that is
