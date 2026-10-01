@@ -73,16 +73,18 @@ function Test-GetPathHas {
 
 function Update-GetSessionPath {
     # After an install the session keeps every folder it had, a Node from fnm lives only in the session
-    # PATH, and gains the folders the installer added to the machine and user PATH.
-    $have = $env:Path
+    # PATH, and gains the folders the installer added to the machine and user PATH, first: a new Python
+    # must win over the WindowsApps python.exe Store stub already in the session, as it does in a new
+    # window, where the installer put it ahead of that stub.
+    $new = @()
     foreach ($list in @([Environment]::GetEnvironmentVariable('Path', 'Machine'), (Read-GetUserPath))) {
         foreach ($entry in ("$list" -split ';')) {
             if (-not $entry) { continue }
             $folder = [Environment]::ExpandEnvironmentVariables($entry)
-            if (-not (Test-GetPathHas $have $folder)) { $have = "$($have.TrimEnd(';'));$folder" }
+            if (-not (Test-GetPathHas (($new -join ';') + ';' + $env:Path) $folder)) { $new += $folder }
         }
     }
-    $env:Path = $have
+    if ($new) { $env:Path = (@($new) + @($env:Path.TrimEnd(';'))) -join ';' }
 }
 
 function Test-GetMissing {
@@ -153,8 +155,14 @@ function Add-GetNpmPath {
     param([string]$Npm)
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    try { $prefix = ((& $Npm prefix -g 2>$null) | Out-String).Trim() } catch { $prefix = '' } finally { $ErrorActionPreference = $previous }
-    if (-not $prefix -or -not (Test-Path -LiteralPath (Join-Path $prefix 'claude.cmd'))) { return }
+    # The prefix is the last line npm prints, and only from a run that exited 0: an npm wrapper can
+    # print a warning on stdout before it.
+    try {
+        $lines = @(& $Npm prefix -g 2>$null)
+        $prefix = if ($LASTEXITCODE -eq 0) { ("$($lines | Where-Object { "$_".Trim() } | Select-Object -Last 1)").Trim() } else { '' }
+    } catch { $prefix = '' } finally { $ErrorActionPreference = $previous }
+    if (-not $prefix -or -not (Test-Path -IsValid -LiteralPath $prefix) -or -not [IO.Path]::IsPathRooted($prefix)) { return }
+    if (-not (Test-Path -LiteralPath (Join-Path $prefix 'claude.cmd'))) { return }
     if (Test-GetPathHas $env:Path $prefix) { return }
     $env:Path = "$($env:Path.TrimEnd(';'));$prefix"
     Add-GetUserPath $prefix

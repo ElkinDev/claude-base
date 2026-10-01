@@ -42,7 +42,7 @@ Set-Content -LiteralPath (Join-Path $stubs 'claude-stub.cmd') -Encoding ascii -V
 $npmStub = @('@echo off', ('echo %*>>"' + $npmLog + '"'),
     'if "%1 %2"=="prefix -g" goto prefix',
     ('if "%1"=="install" if defined NPM_STUB_WRITES copy /y "' + (Join-Path $stubs 'claude-stub.cmd') + '" "%NPM_STUB_PREFIX%\claude.cmd" >nul'),
-    'exit /b 0', ':prefix', 'echo %NPM_STUB_PREFIX%', 'exit /b 0')
+    'exit /b 0', ':prefix', 'if defined NPM_STUB_WARN echo npm WARN config something', 'echo %NPM_STUB_PREFIX%', 'exit /b 0')
 Set-Content -LiteralPath (Join-Path $stubs 'npm.cmd') -Encoding ascii -Value $npmStub
 function Get-NoClaudePath {
     # This session's PATH without any folder holding a claude or an npm, so no real one is reachable.
@@ -155,6 +155,27 @@ try {
     Assert-Exit 1 'a failing winget stops the run'
     Assert-Match $out 'the Python 3 installer exited 1' 'it reports the winget exit'
 
+    Write-Host "`r`nphase 6c, a Python just installed wins over the Store stub already in the session"
+    Clear-GetEnv
+    $silent = Join-Path $base 'store-stub'
+    $fresh = Join-Path $base 'new-python'
+    New-Item -ItemType Directory -Force -Path $silent, $fresh | Out-Null
+    Set-Content -LiteralPath (Join-Path $silent 'python.cmd') -Encoding ascii -Value '@echo off'
+    Set-Content -LiteralPath (Join-Path $fresh 'python.cmd') -Encoding ascii -Value @('@echo off', 'echo Python 3.12.0')
+    Set-Content -LiteralPath (Join-Path $stubs 'winget-adds-python.cmd') -Encoding ascii -Value @('@echo off',
+        ('reg add "HKCU\' + $env:CLAUDE_BASE_ENV_KEY + '" /v Path /t REG_EXPAND_SZ /d "' + $fresh + ';C:\other" /f >nul'))
+    $env:CLAUDE_BASE_WINGET = Join-Path $stubs 'winget-adds-python.cmd'
+    $env:CLAUDE_BASE_ANSWER = 'y'
+    $savedPath = $env:Path
+    $env:Path = "$silent;" + ((($env:Path -split ';') | Where-Object { $pathDir = $_; $pathDir -and -not (@('python.exe', 'py.exe', 'python.cmd') | Where-Object { Test-Path -LiteralPath (Join-Path $pathDir $_) }) }) -join ';')
+    try { $out = Invoke-Get @('-Dir', $other, '-NoHerdr') } finally {
+        $env:Path = $savedPath
+        $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($env:CLAUDE_BASE_ENV_KEY)
+        $k.SetValue('Path', '%USERPROFILE%\keep-me;C:\other', [Microsoft.Win32.RegistryValueKind]::ExpandString); $k.Close()
+    }
+    Assert-True ($out -notmatch 'cannot see it yet') 'the new Python is seen in this window'
+    Assert-Match $out 'is not a claude-base clone' 'the run went on past the tools'
+
     Write-Host "`r`nphase 6b, a folder with a space, and both Herdr switches"
     Clear-GetEnv
     $spaced = Join-Path $base 'my kit'
@@ -260,6 +281,7 @@ try {
     $npmPrefix = Join-Path $base 'npm-global'
     New-Item -ItemType Directory -Force -Path $npmPrefix | Out-Null
     $env:NPM_STUB_PREFIX = $npmPrefix
+    $env:NPM_STUB_WARN = '1'  # a wrapper that prints a warning on stdout before the prefix
     $env:CLAUDE_BASE_NPM = Join-Path $stubs 'npm.cmd'
     $savedPath = $env:Path
     $env:Path = Get-NoClaudePath
@@ -267,7 +289,7 @@ try {
     Assert-Match $out "added $npmPrefix to your user PATH" 'the npm global folder is added'
     Assert-Match $out '  ok    Claude Code' 'claude is found in it'
     Assert-True ((Read-TestUserPath).Raw -eq ($before + ';' + $npmPrefix)) 'the user PATH gains that folder once'
-    foreach ($name in @('NPM_STUB_WRITES', 'NPM_STUB_PREFIX')) { Set-Item -Path "Env:$name" -Value $null }
+    foreach ($name in @('NPM_STUB_WRITES', 'NPM_STUB_PREFIX', 'NPM_STUB_WARN')) { Set-Item -Path "Env:$name" -Value $null }
     Remove-Item -LiteralPath $npmLog
 
     Write-Host "`r`nphase 8, the Herdr question: n passes -NoHerdr, y and -Yes pass -Herdr"
