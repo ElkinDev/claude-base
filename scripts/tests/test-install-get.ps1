@@ -98,6 +98,11 @@ try {
     Assert-True (Test-Path -LiteralPath (Join-Path $kitHome 'skills')) 'the kit landed in the kit home'
     Assert-Match $out 'herdr        not added.' 'Herdr was not added'
     Assert-Regex $out '(?m)^(ok|warn|FAIL) +git' 'the doctor ran'
+    # the hooks and the status line run through Git Bash, which finds a bare powershell only on PATH
+    $fullPs = ([IO.Path]::Combine($env:SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')).Replace([string][char]92, '/')
+    $kitSettings = Get-Content -LiteralPath (Join-Path $kitHome 'settings.json') -Raw
+    Assert-True ($kitSettings -notmatch '"command": "powershell([.]exe)? ') 'no settings command starts PowerShell by its PATH name'
+    Assert-Match $kitSettings ('"command": "' + $fullPs + ' -NoProfile') 'the settings commands start it by its full path'
     Assert-Match $out 'Left to do by hand:' 'it ends with the steps left by hand'
 
     Write-Host "`r`nphase 3, a second run updates the clone it made"
@@ -352,7 +357,7 @@ try {
     # get.ps1 also refreshes the session PATH from the registry (Update-GetSessionPath), which puts the folder back here,
     # so the run below passes on the old code too; the source checks are the pins of the full-path start.
     foreach ($file in @($getScript, (Join-Path $script:RepoRoot 'install/herdr.ps1'))) {
-        Assert-True (-not (Select-String -LiteralPath $file -SimpleMatch -Pattern '& powershell ' -Quiet)) ("$(Split-Path -Leaf $file) starts no PowerShell by its PATH name")
+        Assert-True (-not (Select-String -LiteralPath $file -Pattern "&[ ]*['`"]?(powershell|pwsh)([.]exe)?['`"]?[ ]" -Quiet)) ("$(Split-Path -Leaf $file) starts no PowerShell by its PATH name")
     }
     Clear-GetEnv
     $ps = [IO.Path]::Combine($env:SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')

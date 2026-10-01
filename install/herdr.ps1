@@ -95,7 +95,8 @@ function Get-KitHotkeyPlan {
     if (-not (Test-Path -LiteralPath $lnk)) { return "write $lnk" }
     try { $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath } catch { $target = '' }
     if ($target -eq $Launcher) { return "skip same $lnk" }
-    return "keep yours $lnk, it points at $target; to repoint it run herdr\hotkey\setup-hotkey.ps1 from this clone"
+    $setup = Join-Path (Split-Path -Parent $Launcher) 'setup-hotkey.ps1'
+    return "keep yours $lnk, it points at $target; to repoint it run: $(Get-KitPowerShell) -ExecutionPolicy Bypass -File `"$setup`""
 }
 
 function Get-KitHerdrChannel {

@@ -162,7 +162,8 @@ if ($Project) {
         (New-KitPair (Join-Path $tpl 'AGENTS.md')         (Join-Path $proj 'AGENTS.md')),
         (New-KitPair (Join-Path $tpl 'CLAUDE.md')         (Join-Path $proj 'CLAUDE.md')),
         (New-KitPair (Join-Path $tpl 'CLAUDE.project.md') (Join-Path $proj 'CLAUDE.project.md')),
-        (New-KitPair (Join-Path $tpl '.claude\settings.local.json') (Join-Path $projClaude 'settings.local.json'))
+        # rendered, so its branch hooks start Windows PowerShell by its full path (Set-KitPowerShellPath)
+        (New-KitPair $null (Join-Path $projClaude 'settings.local.json') (Set-KitPowerShellPath (Get-Content -LiteralPath (Join-Path $tpl '.claude\settings.local.json') -Raw)))
     )
     foreach ($hook in @('branch-check.ps1', 'branch-upstream-fix.ps1')) {
         $pairs += New-KitPair (Join-Path $root "claude\hooks\$hook") (Join-Path $projClaude "hooks\$hook")
@@ -262,6 +263,8 @@ $settingsText = (Get-Content (Join-Path $root 'claude\settings.json') -Raw)
 $settingsText = $settingsText.Replace('%USERPROFILE%/.claude', $kitHome.Replace('\', '/'))
 $settingsText = $settingsText.Replace('%USERPROFILE%\\.claude', $kitHome.Replace('\', '\\'))
 $settingsText = $settingsText.Replace('%USERPROFILE%', ($env:USERPROFILE).Replace('\', '\\'))
+# The hooks and the status line start Windows PowerShell by its full path (Set-KitPowerShellPath in install\lib.ps1).
+$settingsText = Set-KitPowerShellPath $settingsText
 
 # Permission mode. Two keys move together: the mode itself, and whether Claude Code
 # warns you when it starts in the dangerous one.

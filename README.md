@@ -110,8 +110,9 @@ is not recognized:
 ```
 powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.ps1 | iex"
 ```
-The clone is only the kit's source for updates: the kit itself lands in your user profile (`%USERPROFILE%\.claude`),
-so Claude Code picks it up in whatever folder you open it. To keep the clone elsewhere, pass `-Dir` (`INSTALL.md`).
+The kit lands in your user profile (`%USERPROFILE%\.claude`), so Claude Code picks it up in whatever folder you
+open it. Keep the clone all the same: updates, `-Project` and the Herdr hotkey run from it. To keep it in another
+folder, pass `-Dir` (`INSTALL.md`).
 
 By hand, from a clone:
 ```

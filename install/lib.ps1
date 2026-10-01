@@ -30,6 +30,25 @@ function Get-KitHome {
     return (Join-Path $env:USERPROFILE '.claude')
 }
 
+function Get-KitPowerShellCommand {
+    # Windows PowerShell for the hook and status line commands of a settings file: the full path with forward
+    # slashes and no quotes, which Git Bash (the shell Claude Code runs hooks in) and cmd both start. A bare
+    # powershell is found only on PATH, and some machines' PATH lost that folder. The bare name when the path
+    # is missing or holds a space.
+    if (-not $env:SystemRoot) { return '' }
+    $exe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    if (-not (Test-Path -LiteralPath $exe) -or $exe.Contains(' ')) { return '' }
+    return $exe.Replace('\', '/')
+}
+
+function Set-KitPowerShellPath {
+    # Every "command": "powershell ..." or "powershell.exe ..." of a settings text, started by its full path instead.
+    param([string]$Text)
+    $exe = Get-KitPowerShellCommand
+    if (-not $exe) { return $Text }
+    return $Text.Replace('"command": "powershell.exe ', ('"command": "' + $exe + ' ')).Replace('"command": "powershell ', ('"command": "' + $exe + ' '))
+}
+
 function Write-TextNoBom {
     # UTF-8 with NO BOM. Set-Content -Encoding utf8 adds one on PowerShell 5.1, and a BOM in
     # front of JSON is rejected by Node's parser.

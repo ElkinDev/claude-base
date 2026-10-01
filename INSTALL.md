@@ -41,8 +41,9 @@ Where the clone lives does not change where the kit works: the installer copies 
 (`%USERPROFILE%\.claude`), and Claude Code reads it there in whatever folder you open it. To keep the clone in
 another folder, such as `C:\Repo\claude-base`, run the command with `-Dir C:\Repo\claude-base`, and set the user
 variable `CLAUDE_BASE_DIR` to the same folder so a later run updates that clone and does not make a new one in the
-default folder. Then delete the old clone. With Herdr, the run says when the Ctrl+Alt+N shortcut still points at
-the old clone and names the line that repoints it.
+default folder. A run with Herdr (`-Herdr`, or yes to its question) says when the Ctrl+Alt+N shortcut still
+points at the old clone and prints the line that repoints it; run that line before you delete the old clone. Keep
+the new clone: updates, `-Project` and the Herdr hotkey run from it.
 
 ## 0. Check the machine first
 ```
