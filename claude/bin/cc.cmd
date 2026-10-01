@@ -8,5 +8,7 @@ rem Started through cmd /c, which is how PowerShell and the Run box start a .cmd
 rem holding & or | off the line into a command of its own. Ending cmd here means that tail never runs. An
 rem interactive Command Prompt is left open.
 setlocal EnableDelayedExpansion
-if /i not "!cmdcmdline:/c =!"=="!cmdcmdline!" exit !CC_EXIT!
+set "CC_LINE=!cmdcmdline!"
+set "CC_REST=!CC_LINE:/c =!"
+if not "!CC_LINE!"=="!CC_REST!" exit !CC_EXIT!
 exit /b !CC_EXIT!
