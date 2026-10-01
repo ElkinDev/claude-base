@@ -122,6 +122,8 @@ try {
     Remove-Item -LiteralPath $hotkeyMark -ErrorAction SilentlyContinue
     $out = Invoke-Install @('-Herdr')
     Assert-Match $out 'keep  hotkey: keep yours' 'a shortcut pointing elsewhere is kept'
+    $psFull = [IO.Path]::Combine($env:SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    Assert-Match $out ('to repoint it run: ' + $psFull + ' -ExecutionPolicy Bypass -File') 'the repoint line names PowerShell by its full path'
     Assert-True (-not (Test-Path -LiteralPath $hotkeyMark)) 'the hotkey script did not run over it'
     $sc = $shell.CreateShortcut($lnk); $sc.TargetPath = (Join-Path $script:RepoRoot 'herdr\hotkey\launch-herdr.cmd'); $sc.Save()
     $out = Invoke-Install @('-Herdr')

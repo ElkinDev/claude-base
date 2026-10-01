@@ -45,6 +45,11 @@ default folder. A run with Herdr (`-Herdr`, or yes to its question) says when th
 points at the old clone and prints the line that repoints it; run that line before you delete the old clone. Keep
 the new clone: updates, `-Project` and the Herdr hotkey run from it.
 
+The hooks and the status line start Windows PowerShell by its full path, so they work on a machine whose PATH lost
+the PowerShell folder. An install that finds a `settings.json` you edited keeps yours and writes the kit version
+beside it as `settings.json.new`; on such a machine, merge the `.new` into yours, or its hooks keep starting
+PowerShell by name and fail.
+
 ## 0. Check the machine first
 ```
 python scripts/doctor.py

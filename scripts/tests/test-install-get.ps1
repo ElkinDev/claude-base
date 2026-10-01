@@ -104,6 +104,8 @@ try {
     Assert-True ($kitSettings -notmatch '"command": "powershell([.]exe)? ') 'no settings command starts PowerShell by its PATH name'
     Assert-Match $kitSettings ('"command": "' + $fullPs + ' -NoProfile') 'the settings commands start it by its full path'
     Assert-Match $out 'Left to do by hand:' 'it ends with the steps left by hand'
+    $psFull = [IO.Path]::Combine($env:SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    Assert-Match $out ('Scaffold a project: ' + $psFull + ' -ExecutionPolicy Bypass -File') 'the scaffold step names PowerShell by its full path'
 
     Write-Host "`r`nphase 3, a second run updates the clone it made"
     # a claude from npm: its claude.ps1 resolves first, so the last steps name claude.cmd
