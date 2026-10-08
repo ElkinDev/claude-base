@@ -35,7 +35,11 @@ TOOLS = ("Bash", "PowerShell")
 QUOTED_OR_WORD = r"(?:\"[^\"]*\"|'[^']*'|\S+)"
 CD_PREFIX = re.compile(r"^cd\s+" + QUOTED_OR_WORD + r"\s*(?:&&|;)\s*")
 ENV_PREFIX = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\S*)\s*(?:&&|;)?\s*")
-HEADER_PREFIX = re.compile(r"^(?:echo|date|printf)\b(?:\"[^\"]*\"|'[^']*'|[^;&\n])*?\s*(?:;|&&)\s*")
+# A quote is either half of a pair or, when no partner follows it, a lone character, never both, so the lazy loop has one
+# way to read a line and a header with many quoted words and no separator fails in linear time (CodeQL py/redos).
+HEADER_PREFIX = re.compile(
+    r"^(?:echo|date|printf)\b(?:\"[^\"]*\"|'[^']*'|\"(?![^\"]*\")|'(?![^']*')|[^;&\n\"'])*?\s*(?:;|&&)\s*"
+)
 CONTROL = {"if", "for", "while", "until", "case", "set", "export", "test", "[", "[[", "{", "(", "then", "do"}
 PYTHON = {"python", "python3", "py"}
 GRADLE = {"gradlew", "gradlew.bat", "gradle", "gradle.bat"}
