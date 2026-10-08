@@ -11,7 +11,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 import zipfile
+import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOL = os.path.join(os.path.dirname(HERE), "meta-scrub.py")
@@ -53,12 +55,41 @@ def run(*args):
     return subprocess.run([sys.executable, TOOL] + list(args), capture_output=True, text=True)
 
 
-def office(path, core=CORE, app=APP):
+def office(path, core=CORE, app=APP, extra=()):
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("[Content_Types].xml", CONTENT_TYPES, compress_type=zipfile.ZIP_STORED)
         z.writestr("docProps/core.xml", core, compress_type=zipfile.ZIP_DEFLATED)
         z.writestr("docProps/app.xml", app, compress_type=zipfile.ZIP_DEFLATED)
         z.writestr("word/document.xml", BODY, compress_type=zipfile.ZIP_DEFLATED)
+        for name, data in extra:
+            z.writestr(name, data, compress_type=zipfile.ZIP_DEFLATED)
+
+
+def rewrite_zip(path, change):
+    """Rewrite a package with change(name, data) applied to every part."""
+    with zipfile.ZipFile(path) as z:
+        parts = [(i, change(i.filename, z.read(i))) for i in z.infolist()]
+    with zipfile.ZipFile(path, "w") as z:
+        for info, data in parts:
+            z.writestr(info, data, compress_type=info.compress_type)
+
+
+def png_with_chunk(path, kind, body):
+    data = read(path)
+    end = data.rindex(b"IEND") - 4
+    chunk = len(body).to_bytes(4, "big") + kind + body + zlib.crc32(kind + body).to_bytes(4, "big")
+    with open(path, "wb") as f:
+        f.write(data[:end] + chunk + data[end:])
+
+
+def jpeg_segment(marker, body):
+    return bytes([0xFF, marker]) + (len(body) + 2).to_bytes(2, "big") + body
+
+
+def jpeg_with_segment(path, marker, body):
+    data = read(path)
+    with open(path, "wb") as f:
+        f.write(data[:2] + jpeg_segment(marker, body) + data[2:])
 
 
 class Base(unittest.TestCase):
@@ -125,6 +156,74 @@ class OfficeFiles(Base):
         self.assertEqual(0, run("--check", p).returncode)
         self.assertEqual(42, openpyxl.load_workbook(p).active["A1"].value)
 
+    def test_custom_properties_go_with_their_relationship_and_content_type(self):
+        p = self.path("labelled.docx")
+        rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+                '<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties" Target="docProps/custom.xml"/>'
+                '</Relationships>')
+        types = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+                 '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                 '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
+                 '<Override PartName="/docProps/custom.xml" ContentType="application/vnd.openxmlformats-officedocument.custom-properties+xml"/>'
+                 '</Types>')
+        custom = ('<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties">'
+                  '<property name="MSIP_Label_Owner">someone@example.com</property></Properties>')
+        office(p, extra=[("_rels/.rels", rels), ("docProps/custom.xml", custom)])
+        rewrite_zip(p, lambda name, data: types.encode() if name == "[Content_Types].xml" else data)
+        self.assertIn("custom properties", run("--check", p).stdout)
+        self.assertEqual(0, run(p).returncode)
+        with zipfile.ZipFile(p) as z:
+            self.assertNotIn("docProps/custom.xml", z.namelist())
+            for name in z.namelist():
+                if name.endswith((".xml", ".rels")) and name != "word/document.xml":
+                    ET.fromstring(z.read(name))  # every part still parses
+            self.assertNotIn(b"custom", z.read("_rels/.rels"))
+            self.assertIn(b"word/document.xml", z.read("_rels/.rels"))
+            self.assertNotIn(b"custom", z.read("[Content_Types].xml"))
+            self.assertIn(b"core.xml", z.read("[Content_Types].xml"))
+        self.assertEqual(0, run("--check", p).returncode)
+
+    @unittest.skipUnless(has("openpyxl"), "needs openpyxl")
+    def test_the_folder_a_workbook_was_saved_in_goes_and_the_workbook_still_opens(self):
+        import openpyxl
+        p = self.path("saved.xlsx")
+        wb = openpyxl.Workbook()
+        wb.active["A1"] = 42
+        wb.save(p)
+        block = ('<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">'
+                 '<mc:Choice Requires="x15"><x15ac:absPath url="D:\\Shared\\someone\\" '
+                 'xmlns:x15ac="http://schemas.microsoft.com/office/spreadsheetml/2010/11/ac"/></mc:Choice>'
+                 '</mc:AlternateContent>')
+
+        def add_path(name, data):
+            if name != "xl/workbook.xml":
+                return data
+            xml = data.decode()
+            head = xml.index(">", xml.index("<workbook")) + 1
+            return (xml[:head] + block + xml[head:]).encode()
+        rewrite_zip(p, add_path)
+        self.assertIn("saved folder path", run("--check", p).stdout)
+        self.assertEqual(0, run(p).returncode)
+        with zipfile.ZipFile(p) as z:
+            book = z.read("xl/workbook.xml")
+        for gone in (b"someone", b"absPath", b"AlternateContent"):
+            self.assertNotIn(gone, book)
+        ET.fromstring(book)
+        self.assertEqual(42, openpyxl.load_workbook(p).active["A1"].value)
+        self.assertEqual(0, run("--check", p).returncode)
+
+    def test_a_signed_package_is_refused_and_left_as_it_is(self):
+        p = self.path("signed.docx")
+        office(p, extra=[("_xmlsignatures/sig1.xml", "<Signature/>")])
+        before = read(p)
+        for args in ((p,), ("--check", p)):
+            done = run(*args)
+            self.assertEqual(2, done.returncode)
+            self.assertIn("signed document", done.stdout + done.stderr)
+        self.assertEqual(before, read(p))
+
 
 @unittest.skipUnless(has("PIL"), "needs Pillow")
 class Images(Base):
@@ -170,6 +269,65 @@ class Images(Base):
         self.assertEqual(before, read(p))
         self.assertEqual([], [n for n in os.listdir(self.tmp) if "scrub-tmp" in n])
 
+    def test_content_credentials_go_from_a_png_and_a_jpeg(self):
+        from PIL import Image
+        manifest = (b"\x00\x00\x00\x40jumb\x00\x00\x00\x20jumdc2pa\x00\x11\x00\x10\x80\x00\x00\xaa\x00\x38\x9b\x71"
+                    b"\x03c2pa\x00claim_generator Some Generator 1.0")
+        png, jpg = self.path("c.png"), self.path("c.jpg")
+        Image.new("RGB", (4, 3), (10, 20, 30)).save(png)
+        png_with_chunk(png, b"caBX", manifest)
+        Image.new("RGB", (16, 16), (200, 100, 50)).save(jpg)
+        jpeg_with_segment(jpg, 0xEB, b"JP\x00\x00\x00\x00\x00\x01" + manifest)
+        for p in (png, jpg):
+            self.assertEqual(1, run("--check", p).returncode, p)
+            self.assertEqual(0, run(p).returncode, p)
+            self.assertNotIn(b"Some Generator", read(p))
+            with Image.open(p) as im:
+                im.load()
+            self.assertEqual(0, run("--check", p).returncode, p)
+
+    def test_a_picture_a_phone_appends_goes_with_its_index(self):
+        from PIL import Image
+        first, second = io.BytesIO(), io.BytesIO()
+        Image.new("RGB", (16, 16), (200, 100, 50)).save(first, "JPEG")
+        exif = Image.Exif()
+        exif[0x010F] = "PhoneMaker"  # Make
+        Image.new("RGB", (8, 8)).save(second, "JPEG", exif=exif)
+        data = first.getvalue()
+        p = self.path("phone.jpg")
+        with open(p, "wb") as f:
+            f.write(data[:2] + jpeg_segment(0xE2, b"MPF\x00II*\x00\x08\x00\x00\x00") + data[2:] + second.getvalue())
+        found = run("--check", p).stdout
+        self.assertIn("APP2 MPF", found)
+        self.assertIn("data after the picture", found)
+        self.assertEqual(0, run(p).returncode)
+        raw = read(p)
+        self.assertNotIn(b"PhoneMaker", raw)
+        self.assertNotIn(b"MPF\x00", raw)
+        with Image.open(p) as im:
+            im.load()
+            self.assertEqual((16, 16), im.size)
+        self.assertEqual(0, run("--check", p).returncode)
+
+    def test_a_progressive_jpeg_with_restarts_and_a_colour_profile_keeps_every_pixel(self):
+        from PIL import Image, ImageCms
+        p = self.path("prog.jpg")
+        im = Image.merge("RGB", [Image.effect_noise((64, 48), 80) for _ in range(3)])
+        icc = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+        exif = Image.Exif()
+        exif[0x0131] = "Some Editor 3.1"
+        im.save(p, progressive=True, icc_profile=icc, exif=exif, quality=90, restart_marker_blocks=2)
+        raw = read(p)
+        self.assertGreater(raw.count(b"\xff\xda"), 1)  # several scans, tables between them
+        with Image.open(p) as before:
+            pixels = before.tobytes()
+        self.assertEqual(0, run(p).returncode)
+        self.assertNotIn(b"Some Editor", read(p))
+        with Image.open(p) as after:
+            self.assertEqual(pixels, after.tobytes())
+            self.assertEqual(icc, after.info.get("icc_profile"))
+        self.assertEqual(0, run("--check", p).returncode)
+
 
 @unittest.skipUnless(has("pypdf") and has("fitz"), "needs pypdf and PyMuPDF")
 class Pdf(Base):
@@ -189,6 +347,58 @@ class Pdf(Base):
             self.assertNotIn(gone, raw)
         self.assertIn("hello reader", fitz.open(p)[0].get_text())
         self.assertEqual(0, run("--check", p).returncode)
+
+    def test_an_embedded_image_loses_its_own_xmp_and_stays_on_the_page(self):
+        import fitz
+        p = self.path("img.pdf")
+        doc = fitz.open()
+        page = doc.new_page()
+        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 2, 2), False)
+        pix.clear_with(200)
+        page.insert_image(fitz.Rect(10, 10, 50, 50), stream=pix.tobytes("png"))
+        image = page.get_images()[0][0]
+        meta = doc.get_new_xref()
+        doc.update_object(meta, "<< /Type /Metadata /Subtype /XML >>")
+        doc.update_stream(meta, b"<x:xmpmeta>CreatorTool Some Painter 25</x:xmpmeta>", compress=False)
+        doc.xref_set_key(image, "Metadata", "%d 0 R" % meta)
+        doc.save(p)
+        self.assertIn(b"Some Painter", read(p))
+        self.assertIn("object Metadata", run("--check", p).stdout)
+        self.assertEqual(0, run(p).returncode)
+        self.assertNotIn(b"Some Painter", read(p))
+        self.assertEqual(1, len(fitz.open(p)[0].get_images()))
+        self.assertEqual(0, run("--check", p).returncode)
+
+    def test_a_signed_pdf_is_refused_and_a_blank_signature_field_is_not(self):
+        from pypdf import PdfWriter
+        from pypdf.generic import ArrayObject, DictionaryObject, NameObject, NumberObject, TextStringObject
+
+        def made(name, flags, filled):
+            w = PdfWriter()
+            w.add_blank_page(100, 100)
+            field = DictionaryObject({NameObject("/FT"): NameObject("/Sig"), NameObject("/T"): TextStringObject("s")})
+            if filled:
+                field[NameObject("/V")] = w._add_object(DictionaryObject({
+                    NameObject("/Type"): NameObject("/Sig"), NameObject("/Filter"): NameObject("/Adobe.PPKLite"),
+                    NameObject("/ByteRange"): ArrayObject([NumberObject(0)] * 4)}))
+            form = DictionaryObject({NameObject("/Fields"): ArrayObject([w._add_object(field)])})
+            if flags:
+                form[NameObject("/SigFlags")] = NumberObject(flags)
+            w._root_object[NameObject("/AcroForm")] = w._add_object(form)
+            w.add_metadata({"/Producer": "Some Signer"})
+            p = self.path(name)
+            with open(p, "wb") as f:
+                w.write(f)
+            return p
+        for p in (made("flagged.pdf", 3, False), made("filled.pdf", 0, True)):
+            before = read(p)
+            done = run(p)
+            self.assertEqual(2, done.returncode, p)
+            self.assertIn("signed PDF", done.stderr)
+            self.assertEqual(before, read(p))
+        blank = made("blank.pdf", 0, False)
+        self.assertEqual(0, run(blank).returncode)
+        self.assertNotIn(b"Some Signer", read(blank))
 
 
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "needs ffmpeg and ffprobe")
@@ -234,9 +444,56 @@ class Video(Base):
         self.assertEqual(before, read(p))
         self.assertEqual([], [n for n in os.listdir(self.tmp) if "scrub-tmp" in n])
 
+    def test_a_title_in_letters_beyond_ascii_is_cleared(self):
+        p = self.clip("plain.mp4", "-flags:a", "+bitexact")
+        titled = self.path("titled.mp4")
+        subprocess.run(["ffmpeg", "-v", "error", "-i", p, "-c", "copy", "-metadata", "title=Ángel Ídolo", titled],
+                       check=True, capture_output=True)
+        done = run(titled)
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotIn("ngel".encode(), read(titled))
+        self.assertEqual(0, run("--check", titled).returncode)
+
+    def test_an_x265_note_is_refused_with_the_encode_that_avoids_it(self):
+        p = self.path("hevc.mp4")
+        made = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=10:duration=1",
+                               "-c:v", "libx265", "-fflags", "+bitexact", p], capture_output=True, text=True)
+        if made.returncode != 0:
+            self.skipTest("this ffmpeg cannot make an x265 clip: " + made.stderr[-200:])
+        before = read(p)
+        self.assertIn(b"x265 (build", before)
+        done = run(p)
+        self.assertEqual(2, done.returncode)
+        self.assertIn("info=0", done.stderr)
+        self.assertEqual(before, read(p))
+
 
 class Walk(Base):
-    def test_a_folder_is_walked_without_git_node_modules_or_venv_and_other_kinds_are_ignored(self):
+    def test_a_kind_it_does_not_read_is_named_never_passed(self):
+        webm = self.path("w.webm")
+        with open(webm, "wb") as f:
+            f.write(b"ENCODER Lavf62.12.101")
+        before = read(webm)
+        done = run("--check", webm)
+        self.assertEqual(2, done.returncode)
+        self.assertIn("not read", done.stdout)
+        done = run(webm)
+        self.assertEqual(2, done.returncode)
+        self.assertIn("w.webm", done.stderr)
+        self.assertEqual(before, read(webm))
+        self.assertEqual(2, run("--check", self.path("w.webm")).returncode)
+        folder = self.path("site")
+        os.makedirs(folder)
+        with open(os.path.join(folder, "a.gif"), "wb") as f:
+            f.write(b"GIF89a")
+        with open(os.path.join(folder, "notes.txt"), "w") as f:
+            f.write("creator: someone")
+        done = run("--check", folder)
+        self.assertEqual(2, done.returncode)
+        self.assertEqual(1, len(done.stdout.strip().splitlines()))
+        self.assertIn("a.gif: not read", done.stdout)
+
+    def test_a_folder_is_walked_without_git_node_modules_or_venv_and_text_files_are_ignored(self):
         for sub in ("docs", ".git", "node_modules", ".venv"):
             os.makedirs(self.path(sub))
             office(os.path.join(self.path(sub), "a.docx"))
@@ -262,7 +519,7 @@ class Walk(Base):
 
     def test_the_tool_holds_no_em_dash(self):
         with io.open(TOOL, encoding="utf-8") as f:
-            self.assertNotIn("—", f.read())
+            self.assertNotIn("\u2014", f.read())
 
 
 if __name__ == "__main__":

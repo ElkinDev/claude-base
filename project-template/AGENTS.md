@@ -52,9 +52,10 @@ commitments with whoever reads them.
 
 Generated files (Office documents, PDF, images, video): before sharing, run
 `python ~/.claude/tools/meta-scrub.py <path>`, which clears what reveals a generator (Office author,
-last_modified_by, comments, category, keywords, subject, content_status, title, version and the
-application; PDF information and XMP; image EXIF, XMP and text chunks; a video's encoder tags), and
-`--check` on the same path must print nothing. Map headings: # to Title, ## to Heading 1, ### to Heading 2.
+last_modified_by, comments, category, keywords, subject, content_status, title, version, the
+application, custom properties and the saved folder; PDF information and XMP; image EXIF, XMP, text
+chunks and content credentials; a video's encoder tags), and `--check` on the same path must exit 0,
+since it names every file it could not read. Map headings: # to Title, ## to Heading 1, ### to Heading 2.
 
 ## Deploy and status honesty
 Never say a change is "in", "live", "in place", or "runs automatically" unless it is merged, passed
