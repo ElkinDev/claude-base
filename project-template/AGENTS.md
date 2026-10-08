@@ -50,9 +50,11 @@ re-render rewrites only the text inside them, so write project additions outside
 Why: AI tells erode trust in the content, and unvalidated proposals presented as plans create false
 commitments with whoever reads them.
 
-Generated Office documents (Word and similar): before sharing, clear the core properties that reveal
-a generator (author, last_modified_by, comments, category, keywords, subject, content_status, title,
-version set to ''). Map headings: # to Title, ## to Heading 1, ### to Heading 2.
+Generated files (Office documents, PDF, images, video): before sharing, run
+`python ~/.claude/tools/meta-scrub.py <path>`, which clears what reveals a generator (Office author,
+last_modified_by, comments, category, keywords, subject, content_status, title, version and the
+application; PDF information and XMP; image EXIF, XMP and text chunks; a video's encoder tags), and
+`--check` on the same path must print nothing. Map headings: # to Title, ## to Heading 1, ### to Heading 2.
 
 ## Deploy and status honesty
 Never say a change is "in", "live", "in place", or "runs automatically" unless it is merged, passed
