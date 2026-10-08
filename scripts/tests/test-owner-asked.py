@@ -25,6 +25,8 @@ RULINGS = (
     "2026-01-22 18:0x [analyst] The effort of the lanes read medium; the owner asked to fix the effort.\n"
     "2026-01-21 10:0x [decision] train landed 20d3215c9 cleanly.\n"
     "2026-01-21 11:0x [decision] palette cafe12 kept for the widget.\n"
+    "2026-01-12 09:0x [owner] Owner 09:0x on repo-guard: the security ruleset and code scanning on both repositories.\n"
+    "2026-01-20 09:0x [decision] Dependency security alerts read weekly.\n"
 )
 DECISIONS = (
     "# Owner decisions and asks, 2026-01-02\n\n"
@@ -293,6 +295,34 @@ def main():
             rc = proc.wait(timeout=60)
             return rc == 0 and err.strip() == b""
         check("a reader that closes early (| head) is exit 0 with no traceback", reader_closes_early)
+
+        def many_words_half():
+            rc, out = run(root, mem, "repo-guard", "seguridad", "github", "security", "ruleset")
+            return rc == 0 and out.startswith("2026-01-12 rulings.md:8: [3/5]") and "rulings.md:9" not in out
+        check("three or more words: a line carrying half of them, rounded up, is a hit with its count",
+              many_words_half)
+
+        def more_words_first():
+            rc, out = run(root, mem, "repo-guard", "security", "ruleset", "dependency")
+            lines = out.splitlines()
+            return (rc == 0 and len(lines) == 2 and lines[0].startswith("2026-01-12 rulings.md:8: [3/4]")
+                    and lines[1].startswith("2026-01-20 rulings.md:9: [2/4]"))
+        check("a line carrying more words prints before a newer one carrying fewer", more_words_first)
+
+        def three_words_two_hit():
+            rc, out = run(root, mem, "repo-guard", "security", "zebra")
+            return rc == 0 and out.startswith("2026-01-12 rulings.md:8: [2/3]") and "rulings.md:9" not in out
+        check("exactly three words: a line carrying two of them is a hit with its count", three_words_two_hit)
+
+        def under_half_misses():
+            rc, out = run(root, mem, "security", "quantum", "zebra")
+            return rc == 1 and "question is new" in out
+        check("three or more words: a line under half of them is no hit", under_half_misses)
+
+        def repeated_word_counts_once():
+            rc, out = run(root, mem, "ruleset", "ruleset", "zebra")
+            return rc == 1 and "question is new" in out
+        check("a repeated word counts once: two distinct words keep the all-words rule", repeated_word_counts_once)
 
         def bad_since():
             rc, _ = run(root, mem, "x", "--since", "22-01-2026")
