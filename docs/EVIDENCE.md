@@ -54,9 +54,9 @@ A spec is a string with forward slashes and these tokens:
 
 | Token | What it resolves to |
 |---|---|
-| `{repo_parent}` | the folder that contains the repository |
-| `{repo}` | the repository folder itself |
-| `{repo_name}` | the name of the repository folder |
+| `{repo_parent}` | the folder that contains the repository's main checkout |
+| `{repo}` | the main checkout itself, also when the call is made from a linked worktree |
+| `{repo_name}` | the name of the main checkout's folder |
 | `{home}` | the user's home folder |
 | `{project}` | the project name from the profile's Identity section, falling back to `{repo_name}` |
 
