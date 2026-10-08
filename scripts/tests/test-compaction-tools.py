@@ -12,7 +12,10 @@ Run:
 import importlib.util
 import json
 import os
+import re
 import shutil
+import subprocess
+import sys
 import tempfile
 import types
 import unittest
@@ -319,6 +322,22 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(weights["out"], 3.0)
         self.assertEqual(weights["cr"], 0.2)
         self.assertEqual(weights["in"], 1.0)
+
+
+
+class WindowDefaults(unittest.TestCase):
+    """Both tools default to the account launcher's window, read from their --help, so a default
+    put back to 200000 while sessions run at 300k fails here (review kit-window-300k r2): the
+    watcher would send /compact far below the window the session really runs with."""
+
+    def test_both_tools_default_to_the_launchers_window(self):
+        with open(os.path.join(os.path.dirname(SCRIPTS), "claude", "claude-account.ps1"), encoding="utf-8") as f:
+            window = re.search(r"(?m)^\$DefaultWindow = (\d+)", f.read()).group(1)
+        env = dict(os.environ, COLUMNS="200")
+        for name in ("compact-at-boundary.py", "compaction-report.py"):
+            out = subprocess.run([sys.executable, os.path.join(SCRIPTS, name), "--help"], capture_output=True,
+                                 text=True, timeout=60, env=env).stdout
+            self.assertIn("default %s" % window, out, name)
 
 
 if __name__ == "__main__":

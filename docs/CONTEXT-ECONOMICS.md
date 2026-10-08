@@ -105,12 +105,14 @@ function zN(){return a.CLAUDE_CODE_DISABLE_1M_CONTEXT}
 ```
 
 So the variable wins over the `autoCompactWindow` setting, and the setting is the same knob
-under another name. The account launcher wires both (`docs/ACCOUNTS.md`): `orchestrator` and
-`lane` get `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` and lose any inherited
-`CLAUDE_CODE_AUTO_COMPACT_WINDOW` with it, on the pane command and on the in-window path alike,
-so a pane opened from a capped pane does not keep a window the cap contradicts; `research` is
-left uncapped, inherited window included. `cc <account> -Window 260000` is the opt-in exception:
-it drops the cap, which would hold the window at 200k, and sets the variable to 260000. The name
+under another name. The account launcher wires both (`docs/ACCOUNTS.md`): every role but
+`research` gets `CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000` and loses an inherited
+`CLAUDE_CODE_DISABLE_1M_CONTEXT`, on the pane command and on the in-window path alike, so a pane
+opened from another pane starts at the default and not at whatever that pane carried; `research`
+is left alone, inherited window included. `cc <account> -Window 500000` replaces the default for
+one launch. Setting `$DefaultWindow = 0` in the launcher brings back the 200k cap
+(`CLAUDE_CODE_DISABLE_1M_CONTEXT=1`, an inherited window cleared), and `-Window` then drops the
+cap for one launch. The name
 is `-Window` and not `-CompactWindow` because PowerShell binds by unambiguous prefix and an
 unbound flag is forwarded to claude, so a name starting with `c` swallows claude's own `-c`.
 `cc -ShowEnv` prints what a launch would set and forward without opening a session, which is how
@@ -120,8 +122,12 @@ Raising the window buys fewer compactions, not cheaper turns: at 260k a cycle dr
 third of the compactions of a 200k session, so a day of nine cycles at about 21600 tokens of
 overhead each, 194400 in total, loses three of those cycles and saves around 65000 tokens not
 spent on summaries and re-orientation. It is paid for with a larger floor on every turn of the
-cycle and with more expensive cache breaks (section 2), which is why it is off unless you ask
-for it, and why section 9 keeps "ride the 1M window" refuted: this is a step, not the ceiling.
+cycle and with more expensive cache breaks (section 2). The launcher's default has been 300k
+since 2026-10-08 for the cost a compaction carries beyond its tokens: an orchestrating session at
+200k was measured compacting every 17 minutes, and what was decided early in it fell out of the
+summaries. It stops at 300k, and section 9 keeps "ride the 1M window" refuted: this is a step,
+not the ceiling. Whether it stays is read per session with `scripts/compaction-report.py`, the
+compactions against the weighted cost per turn of the cycles between them.
 
 ## 5. Where the floor comes from
 
@@ -348,7 +354,7 @@ The watcher needs Herdr (it asks `herdr agent list` for the session id and the i
 each pane) and reads the session transcripts under `~/.claude/projects`. Its switches are in
 `--help` and in the module docstring; the ones in daily use: `--status` for one pass and the
 decision table, `--dry-run` to loop and log without submitting, `--titles` to choose the panes,
-`--threshold`, `--idle`, `--cooldown` and `--interval` for the numbers (defaults: window 200000,
+`--threshold`, `--idle`, `--cooldown` and `--interval` for the numbers (defaults: window 300000,
 threshold 0.65, idle 90 seconds, cooldown 900, interval 30), `--idle-states idle` to count only
 Herdr's idle and not `done`, and `--stop` to ask a running watcher to exit. Set `--window 1000000`
 only if the session really runs with the 1M window; the threshold is a fraction of that number.
@@ -369,6 +375,10 @@ then polled for until it appears.
 One trap when submitting by hand: Git Bash rewrites a leading slash, so `herdr agent prompt
 w1:p5 /compact` arrives as `C:/Program Files/Git/compact` and the session answers it as a
 question. The watcher submits through Python; from a shell, PowerShell or `MSYS_NO_PATHCONV=1`.
+
+Its `--window` defaults to 300000, the launcher's default window, so an orchestrator is sent
+`/compact` at 65 percent of the window it really runs with; on a machine whose launcher has
+`$DefaultWindow = 0`, add `--window 200000` to the command and to the logon task below.
 
 Run it in a spare pane where its log is visible, or hidden with `Start-Process -WindowStyle
 Hidden python -ArgumentList '"C:\path\to\claude-base\scripts\compact-at-boundary.py"','--titles','"orques|orchestr"'`.
@@ -431,8 +441,8 @@ after a compaction, so a fresh session gets that pointer from you.
   over a throwaway repository), `scripts/tests/test-compaction-decide.py` (9, the watcher's
   decision) with `test-compaction-tools.py` beside it (13, synthetic transcripts and a fake
   Herdr), `scripts/tests/test-guard-read.py` (45, the guard as a subprocess over both the Read
-  and the shell route) and `scripts/tests/test-launcher-env.ps1` (the launcher's dry run,
-  default and opt-in window).
+  and the shell route) and `scripts/tests/test-launcher-env.ps1` (the launcher's dry run: the
+  default window, the switch, and the cap a zero default brings back).
 - Offline: `claude/tools/tests/run-tests.py` (the record CLI as a subprocess over temporary files:
   line endings, BOM, idempotence, anchors, all-or-nothing rounds, config resolution).
 - Live, end to end, on 2026-08-27 with Claude Code 2.1.250 in a throwaway session under Herdr:

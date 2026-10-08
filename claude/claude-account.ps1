@@ -148,24 +148,33 @@ if ($Extra) {
 }
 
 
-# --- pane role: context cap and label ---------------------------------------------
-# orchestrator and lane run with the context capped at 200k (CLAUDE_CODE_DISABLE_1M_CONTEXT=1);
-# research is the only uncapped role. CLAUDE_ROLE travels to the process so hooks know which
-# pane they are in (the read guard denies images only to the orchestrator).
+# --- pane role: context window and label ------------------------------------------
+# orchestrator, analyst and lane run with an auto-compact window of $DefaultWindow tokens: the
+# launcher drops the 200k cap (CLAUDE_CODE_DISABLE_1M_CONTEXT) and sets
+# CLAUDE_CODE_AUTO_COMPACT_WINDOW, so a working session compacts less often and what was asked
+# early in it lasts through more of the day. research is the only role with neither, uncapped at
+# the model's own window. CLAUDE_ROLE travels to the process so hooks know which pane they are in
+# (the read guard denies images only to the orchestrator).
 #
-# -Window <tokens> is the opt-in exception. It drops the cap and lets auto-compaction
-# fire at the window you name, which buys fewer compactions (each one costs a summary, a
-# re-injection burst and a re-orientation) at the price of a larger floor on every turn and
-# more cache breaks. Both variables are read by claude.exe, verified against 2.1.258:
+# A larger window buys fewer compactions (each one costs a summary, a re-injection burst and a
+# re-orientation) at the price of a larger floor on every turn and more cache breaks, which is
+# why it stops at 300k and does not ride the whole 1M. The variable is clamped to the model's
+# window, so on a plan without the 1M window the session still compacts near 200k. Both
+# variables are read by claude.exe, verified against 2.1.258:
 #   if(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW){let B=kte("CLAUDE_CODE_AUTO_COMPACT_WINDOW",...
 #   function zN(){return a.CLAUDE_CODE_DISABLE_1M_CONTEXT}
 # and the binary says of the first: "CLAUDE_CODE_AUTO_COMPACT_WINDOW is set and takes
 # precedence. Unset it to change this setting." The equivalent settings key is
 # autoCompactWindow ("Auto-compact window size"), which the variable overrides.
-# Without the switch the cap applies and the window variable is removed, in the pane command and
-# in the in-window path alike, so a session opened from a pane that used the switch does not
-# inherit a window the cap contradicts and nobody asked for. The uncapped research role is left
-# alone, inherited window included, since nothing there contradicts it.
+#
+# -Window <tokens> replaces the default for one launch; 0, like no switch, keeps it. Setting
+# $DefaultWindow to 0 below brings back the 200k cap for every role but research: the cap then
+# applies and the window variable is removed, in the pane command and in the in-window path
+# alike, so a session opened from a pane that had a window does not inherit one the cap
+# contradicts. The research role is left alone, inherited window included, since nothing there
+# contradicts it.
+$DefaultWindow = 300000
+if ($Window -le 0 -and $Role -ne "research") { $Window = $DefaultWindow }
 $capContext = ($Role -ne "research") -and ($Window -le 0)
 $capEnvPs = "`$env:CLAUDE_CODE_DISABLE_1M_CONTEXT = '1'; Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue"
 $roleEnvPs = "`$env:CLAUDE_ROLE = '$Role'; " + $(if ($capContext) { $capEnvPs } else { "Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT -ErrorAction SilentlyContinue" })
@@ -375,14 +384,16 @@ function Show-Help {
     Write-Host "  -Delete          -d      delete the profile, removing junctions first"
     Write-Host "  -NoShare         -n      create it without linking skills or memory"
     Write-Host "  -Role <role>     -o      orchestrator | analyst | lane (default) | research; every role"
-    Write-Host "                           but research caps the context at 200k; when given, the role also"
+    Write-Host "                           but research compacts at a 300k window and starts without the"
+    Write-Host "                           browser (pass --chrome for it); research keeps the browser"
+    Write-Host "                           and the model's whole window. When given, the role also"
     Write-Host "                           names the session (claude --name), even one reopened with -c"
     Write-Host "                           orchestrator and analyst are seated: the launcher appends"
     Write-Host "                           <seats>\<role>.md, refuses -c, and on a fresh launch names the"
     Write-Host "                           session with the minute and hands it a start line"
-    Write-Host "  -Window <n>              opt in to a larger auto-compact window: drops the 200k cap and"
-    Write-Host "                           sets CLAUDE_CODE_AUTO_COMPACT_WINDOW=<n>. Fewer compactions, a"
-    Write-Host "                           larger floor on every turn. Off unless you pass it"
+    Write-Host "  -Window <n>              auto-compact window for this launch instead of the 300k"
+    Write-Host "                           default (CLAUDE_CODE_AUTO_COMPACT_WINDOW=<n>). Larger means fewer"
+    Write-Host "                           compactions and a larger floor on every turn; 0 keeps the default"
     Write-Host "  -ShowEnv                 print the variables the session would get, then exit"
     Write-Host "  -Workspace <n>   -x      with -Tab: Herdr workspace (number or id) for the new tab"
     Write-Host "  -Help            -h      this help"

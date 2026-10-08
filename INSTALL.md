@@ -130,9 +130,9 @@ the project command after a kit update that changes them:
 - `implementer-light` the same at lower effort, for mechanical slices (tests, strings, docs, renames)
 - `reviewer` adversarial review of a branch diff before merge; a disposition, never a fix
 
-The kit's `settings.json` names the session model `opus`, not `opus[1m]`. Under the launcher's 200k cap
-(`CLAUDE_CODE_DISABLE_1M_CONTEXT=1`, set for every role but research unless `-Window` is passed) Claude
-Code 2.1.293 does not recognize a name with `[1m]`: an interactive session warns that the model "isn't
+The kit's `settings.json` names the session model `opus`, not `opus[1m]`. Under the 200k cap
+(`CLAUDE_CODE_DISABLE_1M_CONTEXT=1`, which the launcher sets only on a machine whose `$DefaultWindow` is 0,
+and which a script or a shell can still set on its own) Claude Code 2.1.293 does not recognize a name with `[1m]`: an interactive session warns that the model "isn't
 described by this version's model catalog" and a headless `claude -p` run fails with
 `unrecognized_model`. The plain alias runs at 200k under the cap and at 1M without it (measured
 2026-10-08 on a Max plan). On a machine set up before this change, the installer refreshes a
