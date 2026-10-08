@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -66,9 +67,26 @@ class FamilyTable(unittest.TestCase):
             "date \"+%H:%M:%S\"; herdr agent get w4:p1": "herdr",
             "echo \"a; b\"; ls": "ls",
             "echo hello": "echo",
+            "echo don't; ls": "ls",
+            "echo it's 'a'; ls": "ls",
+            "echo \"a\" \"b; ls": "ls",
+            "printf '%s\\n' x && git log": "git log",
+            "echo \"a; b\"": "echo",
+            "printf \"== a; b\"": "printf",
+            "echo 'x && y' --": "echo",
         }
         for command, expected in table.items():
             self.assertEqual(fam(command), expected, command)
+
+    def test_many_quoted_words_without_a_separator_fail_fast(self):
+        # CodeQL py/redos: the old header pattern took 3.6 s at 18 quoted words and doubled with each one.
+        fam = load_module().family
+        started = time.monotonic()
+        self.assertEqual(fam("printf " + " ".join(['"a"'] * 60)), "printf")
+        self.assertEqual(fam("echo " + "'" * 61), "echo")
+        # review redos r1 note 1: blanks before a missing separator were read two ways, quadratic (1.3 s at 20000)
+        self.assertEqual(fam("echo" + " " * 20000 + "x"), "echo")
+        self.assertLess(time.monotonic() - started, 1.0)
 
 
 class Report(unittest.TestCase):
