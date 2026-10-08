@@ -2,9 +2,12 @@
 
     python owner-asked.py <word> [<word> ...] [--since YYYY-MM-DD] [--max N] [--all-rows]
 
-Finds the lines that carry every word, case and accent insensitive; a word also matches inside a longer one, so
-"resume" finds "resumes" and "cafe" finds "café". Five sources, each optional (a source that is not on disk is
-skipped):
+Finds the lines that carry the words, case and accent insensitive; a word also matches inside a longer one, so
+"resume" finds "resumes" and "cafe" finds "café". With one or two words a line must carry every one. With three or
+more it must carry at least half of them, rounded up, and each hit prints how many it carries ([3/6]), best first: a
+session searches a topic in two languages in one call, and a register row is often in one language while the owner's
+words are in another, so a line carrying every word is rare and an answered question looks new. Five sources, each
+optional (a source that is not on disk is skipped):
   - rulings.md under the evidence root, the register: the rows of the kinds that carry owner answers, [owner],
     [decision], [product] and [design] by default (--all-rows: every row). Both row shapes count,
     "- YYYY-MM-DD HH:MM [kind]" written by hand and "YYYY-MM-DD HH:MM [kind]" as scripts/row.sh writes it; the
@@ -24,7 +27,8 @@ A date later than today never dates a line (a line that names a future deadline 
 every search). Output is UTF-8 whatever the console's codepage.
 
 When the owner writes in another language than the register, search the topic in both. Prints one line per hit,
-newest first: date, source:line, the line cut to 320 characters. Exit 0 on a hit, 1 on none, 2 on a usage error.
+the most words carried first, then newest first: date, source:line, the count of words carried when three or more
+were given, the line cut to 320 characters. Exit 0 on a hit, 1 on none, 2 on a usage error.
 A hit that answers the question is applied and cited instead of asking; a question still asked cites this command
 and what it printed.
 
@@ -147,30 +151,33 @@ def main(argv):
     except (AttributeError, ValueError):
         pass
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("words", nargs="+", help="every word must appear in the line")
+    ap.add_argument("words", nargs="+", help="one or two: every word in the line; three or more: at least half")
     ap.add_argument("--since", help="only lines dated on or after YYYY-MM-DD")
-    ap.add_argument("--max", type=int, default=25, help="hits printed, newest first (default 25)")
+    ap.add_argument("--max", type=int, default=25, help="hits printed, most words first, then newest (default 25)")
     ap.add_argument("--all-rows", action="store_true", help="every register row, not only the owner-answer kinds")
     a = ap.parse_args(argv)
     if a.since and not re.fullmatch(r"20\d\d-\d\d-\d\d", a.since):
         ap.error("--since takes YYYY-MM-DD")
     if a.max < 1:
         ap.error("--max takes a whole number of 1 or more")
-    words = [fold(w) for w in a.words if w.strip()]
+    words = list(dict.fromkeys(fold(w) for w in a.words if w.strip()))  # a repeated word counts once
     if not words:
         ap.error("give at least one word that is not blank")
+    need = len(words) if len(words) <= 2 else (len(words) + 1) // 2
     hits = []
     for day, src, n, text in candidates(a.all_rows):
         if a.since and day and day < a.since:
             continue
         folded = HEX.sub(" ", fold(text))
-        if all(w in folded for w in words):
-            hits.append((day, src, n, re.sub(r"\s+", " ", text).strip()))
-    hits.sort(key=lambda h: (h[0], h[1], h[2]), reverse=True)
+        k = sum(1 for w in words if w in folded)
+        if k >= need:
+            hits.append((k, day, src, n, re.sub(r"\s+", " ", text).strip()))
+    hits.sort(key=lambda h: (h[0], h[1], h[2], h[3]), reverse=True)
     try:
-        for day, src, n, text in hits[: a.max]:
+        for k, day, src, n, text in hits[: a.max]:
             cut = text if len(text) <= CUT else text[: CUT - 6] + " [cut]"
-            print("%s %s:%d: %s" % (day or "----------", src, n, cut))
+            count = " [%d/%d]" % (k, len(words)) if len(words) > 2 else ""
+            print("%s %s:%d:%s %s" % (day or "----------", src, n, count, cut))
         if len(hits) > a.max:
             print("... %d more; narrow with another word or --since" % (len(hits) - a.max))
     except OSError:  # a reader that stops early (| head): BrokenPipeError, or EINVAL on Windows; not a failed search
