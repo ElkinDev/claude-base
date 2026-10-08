@@ -153,8 +153,8 @@ def office_scrub(path, tmp):
             elif CUSTOM_PART in names and name in ("_rels/.rels", "[Content_Types].xml"):
                 # the custom part goes, so its relationship and its content type go with it
                 xml = data.decode("utf-8")
-                xml = re.sub(r"<Relationship\b[^>]*Target=\"/?docProps/custom\.xml\"[^>]*/>", "", xml)
-                xml = re.sub(r"<Override\b[^>]*PartName=\"/docProps/custom\.xml\"[^>]*/>", "", xml)
+                xml = re.sub(r"<Relationship\b[^>]*Target=[\"']/?docProps/custom\.xml[\"'][^>]*/>", "", xml)
+                xml = re.sub(r"<Override\b[^>]*PartName=[\"']/docProps/custom\.xml[\"'][^>]*/>", "", xml)
                 data = xml.encode("utf-8")
             zout.writestr(info, data, compress_type=info.compress_type)
 
