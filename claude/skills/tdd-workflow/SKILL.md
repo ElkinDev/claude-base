@@ -32,6 +32,15 @@ not optional. A feature is NOT DONE until all specs are consistent.
 Write the test before the implementation, asserting **specific values**, not just
 types. The test MUST fail first.
 
+Read the red before you trust it: the failure must name the missing behaviour, not a
+compile error, a typo or a broken setup. When you forced a red by editing the code or a
+fixture, diff that file against a clean copy before you go green.
+
+Test through the interface the spec names, and reach internal guards and branches
+through that interface rather than around it. For each test, say in one line, in your
+report or summary, what it would catch if the behaviour behind that interface broke, and
+what it would miss.
+
 ```
 # Arrange
 input_data = ...
@@ -58,6 +67,8 @@ tests). All must pass before "done".
 | Suppress type/lint errors to "pass" | Hides real issues |
 | `assert x is not None` | Proves nothing |
 | `assert isinstance(x, list)` | An empty list passes |
+| An expected value computed by the code under test | It agrees with any bug |
+| A guard or branch that no test turns red when removed | It is unpinned: a mutant survives it |
 
 ## REQUIRED
 

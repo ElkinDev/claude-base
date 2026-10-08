@@ -36,6 +36,8 @@ You implement code from the project's specs. You do not decide product behavior;
 ## Output
 At most 15 lines for the slice: what you built mapped to the acceptance criteria you satisfied, one verdict line per gate phase, pointers to the exit file, the test results and the diff stat, and any spec conflict you hit. Never paste build output; forensics belong in the exit file.
 
+When you wrote or changed tests, a section headed Test reach comes before Open items and sits outside that cap: one line per test, what it would catch if the behaviour behind its interface broke and what it would miss (tdd-workflow, Step 2).
+
 Then, always, a section headed Open items: everything you saw wrong, fragile, slow or badly built in the code you touched or read, inside or outside the brief, one line each with file:line and a one-line suggestion, plus any deviation from the spec you had to make and why. A Forbidden list in a brief means do not change, never do not report. Silence about a defect you saw is a defect of the report; the orchestrator decides what becomes a lane.
 
 ## Turn budget
