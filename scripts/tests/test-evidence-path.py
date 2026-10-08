@@ -238,7 +238,7 @@ class EvidencePathTest(unittest.TestCase):
         self.assertSamePath(proc.stdout.strip().splitlines()[-1], os.path.join(self.parent, "from-line"))
 
     def test_a_lane_name_that_is_not_one_folder_exits_two(self):
-        for bad in ("a/b", "a\\b", "..", " "):
+        for bad in ("a/b", "a\\b", "..", ".", " ", "a:b", "a*b", "a|b", "a\tb"):
             proc = self.cli("--worktree", bad)
             self.assertEqual(proc.returncode, 2, bad)
             self.assertEqual(proc.stdout, "", bad)
@@ -249,6 +249,43 @@ class EvidencePathTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(os.path.join(self.parent, "worktree-sample-repo")))
         self.assertFalse(os.path.exists(os.path.join(self.parent, "worktree-sample-repo", "sample-repo-ab12")))
         self.assertFalse(os.path.exists(os.path.join(self.parent, "evidence")))
+
+    def test_the_worktree_variable_never_reaches_the_evidence_root(self):
+        proc = self.cli("--print-spec", env={"WORKTREE_ROOT": os.path.join(self.tmp, "wt-env")})
+        self.assertIn("source: default", proc.stdout)
+        self.assertSamePath(proc.stdout.strip().splitlines()[-1], os.path.join(self.parent, "evidence"))
+
+    def test_the_local_worktree_line_beats_the_committed_one(self):
+        self.profile("CLAUDE.project.md", "- Worktree root: {repo_parent}/from-project")
+        self.profile("CLAUDE.local.md", "- Worktree root: {repo_parent}/from-local")
+        self.assertSamePath(self.cli("--worktree-root").stdout.strip(), os.path.join(self.parent, "from-local"))
+
+    def test_inside_a_linked_worktree_every_root_is_the_main_checkouts(self):
+        self.profile("CLAUDE.project.md", "- Project name: video",
+                     "- Evidence root: {repo_parent}/evidence-{project}",
+                     "- Worktree root: {repo_parent}/worktree-{project}")
+        self.assertEqual(run_git(self.repo, "add", "CLAUDE.project.md").returncode, 0)
+        self.assertEqual(run_git(self.repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+                                 "commit", "-q", "-m", "profile").returncode, 0)
+        lane = self.cli("--worktree", "ab12", "--create").stdout.strip()
+        self.assertEqual(run_git(self.repo, "worktree", "add", "-q", lane, "-b", "ab12").returncode, 0)
+        inside = os.path.join(lane, "deeper")
+        os.makedirs(inside)
+        self.assertSamePath(self.cli(cwd=inside).stdout.strip(), os.path.join(self.parent, "evidence-video"))
+        self.assertSamePath(self.cli("--id", "77", cwd=inside).stdout.strip(),
+                            os.path.join(self.parent, "evidence-video", "77"))
+        self.assertSamePath(self.cli("--worktree-root", cwd=inside).stdout.strip(),
+                            os.path.join(self.parent, "worktree-video"))
+        self.assertSamePath(self.cli("--worktree", "cd34", cwd=inside).stdout.strip(),
+                            os.path.join(self.parent, "worktree-video", "sample-repo-cd34"))
+
+    def test_a_failed_create_names_the_item_folder(self):
+        blocker = os.path.join(self.parent, "evidence")
+        with open(blocker, "w", encoding="utf-8") as handle:
+            handle.write("a file where the root should be\n")
+        proc = self.cli("--id", "1234", "--create")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn(os.path.join("evidence", "1234"), proc.stderr)
 
     def test_worktree_and_id_are_exclusive(self):
         self.assertEqual(self.cli("--worktree", "ab12", "--id", "1234").returncode, 2)

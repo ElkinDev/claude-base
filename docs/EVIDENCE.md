@@ -141,10 +141,16 @@ python <kit>/scripts/evidence-path.py --worktree ab12 --create
 git worktree add "<the printed path>" -b ab12
 ```
 
-`--create` there makes only the root; `git worktree add` makes the lane's folder. Removal needs no
-root of its own: `claude/tools/worktree-sweep.py` finds a repository's worktrees through
-`git worktree list`, wherever they sit, and removes the landed ones. Schedule it once per
-repository.
+`--create` there makes only the root; `git worktree add` makes the lane's folder. The resolver
+reads the main checkout's profile even when it is called from inside a lane's worktree, so a lane
+writes its evidence to the same root as the main checkout. Removal needs no root of its own:
+`claude/tools/worktree-sweep.py` finds a repository's worktrees through `git worktree list`,
+wherever they sit, and removes the landed ones. Schedule it once per repository, and give it the
+project's evidence root, since the sweep reads `EVIDENCE_ROOT` and not the profile line:
+
+```
+python <kit>/claude/tools/worktree-sweep.py --repo <repo> --apply --evidence-root "<the path evidence-path.py prints>"
+```
 
 Ticket work with no orchestrator keeps the evidence default above, one folder per item under
 `{repo_parent}/evidence`. A project run by an orchestrator (docs/SEATS.md) collects briefs, lane

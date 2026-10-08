@@ -53,9 +53,23 @@ class SpecError(Exception):
 
 
 def repo_root(start=None):
-    """The repository the paths are relative to: the git top level of `start`, else `start`."""
+    """The repository the paths are relative to: the main checkout of `start`'s repository, else `start`.
+
+    Inside a linked worktree the git top level is the worktree, which sits under the worktree root, so
+    {repo_parent} would point one level down; the main checkout is the folder that holds the common git
+    directory. A bare repository, or a git too old for --path-format, falls back to the top level."""
     base = Path(os.path.abspath(str(start))) if start else Path.cwd()
     try:
+        proc = subprocess.run(
+            ["git", "-C", str(base), "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"],
+            capture_output=True, text=True, timeout=15,
+        )
+        lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+        if proc.returncode == 0 and len(lines) == 2:
+            common = Path(os.path.abspath(lines[1]))
+            if common.name == ".git" and common.parent.is_dir():
+                return common.parent
+            return Path(os.path.abspath(lines[0]))
         proc = subprocess.run(
             ["git", "-C", str(base), "rev-parse", "--show-toplevel"],
             capture_output=True, text=True, timeout=15,
@@ -144,8 +158,9 @@ def main(argv=None):
     where.add_argument("--mockups", action="store_true", help="append the shared mockups folder")
     where.add_argument("--worktree-root", action="store_true", help="the worktree root instead of the evidence root")
     where.add_argument("--worktree", metavar="LANE", help="the worktree of this lane: <worktree root>/<repo name>-LANE")
-    parser.add_argument("--spec", help="override the spec (highest precedence)")
-    parser.add_argument("--repo", help="repository path (default: the git top level of the cwd)")
+    parser.add_argument("--spec", help="override the spec of the root asked for, highest precedence: the evidence "
+                                       "root, or the worktree root with --worktree or --worktree-root")
+    parser.add_argument("--repo", help="repository path (default: the main checkout of the cwd's repository, also from a linked worktree)")
     parser.add_argument("--create", action="store_true", help="create the folder if it is missing")
     parser.add_argument("--print-spec", action="store_true",
                         help="also print which spec won and where it came from")
@@ -161,7 +176,7 @@ def main(argv=None):
     lane = None
     if args.worktree is not None:
         lane = str(args.worktree).strip()
-        if not lane or lane in (".", "..") or "/" in lane or "\\" in lane:
+        if not lane or lane in (".", "..") or any(c in lane for c in '/\\:*?"<>|') or any(ord(c) < 32 for c in lane):
             print("the lane name must be one folder name: %r" % args.worktree, file=sys.stderr)
             return 2
 
@@ -171,22 +186,19 @@ def main(argv=None):
         print(str(error), file=sys.stderr)
         return 2
 
-    if args.create:
-        try:
-            path.mkdir(parents=True, exist_ok=True)
-            if args.id:
-                (path / str(args.id).strip().strip("/\\")).mkdir(parents=True, exist_ok=True)
-            elif args.mockups:
-                (path / "mockups").mkdir(parents=True, exist_ok=True)
-        except OSError as error:
-            print("could not create %s: %s" % (path, error), file=sys.stderr)
-            return 1
-
     if args.id:
         path = path / str(args.id).strip().strip("/\\")
     elif args.mockups:
         path = path / "mockups"
-    elif lane is not None:
+
+    if args.create:
+        try:
+            path.mkdir(parents=True, exist_ok=True)  # with --worktree, only the root: git worktree add makes the lane
+        except OSError as error:
+            print("could not create %s: %s" % (path, error), file=sys.stderr)
+            return 1
+
+    if lane is not None:
         path = path / ("%s-%s" % (Path(os.path.abspath(str(repo))).name, lane))
 
     if args.print_spec:
