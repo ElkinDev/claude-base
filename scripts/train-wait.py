@@ -5,9 +5,17 @@ Landings: every first-parent merge on main in the window whose subject reads "Me
 train-<name>" or "merge(train): <sha> into train-<name>, <tail>" is a lane landed on the train its subject names
 last; any other first-parent merge (merge(proxy), merge(scripts), merge(docs), merge(main)) is not a lane and is
 only counted apart. From them: trains per day and lanes per train. The token of a merge(train) subject is the
-tail's first word when it is a lane token (letters and digits, 3 to 8, ending the tail or followed by ":" or "-",
-as in "csnv: ...", "pshq", "lrfq-lockrun-fifo-ticket"), else the first token of a closing "(item N, <token>...)";
-a prose tail with neither ("the join screen reads the QR first") has no token and is matched by the sha route only.
+tail's first word when it is a lane token (letters and digits, 2 to 8, ending the tail or followed by ":" or "-",
+as in "csnv: ...", "pshq", "n1", "lrfq-lockrun-fifo-ticket"), else the first token of a closing "(item N, <token>...)";
+a hyphenated first word ("ab12-b, ...") is tried whole before it, since a lane cut beside another is often named so.
+A prose tail with neither ("the join screen reads the QR first"), or whose word no lane report or review carries,
+takes the one lane that cites the tip it merges, in a lane report titled "# Lane <token>" ("# Lane report:" names
+none) or a CLEAR review header, and is matched under that token by a review that cites a commit of the lane, printed
+"via tip". A CLEAR review with no header token that cites the tip counts as a second owner and never as the one (a
+plan review lists tips; a sibling lane's round can sit inside another lane's report while the lane's own review has
+no header), unless its file name is an owner's token or starts with it and "-", a later round of that lane. With no
+such lane, or two, the landing is matched by the sha route only. A subject whose token a lane report or review
+carries never takes another lane's by its tip.
 
 Landing time: when main moved to hold the merge, read from main's reflog (the move after the train's union gate),
 not the merge commit's time (the train's build). A merge the reflog does not reach (an expired or rewritten
@@ -35,8 +43,9 @@ CLEAR review found is unmatched, never zero wait.
 Usage: python train-wait.py [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--repo <checkout>]
                             [--evidence <dir>] [--scratch-glob <glob of session scratchpads>] [--row] [--verbose]
   Both dates are whole days (00:00 to 23:59:59); the default window is the seven whole days ending today.
-  The evidence directory holds landings.md, queue.md and reviews/; it defaults to EVIDENCE_ROOT, the variable
-  scripts/evidence-path.py reads, else <repo parent>/evidence.
+  The evidence directory holds landings.md, queue.md, reviews/ and lanes/ (the lane reports the tip route reads; a
+  project that keeps them elsewhere, as brief-gen's lanes_dir allows, has no tip route); it defaults to
+  EVIDENCE_ROOT, the variable scripts/evidence-path.py reads, else <repo parent>/evidence.
   --row prints one ledger line; --verbose one line per landing, stamped with main's move (a trailing c: timed
   by the merge commit, the reflog did not reach it).
   Exit 2 when the repo is not a git checkout, a day is not YYYY-MM-DD or --since is after --until.
@@ -55,9 +64,13 @@ import tempfile
 SCRATCH_GLOB = os.path.join(tempfile.gettempdir(), "claude", "*", "*", "scratchpad")
 LANE_RE = re.compile(r"^(?:Merge lane (\S+) |merge\(train\): ([0-9a-f]{7,40}) into train-[^\s,]+,?\s*(.*))")
 TRAIN_RE = re.compile(r"into (train-[0-9A-Za-z]+)")
-SLUG_TOKEN_RE = re.compile(r"^([a-z0-9]{3,8})(?=$|[:\-\s]*\[skip ci\]|:|-|,)")  # "<tok>, <topic>", the comma train form
+SLUG_TOKEN_RE = re.compile(r"^([a-z0-9]{2,8})(?=$|[:\-\s]*\[skip ci\]|:|-|,)")  # "<tok>, <topic>", the comma train form
+# a hyphenated lane token ("ab12-b", "cd34-a", "ab12-impl"), tried before its first word
+COMPOUND_TOKEN_RE = re.compile(r"^([a-z0-9]{2,8}(?:-[a-z0-9]{1,8})+)(?=$|\s*\[skip ci\]|:|,)")
 ITEM_TOKEN_RE = re.compile(r"\(item \d+, ([a-z0-9]{3,8})\b[^()]*\)\s*(?:\[skip ci\])?$")
 STEM_RE = re.compile(r"(-r\d+)?-\d{4}-\d\d-\d\d(-r\d+)?\.md$")
+LANE_TITLE_RE = re.compile(r"^\ufeff?# Lane ([A-Za-z0-9._-]+)")
+SHA_RE = re.compile(r"\b[0-9a-f]{7,12}\b")
 
 
 def git(repo, *args):
@@ -83,6 +96,35 @@ def token_of(m):
     tail = m.group(3).strip()
     t = SLUG_TOKEN_RE.match(tail) or ITEM_TOKEN_RE.search(tail)
     return t.group(1) if t else ""
+
+
+def tokens_of(m):
+    """The tokens a landing is matched under, in order: the hyphenated word ("ab12-b, ...") when the tail starts with
+    one, then token_of's. A slug that only starts with the token ("lrfq-lockrun-fifo-ticket") finds no review under
+    the whole word and falls to its first word."""
+    first = token_of(m)
+    whole = COMPOUND_TOKEN_RE.match(m.group(3).strip()) if not m.group(1) else None
+    return [t for t in ((whole.group(1) if whole else ""), first) if t]
+
+
+def tip_index(ev):
+    """({7-char sha: set of lane tokens}, set of every title token) from every lanes/*.md titled "# Lane <token>",
+    by the shas it cites."""
+    out, titles = {}, set()
+    for f in glob.glob(os.path.join(ev, "lanes", "*.md")):
+        try:
+            with io.open(f, encoding="utf-8", errors="replace") as handle:
+                text = handle.read()
+        except OSError:
+            continue
+        head = LANE_TITLE_RE.match(text)
+        if not head or head.group(1).lower() == "report":  # "# Lane report: ..." names no lane
+            continue
+        tok = head.group(1).rstrip(",;:.")
+        titles.add(tok)
+        for s in SHA_RE.findall(text):
+            out.setdefault(s[:7], set()).add(tok)
+    return out, titles
 
 
 def main_moves(repo, start):
@@ -158,7 +200,7 @@ def reviews(ev, land):
         head = re.search(r"\blane ([A-Za-z0-9._-]+)", lines[0]) if lines else None
         out.append({
             "base": base, "stem": stem,
-            "shas": set(s[:7] for s in re.findall(r"\b[0-9a-f]{7,12}\b", text)),
+            "shas": set(s[:7] for s in SHA_RE.findall(text)),
             "token": head.group(1).rstrip(",;:") if head else "",
             "clear": last == "CLEAR" or read_as_clear,
             "first_round": len(verdict_idx) <= 1 and not read_as_clear,
@@ -257,6 +299,12 @@ def main(argv):
     by_commit = 0
     revs = reviews(ev, land)
     qst = queue_stems(ev)
+    tips, titles = tip_index(ev)
+    known_toks = titles | set(r["token"] for r in revs if r["token"]) | set(r["stem"] for r in revs)
+
+    def known(t):
+        """A token some lane report or review carries, by title, header or file stem."""
+        return t in known_toks or any(s.startswith(t + "-") for s in known_toks)
     # explicit clock bounds: a bare date to git means "that date at the run's own time"
     log = git(a.repo, "log", "main", "--first-parent", "--merges",
               "--since=%s 00:00:00" % a.since, "--until=%s 23:59:59" % a.until, "--format=%H|%ct|%P|%s")
@@ -285,22 +333,55 @@ def main(argv):
         late = mt + datetime.timedelta(minutes=5)
         early = mt - datetime.timedelta(days=3)  # a token is reused across weeks; an older review is another lane's
 
-        def usable(r):
+        def usable(r, tok):
             if not r["clear"] or r["union"]:
                 return False
-            if r["token"] and r["token"] != token:
+            if r["token"] and r["token"] != tok:
                 return False
             return early <= review_time(r, late) <= late
 
-        cands = [(review_time(r, late), r["base"], "queue") for r in revs if usable(r) and any(r["stem"] == s or r["stem"].startswith(s) for s in qst.get(token, ()))]
-        if not cands:
-            cands = [(review_time(r, late), r["base"], "header") for r in revs if usable(r) and token and r["token"] == token]
-        if not cands and token:
-            cands = [(review_time(r, late), r["base"], "name") for r in revs
-                     if usable(r) and (r["stem"] == token or r["stem"].startswith(token + "-"))]
-        if not cands:
+        def named(tok, via="", cites=None):
+            ok = (lambda r: usable(r, tok) and (cites is None or r["shas"] & cites))
+            c = [(review_time(r, late), r["base"], "queue" + via) for r in revs if ok(r) and any(r["stem"] == s or r["stem"].startswith(s) for s in qst.get(tok, ()))]
+            if not c:
+                c = [(review_time(r, late), r["base"], "header" + via) for r in revs if ok(r) and r["token"] == tok]
+            if not c:
+                c = [(review_time(r, late), r["base"], "name" + via) for r in revs
+                     if ok(r) and (r["stem"] == tok or r["stem"].startswith(tok + "-"))]
+            return c
+
+        cands, tried = [], tokens_of(m)
+        for tok in tried:
+            cands = named(tok)
+            if cands:
+                token = tok
+                break
+        lane_shas = None
+        if not cands and not any(known(t) for t in tried):
+            # the tip route, for a subject that names no token or only a word no lane report or review carries: the
+            # lane tip it merges, cited by exactly one lane, read from the lane reports titled "# Lane <token>", the
+            # CLEAR review headers, and the stems of the CLEAR reviews with no header token, that cite it. Two owners
+            # name none: a sweep or a coverage list beside the lane, or a sibling round inside another lane's report
+            # beside the lane's own headerless review. The review taken must itself cite a commit of the lane. A
+            # subject with a known token never takes another lane's: a later lane's review that cites this lane's
+            # tip would give this lane, whose own review is older than the bound, the later lane's wait.
+            tip = ps[1][:7]
             lane_shas = set(x[:7] for x in git(a.repo, "rev-list", "--max-count=80", ps[1], "^" + ps[0]).split())
-            cands = [(review_time(r, late), r["base"], "sha") for r in revs if usable(r) and (r["shas"] & lane_shas)]
+            strong = set(tips.get(tip, ())) | set(r["token"] for r in revs if r["token"] and tip in r["shas"] and usable(r, r["token"]))
+            owners = set(strong)
+            for r in revs:  # a headerless review's stem only makes a second owner, never the one owner (a plan review)
+                if not r["token"] and tip in r["shas"] and usable(r, "") and not any(
+                        r["stem"] == o or r["stem"].startswith(o + "-") for o in owners):
+                    owners.add(r["stem"])
+            if len(owners) == 1 and owners <= strong:
+                tok = owners.pop()
+                cands = named(tok, " via tip", cites=lane_shas)
+                if cands:
+                    token = tok
+        if not cands:
+            if lane_shas is None:
+                lane_shas = set(x[:7] for x in git(a.repo, "rev-list", "--max-count=80", ps[1], "^" + ps[0]).split())
+            cands = [(review_time(r, late), r["base"], "sha") for r in revs if usable(r, token) and (r["shas"] & lane_shas)]
         if cands:
             when, name, how = max(cands)
             hours = (landed - when).total_seconds() / 3600
@@ -308,9 +389,9 @@ def main(argv):
             if a.verbose:
                 print("%s %-8s %-14s wait %6.1f h  %s (%s%s)" % (landed.strftime("%m-%d %H:%M") + clock, token[:8], train, hours, name, how, ", unverified" if how == "sha" else ""))
         else:
-            unmatched.append(token[:8])
+            unmatched.append((tried[0] if tried else token)[:8] or "(%s)" % train)  # the whole hyphenated word first (review kit-twins r1 note 1); a subject with no token is named by its train
             if a.verbose:
-                print("%s %-8s %-14s wait      ? h  no CLEAR review found" % (landed.strftime("%m-%d %H:%M") + clock, token[:8], train))
+                print("%s %-8s %-14s wait      ? h  no CLEAR review found" % (landed.strftime("%m-%d %H:%M") + clock, (tried[0] if tried else token)[:8], train))
     days = {}
     for name, times in trains.items():
         days.setdefault(min(times).date(), []).append(name)
