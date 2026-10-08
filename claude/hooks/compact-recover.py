@@ -122,9 +122,10 @@ def on_board(cwd):
     """Whether the session folder belongs to the board, by its path alone.
 
     Case-insensitive and slash-agnostic, because the payload carries the folder as the shell
-    typed it. A prefix is matched on the folder name directly under the root, so a worktree
-    two levels down (<root>/<prefix>-abc/app) is on the board and a sibling of the prefix is
-    not. An empty cwd is off the board: nothing is known about it, so nothing is printed for it.
+    typed it. A prefix is matched on the path under the root, so a worktree two levels down
+    (<root>/<prefix>-abc/app) is on the board and a sibling of the prefix is not; a prefix may
+    name a path below the root (worktrees/<repo>), with either separator. An empty cwd is off
+    the board: nothing is known about it, so nothing is printed for it.
     """
     path = str(cwd or "").replace("\\", "/").rstrip("/").lower()
     if not path:
@@ -133,7 +134,9 @@ def on_board(cwd):
     if not root:
         return True
     raw = os.environ.get("CLAUDE_BOARD_PREFIXES")
-    prefixes = [p.strip().lower() for p in (raw.split(";") if raw else BOARD_PREFIXES) if p.strip()]
+    # a prefix may name a path below the root, typed with either separator; edge separators are kept, so an entry
+    # of "/" or "\\" alone matches nothing instead of every child (review kit-boardslash r1 MAJOR 1)
+    prefixes = [p.strip().replace("\\", "/").lower() for p in (raw.split(";") if raw else BOARD_PREFIXES) if p.strip()]
     if path == root:
         return True
     if not path.startswith(root + "/"):
