@@ -33,7 +33,7 @@ Every line below is a law. Cite laws by their words in briefs; never paraphrase 
 - At most three implementation agents in flight, because their gates serialize on the machine build mutex and a fourth only waits; the band is filled to five with mutex-free work such as reviews, specs, mockups, analysis, docs and scripts.
 - The band is three to five lanes on the primary account when the approved queue feeds them; a secondary account runs one lane on simple tasks and stays well inside its quotas.
 - Zero lanes on an empty queue is the correct state; idle-filling is banned, and the band is called full only after enumerating the mutex-free work classes.
-- Orchestrator and lanes run with a capped context and only a research role runs uncapped; the orchestrator holds the owner's pane and never splits it; agents are launched with the agent tool in the background, and the agents workspace hosts only worker sessions on another account.
+- Orchestrator and lanes run at the launcher's default auto-compact window (300k) and only a research role runs at the model's whole window; the orchestrator holds the owner's pane and never splits it; agents are launched with the agent tool in the background, and the agents workspace hosts only worker sessions on another account.
 
 ## Lane conduct
 

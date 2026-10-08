@@ -376,6 +376,10 @@ One trap when submitting by hand: Git Bash rewrites a leading slash, so `herdr a
 w1:p5 /compact` arrives as `C:/Program Files/Git/compact` and the session answers it as a
 question. The watcher submits through Python; from a shell, PowerShell or `MSYS_NO_PATHCONV=1`.
 
+Its `--window` defaults to 300000, the launcher's default window, so an orchestrator is sent
+`/compact` at 65 percent of the window it really runs with; on a machine whose launcher has
+`$DefaultWindow = 0`, add `--window 200000` to the command and to the logon task below.
+
 Run it in a spare pane where its log is visible, or hidden with `Start-Process -WindowStyle
 Hidden python -ArgumentList '"C:\path\to\claude-base\scripts\compact-at-boundary.py"','--titles','"orques|orchestr"'`.
 

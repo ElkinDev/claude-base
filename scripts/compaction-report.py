@@ -16,7 +16,7 @@ Usage:
   python compaction-report.py <transcript.jsonl> [more...]
   python compaction-report.py --day 2026-08-27            every transcript with turns that day
   python compaction-report.py --day 2026-08-27 --json     machine-readable
-Options: --window 200000, --weights in=1,cw=1.25,cr=0.1,out=5, --break 50000
+Options: --window 300000 (the launcher's default window; 200000 for a session under the cap), --weights in=1,cw=1.25,cr=0.1,out=5, --break 50000
 """
 import argparse
 import glob
@@ -274,7 +274,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("transcripts", nargs="*", help="transcript files; default every transcript touched on --day")
     parser.add_argument("--day", default="", help="YYYY-MM-DD, keep only turns of that local day")
-    parser.add_argument("--window", type=int, default=200000)
+    parser.add_argument("--window", type=int, default=300000)
     parser.add_argument("--weights", default="in=1,cw=1.25,cr=0.1,out=5")
     parser.add_argument("--break", dest="break_tokens", type=int, default=50000, help="cache write size that counts as a cache break")
     parser.add_argument("--json", action="store_true")

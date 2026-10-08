@@ -25,8 +25,10 @@ $launcher = Join-Path $script:RepoRoot 'claude\claude-account.ps1'
 # every launch now gives the orchestrator and the analyst, turns every "(removed)" of the capped
 # phases into "(removed, inherited <n>)" and fails assertions that are not about inheritance at
 # all. Phases 9 and 9b set the variable on purpose and clear it again, so nothing is lost by
-# clearing here.
+# clearing here. The cap is cleared for the same reason: phase 9 seeds it to prove a launch
+# removes one it inherits, and a cap left over from the shell would prove nothing.
 Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
+Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT -ErrorAction SilentlyContinue
 
 # The launcher reads its seats from CLAUDE_SEATS_DIR, so every phase runs against a temporary
 # directory and no assertion depends on the seats this machine happens to have installed. It
@@ -231,9 +233,17 @@ $out = Get-LauncherLiteral demo -ShowEnv -Role research
 Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=\(unchanged, inherited 999999\)\r?$' 'the uncapped role keeps it and says so'
 $out = Get-LauncherLiteral demo -ShowEnv -Window 230000
 Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=230000\r?$' 'the switch replaces it'
+# A terminal that still holds the cap from an earlier capped launch would clamp the window back
+# to 200k, so the in-window path must remove a cap it inherits, not only set none of its own.
+$env:CLAUDE_CODE_DISABLE_1M_CONTEXT = '1'
 $out = Invoke-InWindowRole 'lane' 0
 Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000\r?$' 'the in-window path sets the default over it too'
-Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=\r?$' 'and sets no cap'
+Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=\r?$' 'and removes the cap it inherited'
+$out = Invoke-InWindowRole 'orchestrator' 0
+Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=\r?$' 'for the orchestrator as well'
+$out = Get-LauncherLiteral demo -ShowEnv
+Assert-Match $out 'Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT' 'and the pane command removes it too'
+Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT -ErrorAction SilentlyContinue
 $out = Invoke-InWindowRole 'lane' 230000
 Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=230000\r?$' 'the in-window path sets the window asked for'
 $out = Invoke-InWindowRole 'research' 0

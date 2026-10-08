@@ -31,7 +31,8 @@ Usage:
   python compact-at-boundary.py --once                one pass with real submissions
   python compact-at-boundary.py --stop                ask the running watcher to exit
 
-Defaults: --window 200000 tokens, --threshold 0.65 of the window, --idle 90 seconds of
+Defaults: --window 300000 tokens (the account launcher's default window; pass 200000 for sessions
+under the 200k cap), --threshold 0.65 of the window, --idle 90 seconds of
 continuous idleness, --cooldown 900 seconds between submissions to the same session,
 --interval 30 seconds between passes. See docs/CONTEXT-ECONOMICS.md for where the
 threshold comes from and why the exact value is second order.
@@ -325,7 +326,7 @@ def main():
     parser.add_argument("--panes", default="", help="comma-separated Herdr pane ids to watch (Herdr renumbers them on restart); default all Claude panes")
     parser.add_argument("--sessions", default="", help="comma-separated Claude session id prefixes to watch")
     parser.add_argument("--titles", default="", help="case-insensitive regular expression on the pane title, e.g. orques|orchestr")
-    parser.add_argument("--window", type=int, default=200000, help="context window in tokens (default 200000)")
+    parser.add_argument("--window", type=int, default=300000, help="context window in tokens (default 300000, the launcher's)")
     parser.add_argument("--threshold", type=float, default=0.65, help="fraction of the window that arms a compaction (default 0.65)")
     parser.add_argument("--idle", type=int, default=90, help="seconds of continuous idleness before submitting (default 90)")
     parser.add_argument("--idle-states", default="idle,done", help="Herdr states that count as waiting for input (default idle,done)")
