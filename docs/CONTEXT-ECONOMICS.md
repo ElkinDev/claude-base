@@ -354,7 +354,7 @@ The watcher needs Herdr (it asks `herdr agent list` for the session id and the i
 each pane) and reads the session transcripts under `~/.claude/projects`. Its switches are in
 `--help` and in the module docstring; the ones in daily use: `--status` for one pass and the
 decision table, `--dry-run` to loop and log without submitting, `--titles` to choose the panes,
-`--threshold`, `--idle`, `--cooldown` and `--interval` for the numbers (defaults: window 200000,
+`--threshold`, `--idle`, `--cooldown` and `--interval` for the numbers (defaults: window 300000,
 threshold 0.65, idle 90 seconds, cooldown 900, interval 30), `--idle-states idle` to count only
 Herdr's idle and not `done`, and `--stop` to ask a running watcher to exit. Set `--window 1000000`
 only if the session really runs with the 1M window; the threshold is a fraction of that number.

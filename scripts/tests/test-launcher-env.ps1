@@ -243,9 +243,10 @@ $out = Invoke-InWindowRole 'orchestrator' 0
 Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=\r?$' 'for the orchestrator as well'
 $out = Get-LauncherLiteral demo -ShowEnv
 Assert-Match $out 'Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT' 'and the pane command removes it too'
-Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT -ErrorAction SilentlyContinue
 $out = Invoke-InWindowRole 'lane' 230000
 Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=230000\r?$' 'the in-window path sets the window asked for'
+Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=\r?$' 'and removes the inherited cap for a window named by the switch too'
+Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT -ErrorAction SilentlyContinue
 $out = Invoke-InWindowRole 'research' 0
 Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=999999\r?$' 'the in-window path leaves research alone'
 Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue

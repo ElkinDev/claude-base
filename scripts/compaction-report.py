@@ -274,7 +274,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("transcripts", nargs="*", help="transcript files; default every transcript touched on --day")
     parser.add_argument("--day", default="", help="YYYY-MM-DD, keep only turns of that local day")
-    parser.add_argument("--window", type=int, default=300000)
+    parser.add_argument("--window", type=int, default=300000, help="context window in tokens (default 300000, the launcher's)")
     parser.add_argument("--weights", default="in=1,cw=1.25,cr=0.1,out=5")
     parser.add_argument("--break", dest="break_tokens", type=int, default=50000, help="cache write size that counts as a cache break")
     parser.add_argument("--json", action="store_true")
