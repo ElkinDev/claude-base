@@ -1,6 +1,6 @@
-# The environment the launcher hands a session: the default cap, the research exception, the
-# opt-in auto-compact window, and the flags it must forward to claude untouched (F: context
-# economics).
+# The environment the launcher hands a session: the default 300k auto-compact window, the research
+# exception, the -Window switch, the 200k cap a zero default brings back, and the flags it must
+# forward to claude untouched (F: context economics).
 #
 #     powershell -NoProfile -ExecutionPolicy Bypass -File scripts\tests\test-launcher-env.ps1
 #
@@ -22,9 +22,10 @@ $launcher = Join-Path $script:RepoRoot 'claude\claude-account.ps1'
 
 # The suite asserts what the launcher does with an inherited window, so it has to start from a
 # known environment. A pane that already carries CLAUDE_CODE_AUTO_COMPACT_WINDOW, which is what
-# the account table gives the orchestrator and the analyst, turns every "(removed)" into
-# "(removed, inherited <n>)" and fails eleven assertions that are not about inheritance at all.
-# Phase 9 sets the variable on purpose and clears it again, so nothing is lost by clearing here.
+# every launch now gives the orchestrator and the analyst, turns every "(removed)" of the capped
+# phases into "(removed, inherited <n>)" and fails assertions that are not about inheritance at
+# all. Phases 9 and 9b set the variable on purpose and clear it again, so nothing is lost by
+# clearing here.
 Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
 
 # The launcher reads its seats from CLAUDE_SEATS_DIR, so every phase runs against a temporary
@@ -86,13 +87,17 @@ function Invoke-Wrapper {
 function Invoke-InWindowRole {
     param([string]$RoleName, [int]$WindowValue)
     $text = Get-Content -LiteralPath $launcher -Raw
+    $defaultLine = ([regex]::Match($text, '(?m)^\$DefaultWindow = .+$')).Value
+    $takeDefault = ([regex]::Match($text, '(?m)^if \(\$Window -le 0 -and \$Role -ne "research"\) .+$')).Value
     $capLine = ([regex]::Match($text, '(?m)^\$capContext = .+$')).Value
     $applyRole = ([regex]::Match($text, '(?ms)^function Apply-Role \{.*?^\}')).Value
-    if (($capLine -eq '') -or ($applyRole -eq '')) { throw 'the launcher no longer holds the in-window path this test lifts' }
+    if (($defaultLine -eq '') -or ($takeDefault -eq '') -or ($capLine -eq '') -or ($applyRole -eq '')) { throw 'the launcher no longer holds the in-window path this test lifts' }
     $probe = Join-Path $env:TEMP ('launcher-env-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.ps1')
     $body = @(
         ("`$Role = '" + $RoleName + "'"),
         ("`$Window = " + $WindowValue),
+        $defaultLine,
+        $takeDefault,
         $capLine,
         $applyRole,
         'Apply-Role',
@@ -109,28 +114,41 @@ function Invoke-InWindowRole {
 function Assert-Forwarded {
     param([string]$Out, [string]$Extra, [string]$What)
     Assert-Match $Out ("EXTRA=" + $Extra) ("${What}: the flags reach claude")
-    Assert-Regex $Out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=\(removed\)\r?$' "${What}: the window is not turned on"
-    Assert-Regex $Out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=1\r?$' "${What}: the cap still applies"
+    Assert-Regex $Out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000\r?$' "${What}: the window stays the default"
+    Assert-Regex $Out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=\(unset\)\r?$' "${What}: and no cap comes back"
+}
+
+# The cap is still the launcher's answer when $DefaultWindow is 0, the one-line edit that takes a
+# machine back to 200k, so phase 9b runs a copy of the launcher with that line set to 0. The copy
+# sits in TEMP: -ShowEnv exits before the launcher reads anything that lives beside it.
+function New-CappedLauncher {
+    $text = [IO.File]::ReadAllText($launcher)
+    $pattern = '(?m)^\$DefaultWindow = \d+'
+    if (([regex]::Matches($text, $pattern)).Count -ne 1) { throw 'the launcher no longer holds the default window line this test edits' }
+    $copy = Join-Path $env:TEMP ('launcher-capped-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.ps1')
+    [IO.File]::WriteAllText($copy, [regex]::Replace($text, $pattern, '$$DefaultWindow = 0'), (New-Object Text.ASCIIEncoding))
+    return $copy
 }
 
 Assert-True (Test-Path -LiteralPath $launcher) 'the launcher is where the tests expect it'
 
-Write-Host "`r`nphase 1, the default is the 200k cap and no window override"
+Write-Host "`r`nphase 1, the default is a 300k auto-compact window and no 200k cap"
 $out = Get-LauncherEnv @('-ShowEnv')
 Assert-Exit 0 'the dry run exits clean'
 Assert-Regex $out '(?m)^CLAUDE_ROLE=lane\r?$' 'the default role is lane'
-Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=1\r?$' 'the context stays capped at 200k'
-Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=\(removed\)\r?$' 'the window variable is cleared, not inherited'
+Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=\(unset\)\r?$' 'the 200k cap is off, or the window could not pass it'
+Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000\r?$' 'auto-compaction fires at the 300k default'
 Assert-Regex $out '(?m)^EXTRA=--no-chrome\r?$' 'nothing is forwarded but the browser the role turns off'
-Assert-Match $out "`$env:CLAUDE_CODE_DISABLE_1M_CONTEXT = '1'" 'the pane command caps the context too'
-Assert-Match $out 'Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW' 'the pane command clears the window too'
-Assert-True (-not ($out -match "PANE_COMMAND=.*AUTO_COMPACT_WINDOW = '")) 'the pane command sets no window'
+Assert-Match $out "`$env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = '300000'" 'the pane command sets the window too'
+Assert-Match $out 'Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT' 'the pane command clears an inherited cap'
+Assert-True (-not ($out -match "PANE_COMMAND=.*CLAUDE_CODE_DISABLE_1M_CONTEXT = '1'")) 'the pane command sets no cap'
 
-Write-Host "`r`nphase 2, an orchestrator is capped the same way"
+Write-Host "`r`nphase 2, an orchestrator takes the same window"
 $out = Get-LauncherEnv @('-ShowEnv', '-Role', 'orchestrator')
 Assert-Exit 0 'the dry run exits clean'
 Assert-Regex $out '(?m)^CLAUDE_ROLE=orchestrator\r?$' 'the role travels to the session'
-Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=1\r?$' 'the orchestrator is capped'
+Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=\(unset\)\r?$' 'the orchestrator is not capped'
+Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000\r?$' 'the orchestrator compacts at the default window'
 Assert-Regex $out '(?m)^SEAT=none\r?$' 'the seats directory is empty here, so the session takes no chair'
 Assert-Regex $out ('(?m)^EXTRA=--name orchestrator-\d{4}-\d{4} --no-chrome ' + [regex]::Escape($startLine) + '\r?$') 'an explicit role names the session with the minute it started, and adds nothing else'
 
@@ -140,24 +158,29 @@ Assert-Exit 0 'the dry run exits clean'
 Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=\(unset\)\r?$' 'research runs uncapped'
 Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=\(unchanged\)\r?$' 'research sets no window either'
 
-Write-Host "`r`nphase 4, -Window drops the cap and names the window"
+Write-Host "`r`nphase 4, -Window replaces the default window"
 $out = Get-LauncherEnv @('-ShowEnv', '-Window', '230000')
 Assert-Exit 0 'the dry run exits clean'
-Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=\(unset\)\r?$' 'the cap is dropped, or the window could not grow'
+Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=\(unset\)\r?$' 'the cap stays off'
 Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=230000\r?$' 'auto-compaction fires at the window given'
 Assert-Match $out "`$env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = '230000'" 'the pane command carries the window'
-Assert-True (-not ($out -match "PANE_COMMAND=.*CLAUDE_CODE_DISABLE_1M_CONTEXT = '1'")) 'the pane command drops the cap'
+Assert-True (-not ($out -match "PANE_COMMAND=.*AUTO_COMPACT_WINDOW = '300000'")) 'the pane command does not carry the default as well'
+Assert-True (-not ($out -match "PANE_COMMAND=.*CLAUDE_CODE_DISABLE_1M_CONTEXT = '1'")) 'the pane command sets no cap'
+$out = Get-LauncherEnv @('-ShowEnv', '-Window', '600000', '-Role', 'research')
+Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=600000\r?$' 'research takes a window only when one is named'
 
-Write-Host "`r`nphase 5, the switch is opt-in: zero is off"
+Write-Host "`r`nphase 5, zero is the same as no switch: the default holds"
 $out = Get-LauncherEnv @('-ShowEnv', '-Window', '0')
 Assert-Exit 0 'the dry run exits clean'
-Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=1\r?$' 'zero leaves the default in place'
-Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=\(removed\)\r?$' 'zero sets no window'
+Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=\(unset\)\r?$' 'zero brings no cap back'
+Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000\r?$' 'zero keeps the default window'
 
 Write-Host "`r`nphase 6, the switch is documented where a user looks for it"
 $out = Get-LauncherEnv @('-Help')
 Assert-Exit 0 'the help exits clean'
 Assert-Match $out '-Window <n>' 'the help lists the switch'
+Assert-Match $out '300k' 'the help names the default window'
+Assert-Match $out 'pass --chrome' 'the help says how a session gets the browser back'
 Assert-Match $out '-ShowEnv' 'the help lists the dry run'
 
 # A parameter name here claims every unambiguous prefix of itself, and an unbound flag is handed to
@@ -188,7 +211,7 @@ Assert-Exit 0 'a prefix of the parameter name binds it'
 Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=230000\r?$' '-Wi is an unambiguous prefix of -Window'
 $out = Get-LauncherLiteral demo -w -ShowEnv
 Assert-Exit 0 '-w is the exact alias of -Tab and does not reach -Window'
-Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=\(removed\)\r?$' '-w names no window'
+Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000\r?$' '-w names no window, so the default holds'
 $out = Get-LauncherLiteral demo -Window -5 -ShowEnv
 Assert-True ($script:LastExit -ne 0) 'a negative window is rejected'
 Assert-True (-not ($out -match 'CLAUDE_ROLE=')) 'a rejected window opens nothing'
@@ -196,27 +219,60 @@ $out = Get-LauncherLiteral demo -Sh
 Assert-Exit 0 '-Sh is an unambiguous prefix of -ShowEnv and is meant to be'
 Assert-Regex $out '(?m)^CLAUDE_ROLE=lane\r?$' '-Sh prints the plan, which no claude flag needs'
 
-# A pane opened from a pane that used the switch would otherwise inherit its window, silently and
-# against the cap the role asks for, so the cap clears the variable on both paths and the dry run
-# names what it found.
-Write-Host "`r`nphase 9, an inherited window is cleared when the cap applies"
+# A pane opened from a pane with another window would otherwise keep it, silently, so every role
+# but research sets its own on both paths, and the dry run names what the uncapped role keeps.
+Write-Host "`r`nphase 9, an inherited window gives way to the default"
 $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = '999999'
 $out = Get-LauncherLiteral demo -ShowEnv
 Assert-Exit 0 'the dry run exits clean with a window in the environment'
-Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=\(removed, inherited 999999\)\r?$' 'the dry run names the window it would clear'
-Assert-Match $out 'Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW' 'the pane command clears it'
+Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000\r?$' 'the default replaces the inherited window'
+Assert-Match $out "`$env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = '300000'" 'the pane command sets it over the inherited one'
 $out = Get-LauncherLiteral demo -ShowEnv -Role research
 Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=\(unchanged, inherited 999999\)\r?$' 'the uncapped role keeps it and says so'
 $out = Get-LauncherLiteral demo -ShowEnv -Window 230000
 Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=230000\r?$' 'the switch replaces it'
 $out = Invoke-InWindowRole 'lane' 0
-Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=\r?$' 'the in-window path clears it too'
-Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=1\r?$' 'and caps the context while it does'
+Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000\r?$' 'the in-window path sets the default over it too'
+Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=\r?$' 'and sets no cap'
 $out = Invoke-InWindowRole 'lane' 230000
 Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=230000\r?$' 'the in-window path sets the window asked for'
 $out = Invoke-InWindowRole 'research' 0
 Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=999999\r?$' 'the in-window path leaves research alone'
 Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
+
+# $DefaultWindow = 0 is the documented way back to 200k, so the cap it brings back is asserted on
+# the dry run and on the in-window path alike, an inherited window cleared included: a session
+# opened from a pane that had a window must not keep one the cap contradicts.
+Write-Host "`r`nphase 9b, a zero default brings back the 200k cap"
+$realLauncher = $launcher
+$launcher = New-CappedLauncher
+try {
+    $out = Get-LauncherEnv @('-ShowEnv')
+    Assert-Exit 0 'the capped copy runs clean'
+    Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=1\r?$' 'the context is capped at 200k'
+    Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=\(removed\)\r?$' 'and no window is set'
+    Assert-Match $out "`$env:CLAUDE_CODE_DISABLE_1M_CONTEXT = '1'" 'the pane command caps the context too'
+    Assert-True (-not ($out -match "PANE_COMMAND=.*AUTO_COMPACT_WINDOW = '")) 'the pane command sets no window'
+    $out = Get-LauncherEnv @('-ShowEnv', '-Role', 'orchestrator')
+    Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=1\r?$' 'the orchestrator is capped the same way'
+    $out = Get-LauncherEnv @('-ShowEnv', '-Window', '230000')
+    Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=\(unset\)\r?$' 'the switch still drops the cap'
+    Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=230000\r?$' 'and names the window'
+    $out = Get-LauncherEnv @('-ShowEnv', '-Role', 'research')
+    Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=\(unset\)\r?$' 'research stays uncapped'
+    $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = '999999'
+    $out = Get-LauncherLiteral demo -ShowEnv
+    Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=\(removed, inherited 999999\)\r?$' 'the dry run names the window it would clear'
+    Assert-Match $out 'Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW' 'the pane command clears it'
+    $out = Invoke-InWindowRole 'lane' 0
+    Assert-Regex $out '(?m)^CLAUDE_CODE_AUTO_COMPACT_WINDOW=\r?$' 'the in-window path clears it too'
+    Assert-Regex $out '(?m)^CLAUDE_CODE_DISABLE_1M_CONTEXT=1\r?$' 'and caps the context while it does'
+}
+finally {
+    Remove-Item -LiteralPath $launcher -Force -ErrorAction SilentlyContinue
+    $launcher = $realLauncher
+    Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
+}
 
 
 # --- the seat ----------------------------------------------------------------------
