@@ -364,6 +364,40 @@ def main():
         check("--no-git: a notes and a review brief name no worktree, tip or run, the notes brief passes brief-check "
               "tier 3, and --tests with it is refused", nogit_shape)
 
+        # --report-only: a round whose findings touch the lane report alone reads the worktree and never writes it, so
+        # no commit, precheck or own-tests word reaches the brief, even with both configured.
+        def report_only_shape():
+            configure(**CONFIGURED)
+            ro = argparse.Namespace(round=2, review=review, tools=None, change=None, tests=None, delta=0, attack=None,
+                                    purpose=None, no_git=False, report_only=True,
+                                    pins="DemoCiteTest (citations only, no code change)")
+            bodies = [mod.fix_or_notes_brief(dict(FX), ro, kind)[1] for kind in ("notes", "fix")]
+            configure()
+            out = os.path.join(tmp, "ro-notes.md")
+            with open(out, "w", encoding="utf-8") as f:
+                f.write(bodies[0])
+            chk = subprocess.run([sys.executable, CHECKER, out, "--deny-tier", "3"], capture_output=True, text=True,
+                                 timeout=60)
+            want = ("## Change, in the lane report only", "Report-only round", "git -C C:/src/myapp-demo rev-parse --short HEAD",
+                    "which prints abc1234", "git -C C:/src/myapp-demo status --short", "never write it",
+                    "Another tip or any status line is a stop", "B.kt:4 reads badly.")
+            gone = ("run-own-tests.sh", "done file", "[skip ci]", "commit on top", "scripts/precheck.sh", "<<branch>>",
+                    "<<tip>>")
+            return (chk.returncode == 0 and all(w in b for w in want for b in bodies)
+                    and not any(g in b for g in gone for b in bodies) and "## Round 2" in bodies[1]
+                    and "## Notes applied" in bodies[0] and all(ord(c) < 128 for c in "".join(bodies)))
+        check("--report-only: a fix and a notes brief check the tip and an empty status, name no commit, precheck or "
+              "run, and pass brief-check tier 3 with a cited test class", report_only_shape)
+
+        def report_only_refusals():
+            out = os.path.join(tmp, "ro-bad.md")
+            rs = [(gen("review", "gd", "--report-only", "--out", out), "the fix and notes kinds'"),
+                  (gen("notes", "gd", "--review", review, "--report-only", "--no-git", "--out", out), "a --no-git lane has none"),
+                  (gen("fix", "gd", "--review", review, "--report-only", "--tests", "SomeTest", "--out", out),
+                   "a --report-only round does not launch")]
+            return all(r.returncode == 2 and why in r.stderr for r, why in rs) and not os.path.exists(out)
+        check("--report-only is refused with review, --no-git and --tests", report_only_refusals)
+
         # Stacked lanes: a temp repo whose base branch is trunk (set by the config), lane-a (A1 on trunk), lane-b
         # (B1, B2 on lane-a) checked out in the repo, lane-c (C1 on trunk) in its own worktree.
         ev = os.path.join(tmp, "ev-stack")
@@ -418,6 +452,22 @@ def main():
                     and "A1 the parent lane" not in lg and "warning" not in g.stderr)
         check("stacked lane: with no --base the parent branch is named with the --base to pass; --base lists only the "
               "lane's own commits", stacked)
+
+        def report_only_cli():
+            n, m = os.path.join(tmp, "ro-cli.md"), os.path.join(tmp, "ro-cli-pins.md")
+            bare = sgen("notes", "pln", "--review", review, "--report-only", "--out", n)
+            pinned = sgen("notes", "pln", "--review", review, "--report-only", "--pins",
+                          "DemoCiteTest (citations only, no code change)", "--out", m)
+            tier2 = subprocess.run([sys.executable, CHECKER, n, "--deny-tier", "2"], capture_output=True, text=True,
+                                   timeout=60)
+            nb = open(n, encoding="utf-8").read() if os.path.exists(n) else ""
+            note = "names no test class and no golden"
+            return (bare.returncode == 0 and note in bare.stderr and tier2.returncode != 0
+                    and "git -C %s rev-parse --short HEAD" % wtc in nb and rev("lane-c")[:7] in nb
+                    and pinned.returncode == 0 and note not in pinned.stderr
+                    and "DemoCiteTest" in open(m, encoding="utf-8").read())
+        check("--report-only on a real worktree names its tip; without a cited test class stderr says a deny tier of 2 "
+              "refuses it, and brief-check agrees; with one it says nothing", report_only_cli)
 
         def plain_and_merged_in():
             out, out2 = os.path.join(tmp, "pln.md"), os.path.join(tmp, "pln-merged.md")

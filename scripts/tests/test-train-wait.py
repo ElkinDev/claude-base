@@ -101,8 +101,8 @@ class UnionGateRunsTest(unittest.TestCase):
 
 
 @unittest.skipUnless(GIT, "git is not on PATH")
-class TrainWaitRunTest(unittest.TestCase):
-    """One lane merged on main, with its CLEAR review in the evidence folder."""
+class RunFixture(unittest.TestCase):
+    """One lane merged on main, an evidence folder beside it, and the helpers; no tests of its own."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="train-wait-run-")
@@ -150,6 +150,11 @@ class TrainWaitRunTest(unittest.TestCase):
         )
         return done.returncode, done.stdout.decode("utf-8", "replace"), done.stderr.decode("utf-8", "replace")
 
+
+@unittest.skipUnless(GIT, "git is not on PATH")
+class TrainWaitRunTest(RunFixture):
+    """One lane merged on main, with its CLEAR review in the evidence folder."""
+
     def test_a_lane_with_a_clear_review_named_in_its_header_reports_a_wait(self):
         self.review("lane-w99-2026-09-18.md", "Review of lane w99, round 1\n\nDisposition: CLEAR\n")
         code, out, err = self.run_script("--row")
@@ -176,6 +181,57 @@ class TrainWaitRunTest(unittest.TestCase):
         )
         self.assertEqual(2, done.returncode)
         self.assertIn("REFUSED", done.stdout.decode("utf-8", "replace"))
+
+
+class TipRouteTest(RunFixture):
+    """A merge(train) subject in prose, or with a hyphenated token, beside the w99 lane."""
+
+    def lane_merge(self, branch, tail):
+        self.git("checkout", "-q", "-b", branch)
+        self.write(branch + ".txt", "work\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "lane work " + branch)
+        tip = self.git("rev-parse", "HEAD").strip()
+        self.git("checkout", "-q", "main")
+        self.git("merge", "-q", "--no-ff", branch, "-m", "merge(train): %s into train-a2, %s" % (tip[:9], tail))
+        return tip
+
+    def lane_report(self, name, text):
+        os.makedirs(os.path.join(self.ev, "lanes"), exist_ok=True)
+        with open(os.path.join(self.ev, "lanes", name), "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+
+    def test_a_prose_subject_takes_the_one_lane_citing_its_tip(self):
+        tip = self.lane_merge("lane-w98", "the list header keeps its title on one line")
+        self.lane_report("w98-2026-09-18.md", "# Lane w98: the list header\n\nTip %s.\n" % tip[:9])
+        self.lane_report("overlap-2026-09-18.md", "# Lane report: a train overlap\n\n- %s\n" % tip[:9])  # names no lane
+        self.review("w98-2026-09-18.md", "Review of lane w98, round 1\n\nTip %s.\n\nDisposition: CLEAR\n" % tip[:9])
+        code, out, err = self.run_script("--verbose")
+        self.assertEqual(0, code, err)
+        self.assertIn("w98-2026-09-18.md (header via tip)", out, out)
+
+    def test_a_headerless_review_alone_names_no_owner(self):
+        tip = self.lane_merge("lane-w98", "the list header keeps its title on one line")
+        self.review("release-plan-2026-09-18.md", "Plan of the release\n\n- %s\n\nCLEAR\n" % tip[:9])
+        code, out, err = self.run_script("--verbose")
+        self.assertEqual(0, code, err)
+        self.assertIn("release-plan-2026-09-18.md (sha, unverified)", out, out)
+        self.assertNotIn("via tip", out, out)
+
+    def test_a_hyphenated_token_is_read_whole(self):
+        self.lane_merge("lane-ab12-b", "ab12-b, the second cut")
+        self.review("ab12-2026-09-18.md", "Review of lane ab12, round 1\n\nDisposition: CLEAR\n")
+        self.review("ab12-b-2026-09-18.md", "Review of lane ab12-b, round 1\n\nDisposition: CLEAR\n")
+        code, out, err = self.run_script("--verbose")
+        self.assertEqual(0, code, err)
+        self.assertIn("ab12-b-2026-09-18.md (header)", out, out)
+
+    def test_an_unmatched_hyphenated_subject_is_named_by_its_whole_word(self):
+        self.lane_merge("lane-ab12-b", "ab12-b, the second cut")
+        self.review("ab12-b-2026-09-18.md", "Review of lane ab12-b, round 1\n\nDisposition: BLOCK\n")
+        code, out, err = self.run_script()  # the full report names the unmatched lanes; --row only counts them
+        self.assertEqual(0, code, err)
+        self.assertRegex(out, r"found: 2 of 2 \((ab12-b, w99|w99, ab12-b)\)")
 
 
 if __name__ == "__main__":

@@ -8,8 +8,8 @@ pins) to one argument or to a marked placeholder. One shell call replaces one lo
 by the orchestrator.
 
   python brief-gen.py review <token> [--delta N --review <path>] [--attack "1. ...\\n2. ..."] [--tools 14] [--no-git | --base <sha>] [--out <path>]
-  python brief-gen.py fix    <token> --review <path> [--round N] [--change "..."] [--pins "..."] [--tests "..." | --no-git] [--out <path>]
-  python brief-gen.py notes  <token> --review <path> [--change "..."] [--pins "..."] [--tests "..." | --no-git] [--out <path>]
+  python brief-gen.py fix    <token> --review <path> [--round N] [--change "..."] [--pins "..."] [--tests "..." | --no-git | --report-only] [--out <path>]
+  python brief-gen.py notes  <token> --review <path> [--change "..."] [--pins "..."] [--tests "..." | --no-git | --report-only] [--out <path>]
 
 Facts: the newest <lanes>/<slug>-<date>.md whose title starts with "# Lane <token>" gives the slug, the item (an id
 in brackets such as (ABC-12), (item 7) or (3.2)) and the topic; the worktree is the configured pattern with the token
@@ -32,6 +32,14 @@ only the brief file at --out). Since the reviewer, not this script, writes that 
 reviewer to write nothing when it exists at its start, unless --force-review was given. --no-git is the shape of a lane whose files are in no git repository (tooling kept in a plain folder): it
 edits staged .new files beside the live ones and never a live file, runs its pins under timeout 120 against the
 .new and once against the live file, and writes no commit, precheck or test run; it is refused with --tests.
+
+--report-only is the fix or notes round whose findings touch the lane report alone, a wrong citation or a stale line:
+the worktree is read and never written, so the Checks are the tip and an empty `git status --short` read before and
+after the edit, with no commit, precheck or own-tests run. Typed by hand, such Checks tend to keep the commit and run
+words of the usual shape in their Report section. A round that also edits a file beside the report still types its
+Forbidden by hand, since this one allows the report alone. The Pins placeholder asks for the test class whose lines
+the report cites, as `<Name>Test (citations only, no code change)`, and stderr says when the brief names no test
+class and no golden, since a deny tier of 2 or more refuses it. It is refused with review, --no-git and --tests.
 
 Stacked lanes. A lane cut from another lane's unmerged tip gets `review <token> --base <sha or branch>`: the review's
 base becomes that tip, refused unless it is a commit strictly below the lane's tip or when it leaves more than 40
@@ -340,6 +348,10 @@ def guard_log(token, verdict, why=None, brief=None):
 MAX_BASE_COMMITS = 40  # a --base with more commits above it is refused: a lane has a handful, so the sha is wrong
 MAX_COMMITS = 100      # commits listed above a review's base; more is cut with a pointer
 
+# The launch hook's tier 2 (claude/hooks/guard-delegate.py, the same patterns as brief-check.py): a test class or a golden.
+TEST_ID = re.compile(r"\b[A-Z][A-Za-z0-9]*Test\b")
+GOLDEN = re.compile(r"\bgolden", re.I)
+
 
 def stacked_on(wt, head):
     """The nearest local branch whose tip is below HEAD, on HEAD's first-parent chain and not on the base branch, as
@@ -602,7 +614,32 @@ def fix_or_notes_brief(fx, a, kind):
     laws = " Laws: %s." % CFG["laws"] if CFG["laws"] else ""
     lines = '40' if kind == 'fix' else '25'
     nobody = "the delta review" if kind == "fix" else "the train"
-    if getattr(a, "no_git", False):
+    if getattr(a, "report_only", False):
+        on = fx["tip"]
+        if not a.change:
+            change = "<<the change per item, in %s only, on the exact lines the review names>>" % fx["report"]
+        if not a.pins:
+            pins = ("<<the test class whose lines the corrected report cites, as `<Name>Test (citations only, no code "
+                    "change)`, one per line; a deny tier of 2 or more refuses a brief that names no test class>>")
+        where = ("Worktree %s, branch %s, tip %s: read it, never write it. Nothing in the worktree changes: no commit, "
+                 "no build, no precheck, no test run." % (fx["wt"], fx["branch"], fx["tip"]))
+        change_head = "## Change, in the lane report only"
+        checks = ("Report-only round (the findings touch %s alone): no commit, no precheck, no own-tests run. In this "
+                  "order:\n\n"
+                  "- First `git -C %s rev-parse --short HEAD`, which prints %s, and `git -C %s status --short`, which "
+                  "prints nothing; paste both.\n"
+                  "- Then the change: edit %s with the Edit tool on the exact lines the review names, found by their "
+                  "content, never by rewriting the file.\n"
+                  "- Then the same two git reads again; paste both. Another tip or any status line is a stop: say so in "
+                  "the report and change nothing more.\n"
+                  "- Last, the report section, appended whole as the Report section says; then END YOUR TURN with one "
+                  "line naming %s." % (fx["report"], fx["wt"], fx["tip"], fx["wt"], fx["report"], fx["report"]))
+        report_what = ("the two git reads before and after the edit (the tip and the empty status), each change at its "
+                       "report line, and Open items LAST")
+        report_when = ""
+        forbidden = ("Any file other than %s; any commit, amend, rebase or file change in %s; any build, precheck or "
+                     "test run; a shared build lock, a device lock." % (fx["report"], fx["wt"]))
+    elif getattr(a, "no_git", False):
         if not a.change:
             change = "<<the change per item, in the staged .new files the report names; every other file stays>>"
         on = "the staged .new files"
@@ -712,6 +749,8 @@ def main():
     ap.add_argument("--purpose", help="review: the purpose line (one of the four and its number)")
     ap.add_argument("--tools", type=int, default=None, help="the tool budget (review_tools and fix_tools by default)")
     ap.add_argument("--no-git", action="store_true", help="a lane with no git repository: staged .new files, no branch, tip, commit or test run")
+    ap.add_argument("--report-only", action="store_true", help="fix or notes whose findings touch only the lane report: no "
+                    "commit and no run; the tip and an empty git status, read before and after, are the check")
     ap.add_argument("--base", help="review: the sha or branch a stacked lane was cut from (default the merge-base with the base branch)")
     ap.add_argument("--out")
     ap.add_argument("--force", action="store_true", help="overwrite an existing brief file at --out")
@@ -734,6 +773,12 @@ def main():
             ap.error("--round is the round the fix opens, 2 or more")
     if a.no_git and a.tests:
         ap.error("--tests names the own-tests run, which a --no-git lane does not launch; its pins run under timeout 120")
+    if a.report_only and a.kind not in ("fix", "notes"):
+        ap.error("--report-only is the fix and notes kinds': a review reads the lane's run")
+    if a.report_only and a.no_git:
+        ap.error("--report-only reads the lane's worktree for its check; a --no-git lane has none")
+    if a.report_only and a.tests:
+        ap.error("--tests names the run, which a --report-only round does not launch")
     if a.base is not None and a.kind != "review":  # the base only shapes the review's commit list
         ap.error("--base is the review kind's: it sets the base whose commits the reviewer reads")
     if a.base is not None and a.no_git:
@@ -799,6 +844,9 @@ def main():
     if guard:
         guard_log(a.token, *guard, brief=os.path.abspath(out))
     sys.stdout.write(body)
+    if a.report_only and not (TEST_ID.search(body) or GOLDEN.search(body)):
+        sys.stderr.write("brief-gen: note, this report-only brief names no test class and no golden, so a launch hook at "
+                         "deny tier 2 or more refuses it: name in --pins the test class whose lines the report cites\n")
     print("brief-gen wrote %s (%d chars, %d placeholders)" % (out.replace("\\", "/"), len(body), body.count("<<")))
     return 0
 
