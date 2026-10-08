@@ -54,9 +54,9 @@ A spec is a string with forward slashes and these tokens:
 
 | Token | What it resolves to |
 |---|---|
-| `{repo_parent}` | the folder that contains the repository |
-| `{repo}` | the repository folder itself |
-| `{repo_name}` | the name of the repository folder |
+| `{repo_parent}` | the folder that contains the repository's main checkout |
+| `{repo}` | the main checkout itself, also when the call is made from a linked worktree |
+| `{repo_name}` | the name of the main checkout's folder |
 | `{home}` | the user's home folder |
 | `{project}` | the project name from the profile's Identity section, falling back to `{repo_name}` |
 
@@ -127,3 +127,41 @@ moved:
   would be ambiguous.
 
 Write the chosen line in `CLAUDE.local.md` and every skill follows it from the next call on.
+
+## Worktrees, and a project run by an orchestrator
+
+A lane's worktree lives outside the repository for the same reasons, under its own root, so the
+folder that holds the repositories never fills with lane checkouts. The worktree root resolves like
+the evidence root, from `--spec`, the `WORKTREE_ROOT` environment variable and a `Worktree root:`
+line, with the default `{repo_parent}/worktree-{project}`. A lane's worktree is
+`<worktree root>/<repo name>-<lane>`:
+
+```
+python <kit>/scripts/evidence-path.py --worktree ab12 --create
+git worktree add "<the printed path>" -b ab12
+```
+
+`--create` there makes only the root; `git worktree add` makes the lane's folder. The resolver
+reads the main checkout's profile even when it is called from inside a lane's worktree, so a lane
+writes its evidence to the same root as the main checkout. Removal needs no root of its own:
+`claude/tools/worktree-sweep.py` finds a repository's worktrees through `git worktree list`,
+wherever they sit, and removes the landed ones. Schedule it once per repository, and give it the
+project's evidence root, since the sweep reads `EVIDENCE_ROOT` and not the profile line:
+
+```
+python <kit>/claude/tools/worktree-sweep.py --repo <repo> --apply --evidence-root "<the path evidence-path.py prints>"
+```
+
+Ticket work with no orchestrator keeps the evidence default above, one folder per item under
+`{repo_parent}/evidence`. A project run by an orchestrator (docs/SEATS.md) collects briefs, lane
+reports, reviews and landings for weeks, so it keeps them in a root of its own, named after the
+project, beside its worktree root. Its `CLAUDE.project.md` carries the three lines:
+
+```
+- Project name: video
+- Evidence root: {repo_parent}/evidence-{project}
+- Worktree root: {repo_parent}/worktree-{project}
+```
+
+which resolve to `<parent>/evidence-video` and `<parent>/worktree-video` whatever the repository
+folder is called.

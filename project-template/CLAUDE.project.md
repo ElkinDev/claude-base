@@ -36,6 +36,8 @@ then adjust. Keep it short and factual. No project code secrets here.
 
 ## Evidence
 - Evidence root: {repo_parent}/evidence
+- Worktree root: {repo_parent}/worktree-{project}
+- A project run by an orchestrator writes `{repo_parent}/evidence-{project}` as its evidence root instead.
 - Portable spec, resolved per machine; the grammar and the per-machine override are in the kit's
   `docs/EVIDENCE.md`. One folder per item under the root, plus a shared `mockups/`.
 - Task subfolders: 01_testings/, 02_PicturesPDF/
