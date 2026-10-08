@@ -130,6 +130,13 @@ the project command after a kit update that changes them:
 - `implementer-light` the same at lower effort, for mechanical slices (tests, strings, docs, renames)
 - `reviewer` adversarial review of a branch diff before merge; a disposition, never a fix
 
+The kit's `settings.json` names the session model `opus`, not `opus[1m]`. Under the launcher's 200k cap
+(`CLAUDE_CODE_DISABLE_1M_CONTEXT=1`, every role but research) Claude Code 2.1.293 does not recognize a name
+with `[1m]`: an interactive session warns that the model "isn't described by this version's model catalog"
+and a headless `claude -p` run fails with `unrecognized_model`. The plain alias runs at 200k under the cap
+and at 1M without it (measured 2026-10-08 on a Max plan). An install keeps the model of a `settings.json`
+it finds, so a machine set up before this change edits that one line by hand.
+
 Every definition names its model by alias (`opus`, `haiku`), never by a versioned id. An alias
 resolves inside the running Claude Code binary to a model that binary supports, so the kit keeps
 working on a machine that has not updated yet, and it follows a new model without a kit commit. A
