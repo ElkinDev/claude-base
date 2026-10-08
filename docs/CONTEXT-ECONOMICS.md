@@ -85,7 +85,7 @@ Verified by reading the bundled code of 2.1.248; behaviour may change in later v
 | knob | effect |
 |---|---|
 | threshold | `min(window - round(window x bufferFraction), window - 13000)`; the fraction comes from a remote table keyed by window size, not from your settings. On 200k it lands at about 160k (80 percent). |
-| `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` | holds every native-1M model, subagents included, to a 200k window. The simplest cap. |
+| `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` | holds every native-1M model, subagents included, to a 200k window. The simplest cap. A model name with `[1m]` is then unknown to 2.1.293 (a warning in a session, `unrecognized_model` in `claude -p`), so the kit's settings name `opus`; see `INSTALL.md`. |
 | `CLAUDE_CODE_AUTO_COMPACT_WINDOW=<tokens>`, setting `autoCompactWindow`, command `/autocompact <tokens>` | the window the threshold is computed from, clamped to the model window. The only lever that *raises* the trigger above 200k. |
 | `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` | applied with `Math.min`, so it can only lower the trigger, never raise it. |
 | `DISABLE_AUTO_COMPACT=1` | no automatic compaction. Never do this on a session that runs unattended: it will hit the hard limit mid-task. |
