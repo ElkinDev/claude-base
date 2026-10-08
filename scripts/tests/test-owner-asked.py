@@ -309,6 +309,11 @@ def main():
                     and lines[1].startswith("2026-01-20 rulings.md:9: [2/4]"))
         check("a line carrying more words prints before a newer one carrying fewer", more_words_first)
 
+        def three_words_two_hit():
+            rc, out = run(root, mem, "repo-guard", "security", "zebra")
+            return rc == 0 and out.startswith("2026-01-12 rulings.md:8: [2/3]") and "rulings.md:9" not in out
+        check("exactly three words: a line carrying two of them is a hit with its count", three_words_two_hit)
+
         def under_half_misses():
             rc, out = run(root, mem, "security", "quantum", "zebra")
             return rc == 1 and "question is new" in out

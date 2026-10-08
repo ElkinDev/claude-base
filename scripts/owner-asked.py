@@ -3,7 +3,7 @@
     python owner-asked.py <word> [<word> ...] [--since YYYY-MM-DD] [--max N] [--all-rows]
 
 Finds the lines that carry the words, case and accent insensitive; a word also matches inside a longer one, so
-"resume" finds "resumes" and "cafe" finds "café". With one or two words a line must carry every one. With three or
+"resume" finds "resumes" and "cafe" finds "café". With one or two different words (a repeated word counts once) a line must carry every one. With three or
 more it must carry at least half of them, rounded up, and each hit prints how many it carries ([3/6]), best first: a
 session searches a topic in two languages in one call, and a register row is often in one language while the owner's
 words are in another, so a line carrying every word is rare and an answered question looks new. Five sources, each
@@ -27,8 +27,8 @@ A date later than today never dates a line (a line that names a future deadline 
 every search). Output is UTF-8 whatever the console's codepage.
 
 When the owner writes in another language than the register, search the topic in both. Prints one line per hit,
-the most words carried first, then newest first: date, source:line, the count of words carried when three or more
-were given, the line cut to 320 characters. Exit 0 on a hit, 1 on none, 2 on a usage error.
+the most words carried first, then newest first: date, source:line, the count of words carried when three or more different
+words were given, the line cut to 320 characters. Exit 0 on a hit, 1 on none, 2 on a usage error.
 A hit that answers the question is applied and cited instead of asking; a question still asked cites this command
 and what it printed.
 
@@ -151,7 +151,8 @@ def main(argv):
     except (AttributeError, ValueError):
         pass
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("words", nargs="+", help="one or two: every word in the line; three or more: at least half")
+    ap.add_argument("words", nargs="+", help="one or two different words: every one in the line; three or more: "
+                                             "at least half (a repeated word counts once)")
     ap.add_argument("--since", help="only lines dated on or after YYYY-MM-DD")
     ap.add_argument("--max", type=int, default=25, help="hits printed, most words first, then newest (default 25)")
     ap.add_argument("--all-rows", action="store_true", help="every register row, not only the owner-answer kinds")
