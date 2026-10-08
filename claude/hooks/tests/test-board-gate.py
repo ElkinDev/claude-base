@@ -81,11 +81,19 @@ class OnBoardTest(unittest.TestCase):
     def test_a_prefix_below_the_root_matches_with_either_separator(self):
         """A prefix may name a folder one level down, such as a worktree root; on Windows it is
         typed with backslashes as often as with slashes, and both name the same folder."""
-        for typed in ("worktrees/AppRepo", "worktrees\\AppRepo", "\\worktrees\\AppRepo\\"):
+        for typed in ("worktrees/AppRepo", "worktrees\\AppRepo", " worktrees\\AppRepo "):
             os.environ["CLAUDE_BOARD_PREFIXES"] = typed
             self.assertTrue(hook.on_board("D:\\Board\\worktrees\\AppRepo-w7\\app"), typed)
             self.assertFalse(hook.on_board("D:/Board/worktrees/Other-w7"), typed)
             self.assertFalse(hook.on_board("D:/Board/AppRepo"), typed)
+
+    def test_an_entry_made_only_of_separators_puts_no_child_on_the_board(self):
+        """Review kit-boardslash r1 MAJOR 1: normalising "/" or "\\" to an empty prefix would
+        match every child of the root and hand a personal folder the board's register."""
+        for typed in ("/", "\\", " / ", "AppRepo;/", "AppRepo; \\ "):
+            os.environ["CLAUDE_BOARD_PREFIXES"] = typed
+            self.assertFalse(hook.on_board("D:/Board/personal"), typed)
+            self.assertTrue(hook.on_board("D:/Board"), typed)
 
     def test_a_sibling_project_is_off_the_board(self):
         self.assertFalse(hook.on_board("D:/Board/OtherProject"))
