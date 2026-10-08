@@ -78,6 +78,15 @@ class OnBoardTest(unittest.TestCase):
         self.assertTrue(hook.on_board("D:/Board/AppRepo-w42/app"))
         self.assertTrue(hook.on_board("d:/board/EVIDENCE/lanes"))
 
+    def test_a_prefix_below_the_root_matches_with_either_separator(self):
+        """A prefix may name a folder one level down, such as a worktree root; on Windows it is
+        typed with backslashes as often as with slashes, and both name the same folder."""
+        for typed in ("worktrees/AppRepo", "worktrees\\AppRepo", "\\worktrees\\AppRepo\\"):
+            os.environ["CLAUDE_BOARD_PREFIXES"] = typed
+            self.assertTrue(hook.on_board("D:\\Board\\worktrees\\AppRepo-w7\\app"), typed)
+            self.assertFalse(hook.on_board("D:/Board/worktrees/Other-w7"), typed)
+            self.assertFalse(hook.on_board("D:/Board/AppRepo"), typed)
+
     def test_a_sibling_project_is_off_the_board(self):
         self.assertFalse(hook.on_board("D:/Board/OtherProject"))
         self.assertFalse(hook.on_board("E:/elsewhere/personal"))

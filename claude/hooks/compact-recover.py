@@ -133,7 +133,8 @@ def on_board(cwd):
     if not root:
         return True
     raw = os.environ.get("CLAUDE_BOARD_PREFIXES")
-    prefixes = [p.strip().lower() for p in (raw.split(";") if raw else BOARD_PREFIXES) if p.strip()]
+    # a prefix may name a folder below the root, typed with either separator
+    prefixes = [p.strip().replace("\\", "/").strip("/").lower() for p in (raw.split(";") if raw else BOARD_PREFIXES) if p.strip()]
     if path == root:
         return True
     if not path.startswith(root + "/"):
