@@ -71,6 +71,9 @@ class FamilyTable(unittest.TestCase):
             "echo it's 'a'; ls": "ls",
             "echo \"a\" \"b; ls": "ls",
             "printf '%s\\n' x && git log": "git log",
+            "echo \"a; b\"": "echo",
+            "printf \"== a; b\"": "printf",
+            "echo 'x && y' --": "echo",
         }
         for command, expected in table.items():
             self.assertEqual(fam(command), expected, command)
@@ -81,6 +84,8 @@ class FamilyTable(unittest.TestCase):
         started = time.monotonic()
         self.assertEqual(fam("printf " + " ".join(['"a"'] * 60)), "printf")
         self.assertEqual(fam("echo " + "'" * 61), "echo")
+        # review redos r1 note 1: blanks before a missing separator were read two ways, quadratic (1.3 s at 20000)
+        self.assertEqual(fam("echo" + " " * 20000 + "x"), "echo")
         self.assertLess(time.monotonic() - started, 1.0)
 
 

@@ -35,10 +35,11 @@ TOOLS = ("Bash", "PowerShell")
 QUOTED_OR_WORD = r"(?:\"[^\"]*\"|'[^']*'|\S+)"
 CD_PREFIX = re.compile(r"^cd\s+" + QUOTED_OR_WORD + r"\s*(?:&&|;)\s*")
 ENV_PREFIX = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\S*)\s*(?:&&|;)?\s*")
-# A quote is either half of a pair or, when no partner follows it, a lone character, never both, so the lazy loop has one
-# way to read a line and a header with many quoted words and no separator fails in linear time (CodeQL py/redos).
+# A quote is either half of a pair or, when no partner follows it, a lone character, never both, and the loop alone eats
+# the blanks before the separator, so the lazy loop has one way to read a line and a header with many quoted words and no
+# separator fails in linear time (CodeQL py/redos). A separator inside quotes is part of the header's text, never its end.
 HEADER_PREFIX = re.compile(
-    r"^(?:echo|date|printf)\b(?:\"[^\"]*\"|'[^']*'|\"(?![^\"]*\")|'(?![^']*')|[^;&\n\"'])*?\s*(?:;|&&)\s*"
+    r"^(?:echo|date|printf)\b(?:\"[^\"]*\"|'[^']*'|\"(?![^\"]*\")|'(?![^']*')|[^;&\n\"'])*?(?:;|&&)\s*"
 )
 CONTROL = {"if", "for", "while", "until", "case", "set", "export", "test", "[", "[[", "{", "(", "then", "do"}
 PYTHON = {"python", "python3", "py"}
