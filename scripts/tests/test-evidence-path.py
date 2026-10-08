@@ -29,12 +29,14 @@ class EvidencePathTest(unittest.TestCase):
         self.home = os.path.join(self.tmp, "home")
         os.makedirs(self.home)
         self.saved_env = os.environ.pop(resolver.ENV_VAR, None)
+        self.saved_wt_env = os.environ.pop(resolver.WORKTREE_ENV_VAR, None)
 
     def tearDown(self):
-        if self.saved_env is None:
-            os.environ.pop(resolver.ENV_VAR, None)
-        else:
-            os.environ[resolver.ENV_VAR] = self.saved_env
+        for name, saved in ((resolver.ENV_VAR, self.saved_env), (resolver.WORKTREE_ENV_VAR, self.saved_wt_env)):
+            if saved is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = saved
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     # helpers -------------------------------------------------------------
@@ -201,6 +203,55 @@ class EvidencePathTest(unittest.TestCase):
         proc = self.cli("--id", "1234")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertFalse(os.path.exists(os.path.join(self.parent, "evidence")))
+
+    # the worktree root ---------------------------------------------------
+
+    def test_the_worktree_root_defaults_to_worktree_dash_project_beside_the_repository(self):
+        self.assertEqual(resolver.find_spec(self.repo, "worktree"), ("{repo_parent}/worktree-{project}", "default"))
+        proc = self.cli("--worktree-root")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertSamePath(proc.stdout.strip(), os.path.join(self.parent, "worktree-sample-repo"))
+
+    def test_an_orchestrated_profile_puts_both_roots_under_the_project_name(self):
+        self.profile("CLAUDE.project.md", "- Project name: video",
+                      "- Evidence root: {repo_parent}/evidence-{project}",
+                      "- Worktree root: `{repo_parent}/worktree-{project}`")
+        self.assertSamePath(self.cli().stdout.strip(), os.path.join(self.parent, "evidence-video"))
+        self.assertSamePath(self.cli("--worktree-root").stdout.strip(), os.path.join(self.parent, "worktree-video"))
+        self.assertSamePath(self.cli("--worktree", "ab12").stdout.strip(),
+                            os.path.join(self.parent, "worktree-video", "sample-repo-ab12"))
+
+    def test_a_worktree_line_leaves_the_evidence_root_alone(self):
+        self.profile("CLAUDE.project.md", "- Worktree root: {home}/lanes")
+        self.assertSamePath(self.cli("--worktree-root", env={"HOME": self.home, "USERPROFILE": self.home}).stdout.strip(),
+                            os.path.join(self.home, "lanes"))
+        self.assertSamePath(self.cli().stdout.strip(), os.path.join(self.parent, "evidence"))
+
+    def test_the_worktree_variable_beats_the_line_and_the_evidence_variable_does_not_reach_it(self):
+        self.profile("CLAUDE.local.md", "Worktree root: {repo_parent}/from-line")
+        elsewhere = os.path.join(self.tmp, "wt-env")
+        proc = self.cli("--worktree-root", "--print-spec", env={"WORKTREE_ROOT": elsewhere})
+        self.assertIn("source: WORKTREE_ROOT", proc.stdout)
+        self.assertSamePath(proc.stdout.strip().splitlines()[-1], elsewhere)
+        proc = self.cli("--worktree-root", "--print-spec", env={"EVIDENCE_ROOT": os.path.join(self.tmp, "ev")})
+        self.assertIn("source: CLAUDE.local.md", proc.stdout)
+        self.assertSamePath(proc.stdout.strip().splitlines()[-1], os.path.join(self.parent, "from-line"))
+
+    def test_a_lane_name_that_is_not_one_folder_exits_two(self):
+        for bad in ("a/b", "a\\b", "..", " "):
+            proc = self.cli("--worktree", bad)
+            self.assertEqual(proc.returncode, 2, bad)
+            self.assertEqual(proc.stdout, "", bad)
+
+    def test_create_with_a_worktree_makes_only_the_root(self):
+        proc = self.cli("--worktree", "ab12", "--create")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(os.path.isdir(os.path.join(self.parent, "worktree-sample-repo")))
+        self.assertFalse(os.path.exists(os.path.join(self.parent, "worktree-sample-repo", "sample-repo-ab12")))
+        self.assertFalse(os.path.exists(os.path.join(self.parent, "evidence")))
+
+    def test_worktree_and_id_are_exclusive(self):
+        self.assertEqual(self.cli("--worktree", "ab12", "--id", "1234").returncode, 2)
 
 
 if __name__ == "__main__":

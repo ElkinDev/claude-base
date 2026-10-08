@@ -110,8 +110,10 @@ show the correct way with a concrete example.
 ## Evidence
 Keep a structured evidence pack per task: evidence.md, session.md, pr-comment.md. It lives outside
 the repository, beside it, under the root the `Evidence root:` line of `CLAUDE.project.md` declares;
-resolve it with the kit's `scripts/evidence-path.py`, never by hand. Create the folder early and
-keep it current, so it is ready at commit/PR time, not rebuilt at the end.
+resolve it with the kit's `scripts/evidence-path.py`, never by hand. A lane's worktree goes under
+the `Worktree root:` line the same way (`evidence-path.py --worktree <lane>`), never inside or
+directly beside the repository. Create the folder early and keep it current, so it is ready at
+commit/PR time, not rebuilt at the end.
 
 ## Project specifics
 All project-specific facts live in `CLAUDE.project.md`. Read it. If it is missing, copy the closest
