@@ -53,8 +53,8 @@ correct way with a concrete example.
   its data, numbered options, the recommended one marked, and its class. A reversible default (an
   operational or copy choice, or one a ruling or precedent covers) names the time at which the
   recommended option runs if no answer comes, veto open, and runs it then, through one bounded
-  wait armed for that time or at the first turn after it. The owner's own words, money, legal
-  exposure and design are his: say so, STOP and wait for the answer. Never assume one.
+  wait armed for that time or at the first turn after it. Words the owner must write, money, legal
+  exposure and design stay with the owner: say so, STOP and wait for the answer. Never assume one.
 - Propose alternatives with tradeoffs when relevant, and give a recommendation, not an exhaustive
   survey.
 - An `rm` names its target by a literal absolute path, a literal glob included

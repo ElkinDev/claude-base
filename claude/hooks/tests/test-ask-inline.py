@@ -80,6 +80,16 @@ try:
     case("an odd input is still denied and logged with no count",
          "deny" in out and log_lines()[-1].split()[3] == "questions=-", repr(log_lines()[-1:]))
 
+    code, out = run(dict(ask(), tool_input=["q"]))
+    case("a tool input that is a list is still denied", code == 0 and '"deny"' in out, out)
+
+    code, out = run('{"tool_name": "AskUserQuestion", "cwd": "C:/x\\udc80", "session_id": "s1"}')
+    case("a folder name the log cannot encode is still denied and logged",
+         code == 0 and '"deny"' in out and log_lines()[-1].split()[2] == "s1", out + repr(log_lines()[-1:]))
+
+    code, out = run(ask())
+    case("the reason asks for a bounded wait on a reversible one", "bounded wait" in out, out)
+
     code, out = run(ask(), ASK_INLINE_LOG=os.path.join(TMP, "no such folder", "x.log"))
     case("a log that cannot be written still denies", code == 0 and '"deny"' in out, out)
 finally:

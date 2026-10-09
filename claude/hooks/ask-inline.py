@@ -27,23 +27,27 @@ REASON = (
     "the owner's language: its data, numbered options, the recommended one marked, and its class. A reversible "
     "default (an operational or copy choice, or one a ruling or precedent covers) says the time at which the "
     "recommended option runs if no answer comes, veto open, and runs it then; the owner's own words, money, legal "
-    "exposure or design say the decision is his and wait for the answer. Then end your turn."
+    "exposure or design say the decision is the owner's and wait for the answer. For a reversible one, arm one "
+    "bounded wait for its time before you end your turn, and run the recommended option then if no answer came."
 )
 
 
 def log(payload):
-    questions = (payload.get("tool_input") or {}).get("questions")
-    line = "%s %s questions=%s %s\n" % (
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        str(payload.get("session_id") or "-")[:8],
-        len(questions) if isinstance(questions, list) else "-",
-        payload.get("cwd") or "-",
-    )
+    """Called after the deny is printed, and never raises: an odd payload or a log that cannot be written costs the
+    line, never the deny."""
     try:
-        with open(LOG, "a", encoding="utf-8") as h:
+        tool_input = payload.get("tool_input")
+        questions = tool_input.get("questions") if isinstance(tool_input, dict) else None
+        line = "%s %s questions=%s %s\n" % (
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            str(payload.get("session_id") or "-")[:8],
+            len(questions) if isinstance(questions, list) else "-",
+            payload.get("cwd") or "-",
+        )
+        with open(LOG, "a", encoding="utf-8", errors="replace") as h:
             h.write(line)
-    except OSError:
-        pass  # a log that cannot be written never lets the selector through
+    except Exception:
+        pass
 
 
 def main():
@@ -55,9 +59,10 @@ def main():
         return 0
     if not isinstance(payload, dict) or payload.get("tool_name") != "AskUserQuestion":
         return 0
-    log(payload)
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                              "permissionDecisionReason": REASON}}))
+    sys.stdout.flush()
+    log(payload)
     return 0
 
 
