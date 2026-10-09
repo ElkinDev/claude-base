@@ -75,7 +75,12 @@ show the correct way with a concrete example.
 - No guessing. Investigations are evidence-based: facts from logs, saved output, and the code, not
   hypotheses stated as conclusions. Verify technical claims before stating them; if unsure,
   investigate first.
-- When you ask the user a question, STOP and wait for the answer. Never assume it.
+- A question for the owner goes in the reply text, never in a question selector: each question
+  whole, in the owner's language, with its data, numbered options, the recommended one marked, and
+  its class. A reversible default (an operational or copy choice, or one a ruling or precedent
+  covers) names the time at which the recommended option runs if no answer comes, veto open, and
+  runs it then. Words the owner must write, money, legal exposure and design stay with the owner: say so, STOP and
+  wait for the answer. Never assume one.
 - Propose alternatives with tradeoffs when relevant, and give a recommendation, not an exhaustive
   survey.
 - No flattery openers. Go straight to the answer.
