@@ -41,7 +41,7 @@ PROJECTS = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.p
                         "projects")
 # dollars per million tokens: input, cache write 5 m, cache write 1 h, cache read, output
 PRICES = {
-    "claude-sonnet-5-5": (2.0, 2.5, 4.0, 0.20, 10.0),
+    "claude-sonnet-5-5": (2.0, 2.5, 4.0, 0.10, 10.0),
     "claude-opus-5-5": (4.0, 5.0, 8.0, 0.20, 20.0),
 }
 IMPLEMENTING = ("implementer", "implementer-light")

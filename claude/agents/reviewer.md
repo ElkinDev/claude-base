@@ -4,7 +4,7 @@ description: Adversarial review of a branch diff against its brief, acceptance l
 model: opus
 effort: high
 maxTurns: 40
-tools: Read, Grep, Glob, Bash, PowerShell, WebFetch, WebSearch, Skill, Agent
+tools: Read, Grep, Glob, Bash, PowerShell, WebFetch, WebSearch, Agent
 skills:
   - adversarial-review
   - bulk-read

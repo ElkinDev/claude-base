@@ -53,6 +53,10 @@ MEMORY_STALE_FIELD = ("---\nname: build-daemons\nmodified: 2026-01-10T10:00:00Z\
                       "The owner saw RAM at 70 percent and asked for a daemon cap.\n")
 
 
+MEMORY_FACT = ("---\nname: single-owner\nmodified: 2026-01-25T10:00:00Z\n---\n\n"
+               "Owner verbatim: this is not a company or a business, it is only me.\n")
+
+
 def clean_env(**extra):
     env = {k: v for k, v in os.environ.items() if k not in SCRUBBED}
     env.update(extra)
@@ -98,7 +102,8 @@ def main():
                  os.path.join(root, "ledger", "owner-reports.md"): REPORTS,
                  os.path.join(root, "landings.md"): LANDINGS,
                  os.path.join(mem, "autonomy.md"): MEMORY,
-                 os.path.join(mem, "build-daemons.md"): MEMORY_STALE_FIELD}
+                 os.path.join(mem, "build-daemons.md"): MEMORY_STALE_FIELD,
+                 os.path.join(mem, "single-owner.md"): MEMORY_FACT}
         for path, text in seeds.items():
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
@@ -106,6 +111,7 @@ def main():
         # mtimes: autonomy older than its field (the field wins), build-daemons newer (the mtime wins).
         os.utime(os.path.join(mem, "autonomy.md"), (stamp("2026-01-10"), stamp("2026-01-10")))
         os.utime(os.path.join(mem, "build-daemons.md"), (stamp("2026-01-19"), stamp("2026-01-19")))
+        os.utime(os.path.join(mem, "single-owner.md"), (stamp("2026-01-25"), stamp("2026-01-25")))
 
         def check(name, fn):
             try:
@@ -332,6 +338,71 @@ def main():
         def bad_max():
             return run(root, mem, "x", "--max", "0")[0] == 2 and run(root, mem, "x", "--max", "-1")[0] == 2
         check("--max under 1 is a usage error, never an empty or clipped list", bad_max)
+
+        def near_on_a_miss():
+            # a search that carries several questions misses a one-line answer (1 of 6 words) and used to call the
+            # question new; a miss now prints the lines that carry a rare word, so the answer is seen
+            rc, out = run(root, mem, "tiktok", "payments", "company", "mascot", "invoice", "profit")
+            lines = out.splitlines()
+            return (rc == 1 and "question is new" in lines[0] and len(lines) >= 2
+                    and lines[1].startswith("near 2026-01-25 memory/single-owner.md:") and "[company]" in lines[1])
+        check("a miss prints near lines carrying a rare word", near_on_a_miss)
+
+        def near_world(name, rows):
+            r, m = os.path.join(tmp, name + "-ev"), os.path.join(tmp, name + "-mem")
+            os.makedirs(os.path.join(r, "drafts"))
+            os.makedirs(m)
+            with open(os.path.join(r, "drafts", "owner-decisions-2026-01-20.md"), "w", encoding="utf-8") as f:
+                f.write(chr(10).join(rows) + chr(10))
+            return r, m
+
+        def near_order(r, m, *words):
+            rc, out = run(r, m, *words)
+            return rc, [ln.split(".md:")[1].split(":")[0] for ln in out.splitlines() if ln.startswith("near ")]
+
+        # each rule of the order gets a case where it alone decides it against the rule it replaced
+        def near_count_beats_rarity():
+            # line 1 holds one df-1 word (sum 1.0) and is the newest; lines 2 to 4 hold two df-3 words (sum 0.67):
+            # by the sum or by the date line 1 would lead, by the count of rare words it comes last
+            r, m = near_world("ncount", ["- 2026-01-20 solotok said once", "- 2026-01-01 twoatok twobtok first",
+                                         "- 2026-01-02 twoatok twobtok second", "- 2026-01-03 twoatok twobtok third"])
+            rc, order = near_order(r, m, "solotok", "twoatok", "twobtok", "qqa", "qqb", "qqc")
+            return rc == 1 and order == ["4", "3", "2", "1"]
+        check("near lines: the most rare words first, ahead of a rarer single word", near_count_beats_rarity)
+
+        def near_count_is_of_rare_words():
+            # lines 2 and 3 carry a df-2 word and a word in 32 partial lines, which is not rare and is not counted:
+            # line 1 (one df-1 word, the oldest) leads; counting every carried word would put 2 and 3 first
+            r, m = near_world("ncommon", ["- 2026-01-01 solotok said once", "- 2026-01-20 pairtok bigtok first",
+                                          "- 2026-01-19 pairtok bigtok second"] +
+                              ["- 2026-01-10 bigtok filler %s" % chr(97 + i % 26) * (1 + i // 26) for i in range(30)])
+            rc, order = near_order(r, m, "solotok", "pairtok", "bigtok", "qqa", "qqb", "qqc")
+            return rc == 1 and order == ["1", "2", "3"]
+        check("near lines: the count is of rare words only, a common word adds nothing", near_count_is_of_rare_words)
+
+        def near_rarity_then_date_then_cap():
+            # one rare word each: the df-1 line is the oldest and leads; the df-2 pair, then the df-4 lines, newest
+            # first; seven candidates, five print
+            r, m = near_world("nrare", ["- 2026-01-01 raretok once", "- 2026-01-10 midtok first",
+                                        "- 2026-01-11 midtok second"] +
+                              ["- 2026-01-1%d plaintok row" % d for d in (2, 3, 4, 5)])
+            rc, order = near_order(r, m, "raretok", "midtok", "plaintok", "qqa", "qqb", "qqc")
+            return rc == 1 and order == ["1", "3", "2", "7", "6"]
+        check("near lines: then the rarer, then the newest; five at most", near_rarity_then_date_then_cap)
+
+        def near_threshold_is_25():
+            # a word in 25 partial lines is rare and prints, a word in 26 is not and prints nothing
+            r, m = near_world("nedge", ["- 2026-01-01 edgetok row %s" % chr(97 + i) for i in range(25)] +
+                              ["- 2026-01-02 overtok row %s" % chr(97 + i) for i in range(26)])
+            rc1, o1 = near_order(r, m, "edgetok", "qqa", "qqb")
+            rc2, o2 = near_order(r, m, "overtok", "qqa", "qqb")
+            return rc1 == 1 and len(o1) == 5 and rc2 == 1 and o2 == []
+        check("near lines: a word in 25 lines is rare, in 26 it is not", near_threshold_is_25)
+
+        def no_near_on_a_hit():
+            rc, out = run(root, mem, "repo-guard", "security", "zebra")
+            return rc == 0 and "near " not in out
+        check("a search with a hit prints no near lines", no_near_on_a_hit)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("%d of %d OK (%s)" % (sum(results), len(results), SCRIPT))
