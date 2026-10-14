@@ -203,7 +203,9 @@ def main():
             print(f"agent {args.agent}: no usage rows")
             raise SystemExit(2)
         last = tr[-1]
-        print(f"agent {args.agent}: last ctx {last['ctx']:,} turns {len(tr)} last turn {last['ts'][:19]}Z {'RESUME' if last['ctx'] < 100000 else 'FRESH'} (resume threshold 100k)")
+        idle_s = (datetime.now(timezone.utc).replace(tzinfo=None)
+                  - datetime.fromisoformat(last['ts'][:19])).total_seconds()
+        print(f"agent {args.agent}: last ctx {last['ctx']:,} turns {len(tr)} last turn {last['ts'][:19]}Z {'RESUME' if last['ctx'] < 100000 and idle_s <= 300 else 'FRESH'} (resume only under 100k and within 5 min, idle {idle_s / 60:.0f} min)")
         return
 
     if not args.since or not args.until:
