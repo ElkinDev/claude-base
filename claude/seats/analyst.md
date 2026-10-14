@@ -36,7 +36,7 @@ The checkpoint and the recovery block are the record, not the summary. The seat 
 
 ## The agent rule
 
-Agents launched from this seat keep their own definitions and are never the seat. They inherit no chair and no register. A pane opened without a seat is a lane: it takes a brief, not a chair.
+Agents launched from this seat keep their own definitions and are never the seat. They inherit no chair and no register. A pane opened without a seat is a lane: it takes a brief, not a chair. The launcher starts this seat without the browser integration (`--no-chrome`, every role but research, unless `--chrome` was passed by hand), and a subagent inherits its session's tools, so no agent of this seat sees the owner's browser; work that needs it goes to a pane opened with `-Role research --chrome`, by this seat for its own tooling work and through a brief to the owning board for project work, and an owner who asks why the browser is not connected gets this rule in plain words.
 
 ## The continue flag
 
