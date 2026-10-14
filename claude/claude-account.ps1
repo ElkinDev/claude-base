@@ -590,8 +590,9 @@ Write-Host ""
 Write-Host "Account $target" -ForegroundColor Cyan
 # -Sync refreshes a profile that exists. A name that resolves to none is a typo or a stale note,
 # and building a profile for it leaves a stray folder full of junctions that is unsafe to delete
-# by hand; making a profile is what the name alone or -Prepare is for.
-if ($Sync -and -not $Prepare -and -not (Test-Path $ProfileDir)) {
+# by hand. -Sync adds nothing to a new profile, which gets CLAUDE.md and settings.json anyway, so
+# -p -s on a stale name is refused too; making a profile is what the name alone or -p is for.
+if ($Sync -and -not (Test-Path $ProfileDir)) {
     Fail "no such profile '$target'. -Sync refreshes an existing one; create it with: cc $target -p"
 }
 $isNew = -not (Test-Path $ProfileDir)

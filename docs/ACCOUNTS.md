@@ -114,7 +114,7 @@ Two side notes. Every role except `research` adds `--no-chrome`, so a session th
 
 **JSON is merged, not replaced.** Replacing `settings.json` drops keys Claude Code writes on its own, such as `skipDangerousModePermissionPrompt`, and then it asks you to confirm bypass mode on every start. `claude/merge-settings.py` merges deeply, keeps keys the profile owns, and refuses to write when the destination does not parse. Without Python the script falls back to a copy and says so.
 
-**A profile that changed is never overwritten silently.** The script stores the hash of both sides of the last copy in `.sync-source.json`. If the profile file no longer matches, it is left alone and you are told. `-Sync` forces it and saves a `.bak` first. It only refreshes a profile that exists: on a name with no profile it stops and says how to create one (`cc <name> -p`), since a profile built from a typo is a folder of junctions that is unsafe to delete by hand.
+**A profile that changed is never overwritten silently.** The script stores the hash of both sides of the last copy in `.sync-source.json`. If the profile file no longer matches, it is left alone and you are told. `-Sync` forces it and saves a `.bak` first. It only refreshes a profile that exists: on a name with no profile it stops and says how to create one (`cc <name> -p`), `-p -s` included, since a profile built from a typo is a folder of junctions that is unsafe to delete by hand.
 
 Dates do not work for this. A modification date only says which file is newer, not whether the profile drifted from what it was given, and Claude Code rewrites `settings.json` on its own whenever you touch `/config`.
 
