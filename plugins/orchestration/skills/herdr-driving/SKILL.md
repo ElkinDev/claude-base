@@ -108,14 +108,20 @@ A prompt sent before the dialog is answered is typed into the dialog.
 ## Launching a session in a new pane
 
 ```
-herdr tab create --cwd <folder> --label <label> --no-focus
+herdr tab create --workspace <id> --cwd <folder> --label <label> --no-focus
 herdr pane run <pane> "<command>"
 ```
 
-`tab create` returns JSON carrying the new pane id, which `pane run` then takes as its target. Pick
-the workspace with `herdr workspace list` and pass `--workspace <id>`; `--no-focus` keeps the new tab
-out of the way of whoever is watching. The launcher labels its tabs so the role is visible in
-`herdr tab list`.
+`tab create` returns JSON carrying the new pane id, which `pane run` then takes as its target. Always
+pass `--workspace <id>`, read in the same turn (the `workspace_id` of your own row in
+`herdr agent list`, or `herdr workspace list`; `HERDR_WORKSPACE_ID` holds it only for a pane that was
+never moved): without it the tab can open in whichever workspace someone is looking at.
+`--no-focus` keeps the new tab out of the way of whoever is watching. The launcher labels its tabs so
+the role is visible in `herdr tab list`.
+
+A session never opens a lane inside its own tab or by splitting a pane whose agent is working. One
+that sits there moves out with `herdr pane move <pane> --new-tab --workspace <id> --no-focus`; go on
+with the pane id that call returns.
 
 ## Notifications
 
