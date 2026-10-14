@@ -92,10 +92,24 @@ Requirements: Windows PowerShell 5.1+, `git` on PATH, and a terminal font with e
 line glyphs.
 
 ## 2. A project
-Scaffold a project so it gets the working rules, a profile to fill, and the branch hooks:
+Scaffold a project so it gets the working rules, a profile to fill, the branch hooks, and the logged
+runner its `CLAUDE.md` names (`scripts/hooks/run-logged.py`):
 ```
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Project C:\Repo\my-app
 ```
+No stack-specific hook is wired by default. In a gradle project add `-GradleHook`: it copies
+`scripts/hooks/filter-gradle-output.py` beside the runner and wires it as a PreToolUse hook on Bash,
+so build output goes to a log instead of the context:
+```
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Project C:\Repo\my-app -GradleHook
+```
+The switch needs `-Project`, and it is refused in one line, with nothing written, when either hook
+script in the project would not be the kit's after the run or the kit tree lacks one
+(`docs/ADOPTION.md`). Pass it on every run of that project: a run without it renders the settings
+without the hook. A run that takes the hook out of `.claude/settings.json` says so in one line after
+its plan and names `-GradleHook` as the way to wire it again, and a run with the switch that keeps a
+`.claude/settings.json` of your own without the hook says it is not wired yet and points at
+`settings.json.new`; under `-DryRun` both lines say what a real run would do.
 Adopting the kit in a repository that already has rules of its own (a company `CLAUDE.md`, git
 hooks, pre-commit or husky wiring) is a case of its own, and `docs/ADOPTION.md` covers it end to
 end: what the run touches, what it never touches, how to keep every kit file out of the team's
@@ -337,7 +351,9 @@ everything else as yours.
   that was lost: a file that is byte for byte the kit's goes back into the manifest, because
   without the record a rollback would no longer be allowed to remove it.
 - `-DryRun` prints the full plan, one line per file with its action, and writes nothing.
-- In a project it writes only `CLAUDE.md`, `CLAUDE.project.md` and `.claude/`, plus `docs/` on the
+- In a project it writes only `AGENTS.md`, `CLAUDE.md`, `CLAUDE.project.md`, `.claude/` and
+  `scripts/hooks/` (the logged runner `CLAUDE.md` names, and the gradle filter on the runs you pass
+  `-GradleHook` to), plus `docs/` on the
   runs you pass `-Sdd` to, and it names those paths in the preflight before it plans anything. It
   never writes a git hook, never sets `core.hooksPath`, and never adds a CI file. Existing husky,
   pre-commit, lefthook, CODEOWNERS and editorconfig wiring is listed in the preflight and then

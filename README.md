@@ -59,7 +59,11 @@ project-template/           -> copy into each project
   profiles/                 examples: azure-devops-dotnet, jira-git, plain-git, personal-notes
   .claude/settings.local.json   project hook wiring (branch hooks)
   .claude/settings.json     plugin source and the plugins a scaffolded project enables, rendered
-                            by the installer from the clone it runs out of
+                            by the installer from the clone it runs out of; it wires no hook
+  .claude/settings.gradle.json  the same file plus the gradle output hook, rendered in its place
+                            when a project is scaffolded with -GradleHook
+  scripts/hooks/            run-logged.py (named in CLAUDE.md), copied into every project, and
+                            filter-gradle-output.py (the PreToolUse hook), copied with -GradleHook
   docs/                     spec structure for spec-driven projects (for /sdd, /delivery:sdd from the marketplace)
 .claude-plugin/             marketplace manifest: the plugins this repository publishes
 plugins/                    the skills that only make sense as a set, packaged for `claude plugin`.
