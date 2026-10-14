@@ -110,17 +110,82 @@ function Get-KitMissingDirs {
 
 # ---------------------------------------------------------------- project adoption
 
+function Get-KitHookScripts {
+    # The scripts project scope lands in <project>\scripts\hooks. run-logged.py on every run: the
+    # scaffolded CLAUDE.md sends long tools through it. filter-gradle-output.py only with -GradleHook:
+    # it is what the gradle hook of settings.gradle.json runs, and it sends gradle through the runner
+    # beside it. A caller wraps the answer in @(), because one name comes back as a bare string.
+    param([switch]$GradleHook)
+    if ($GradleHook) { return @('run-logged.py', 'filter-gradle-output.py') }
+    return @('run-logged.py')
+}
+
+function Get-KitHookScriptAction {
+    <#
+    What the plan will do with one project hook script: the answer of the ownership rule the plan
+    itself asks (Resolve-KitAction in install\lib.ps1), so nothing said from here can disagree with
+    the plan. 'write', 'same', 'refresh' and 'force' leave the kit's file in the project once the
+    run is over: absent before it, byte for byte the kit's, recorded in the manifest and unedited,
+    or overwritten under -Force. 'new' is a file of the adopter's own, and that includes a script
+    the kit wrote and the adopter then edited, because the record no longer matches it. 'nosource'
+    is a kit tree that does not carry the script: the plan has nothing to write for it.
+    #>
+    param([string]$Project, [string]$Template, [string]$Name, [hashtable]$Manifest = @{}, [switch]$Force)
+    $source = Join-Path $Template "scripts\hooks\$Name"
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { return 'nosource' }
+    return (Resolve-KitAction -Target (Join-Path $Project "scripts\hooks\$Name") -Manifest $Manifest `
+        -Force:$Force -SourceHash (Get-Sha256File $source))
+}
+
+function Get-KitGradleHookRefusal {
+    <#
+    Why -GradleHook cannot be honoured, as one line, or $null when it can. Two checks, both made
+    before the run writes or plans anything. The kit tree has to carry what the switch installs:
+    the gradle settings template and both hook scripts. And each of the two scripts in the project
+    has to be the kit's once the run is over, by Get-KitHookScriptAction: the hook runs the filter,
+    the filter sends gradle through the runner beside it, and a runner that is not the kit's can
+    report a build green that never started. The switch is an explicit request, so it is refused
+    rather than half honoured, and a refusal has nothing to predict.
+
+    The remedy it names is one that exists on a disk nothing was written to: the kit's own file,
+    or -Force. It names no .new, because a refused run leaves none.
+    #>
+    param([string]$Project, [string]$Template, [hashtable]$Manifest = @{}, [switch]$Force)
+    $names   = @(Get-KitHookScripts -GradleHook)
+    $needed  = @('.claude\settings.gradle.json') + @($names | ForEach-Object { "scripts\hooks\$_" })
+    $missing = @($needed | ForEach-Object { Join-Path $Template $_ } |
+                 Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
+    if ($missing) {
+        return ('refused: -GradleHook needs ' + ($missing -join ' and ') + ', which this kit tree does not ' +
+                'carry. Run the installer from a complete clone of the kit. Nothing was written.')
+    }
+    $own = @($names | Where-Object { (Get-KitHookScriptAction $Project $Template $_ $Manifest -Force:$Force) -eq 'new' } |
+             ForEach-Object { Join-Path $Project "scripts\hooks\$_" })
+    if ($own) {
+        return ('refused: -GradleHook would wire a hook that runs ' + ($own -join ' and ') + ', yours and not ' +
+                'the kit''s. Put the kit''s file there (from ' + (Join-Path $Template 'scripts\hooks') +
+                ') and run again, or add -Force, which does that after a backup. Nothing was written.')
+    }
+    return $null
+}
 function Get-AdoptionFindings {
     <#
-    What the repository already has, and what the installer will do about it. Only findings are
+    What the repository already has, and what this run will do about it. Only findings are
     printed: an adopter cares about the files that already exist, not about the ones that do not.
     With the template folder in hand it also compares: a file that already holds the kit's bytes
-    gets no .new beside it, and saying it would is a promise the run does not keep.
+    gets no .new beside it, and saying it would is a promise the run does not keep. It takes the
+    run's own switches for the same reason: under -Force a file of the adopter's is overwritten
+    after a backup, not kept, and a hook script the run installs no version of gets no .new. The
+    manifest is for the two hook scripts, which are listed only when the run leaves a file there
+    that is not the kit's.
     #>
-    param([string]$Project, [string]$Template)
-    $shared = 'kept as is, the kit version lands beside it as <name>.new'
-    $same   = 'kept as is, already matches the kit'
-    $never  = 'never touched by the installer'
+    param([string]$Project, [string]$Template, [hashtable]$Manifest = @{}, [switch]$Force, [switch]$GradleHook)
+    $shared    = 'kept as is, the kit version lands beside it as <name>.new'
+    $same      = 'kept as is, already matches the kit'
+    $never     = 'never touched by the installer'
+    $forced    = 'overwritten by -Force, after a copy of yours goes to the backup'
+    $forcedDir = 'under -Force a file in it that the kit writes and that differs is overwritten after a backup, the rest is kept as is'
+    $unwritten = 'kept as is, this run writes no file of that name'
     $known  = @(
         @('CLAUDE.md', $shared), @('AGENTS.md', $shared), @('.claude', $shared),
         @('.cursor', $never), @('.github/copilot-instructions.md', $never), @('.husky', $never),
@@ -136,6 +201,10 @@ function Get-AdoptionFindings {
             if ($note -eq $shared -and $kit -and (Test-Path -LiteralPath $kit -PathType Leaf) -and
                 (Test-Path -LiteralPath $here -PathType Leaf) -and
                 (Get-Sha256File $here) -eq (Get-Sha256File $kit)) { $note = $same }
+            # -Force overwrites what the line above calls kept, and the .new it promises is never written.
+            if ($Force -and $note -eq $shared -and $kit -and (Test-Path -LiteralPath $kit)) {
+                $note = if (Test-Path -LiteralPath $here -PathType Leaf) { $forced } else { $forcedDir }
+            }
             # A team AGENTS.md is merged by its markers, never by hand (F03 edge case 1): the note names
             # the command, which adds the kit's sections to theirs and leaves every line of theirs alone.
             # Full paths, so it runs from wherever the adopter reads it.
@@ -145,6 +214,24 @@ function Get-AdoptionFindings {
                 $note += "; once a real run has written AGENTS.md.new, take the kit sections into yours: python `"$tool`" render `"$here.new`" `"$here`""
             }
             $out += [pscustomobject]@{ Item = $item[0]; Note = $note }
+        }
+    }
+    # The two project hook scripts, each listed when it is on disk and the run does not leave the
+    # kit's file there. The plan's own rule is asked (Get-KitHookScriptAction) with the run's own
+    # switches, so a line says what this run does: a .new only where the plan writes one, overwritten
+    # under -Force, and no .new for a script the run installs no version of (the filter on a run
+    # without -GradleHook, or a script the kit tree does not carry).
+    if ($Template) {
+        $installs = @(Get-KitHookScripts -GradleHook:$GradleHook)
+        foreach ($name in @(Get-KitHookScripts -GradleHook)) {
+            $writes = $installs -contains $name
+            $action = Get-KitHookScriptAction $Project $Template $name $Manifest -Force:($Force -and $writes)
+            $onDisk = Test-Path -LiteralPath (Join-Path $Project "scripts\hooks\$name") -PathType Leaf
+            $note   = $null
+            if ($writes -and $action -eq 'new')       { $note = $shared }
+            elseif ($writes -and $action -eq 'force') { $note = $forced }
+            elseif ($onDisk -and ($action -eq 'new' -or $action -eq 'nosource')) { $note = $unwritten }
+            if ($note) { $out += [pscustomobject]@{ Item = ('scripts/hooks/' + $name); Note = $note } }
         }
     }
     foreach ($file in @(Get-ChildItem -LiteralPath $Project -Filter 'CONTRIBUTING*' -File -ErrorAction SilentlyContinue)) {

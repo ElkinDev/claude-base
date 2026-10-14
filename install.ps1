@@ -6,10 +6,13 @@ install.ps1 - install the personal Claude Code base without destroying anything 
   (%USERPROFILE%\.claude, or $env:KIT_HOME when it is set) and render settings.json.
 
   Project scope (-Project <path>): scaffold a project with AGENTS.md, CLAUDE.md, CLAUDE.project.md, a
-  .claude/settings.local.json and the branch hooks, plus docs/ when you pass -Sdd. It prints what
-  the repository already has before it plans anything, and it never writes git hooks, CI files, or
-  anything outside the paths it names in that preflight.
-
+  .claude/settings.local.json and the branch hooks, the logged runner CLAUDE.md names
+  (scripts/hooks/run-logged.py), plus docs/ when you pass -Sdd. No stack-specific hook is wired by
+  default. -GradleHook opts a gradle project in: it copies scripts/hooks/filter-gradle-output.py and
+  wires it as a PreToolUse hook, and it refuses, with nothing written, when a hook script in the
+  project would not be the kit's after the run. The run prints what the repository already has
+  before it plans anything, and it never writes git hooks, CI files, or anything outside the paths
+  it names in that preflight.
   Nothing is ever deleted. Every file the installer writes is recorded with its hash in
   <kit home>\.kit-manifest.json. A file that differs from that record, or that the manifest never
   heard of, belongs to you: it is backed up, left exactly as it is, and the kit version lands
@@ -21,6 +24,7 @@ Examples:
   powershell -ExecutionPolicy Bypass -File .\install.ps1 -DryRun
   powershell -ExecutionPolicy Bypass -File .\install.ps1
   powershell -ExecutionPolicy Bypass -File .\install.ps1 -Project C:\Repo\my-app -LocalOnly
+  powershell -ExecutionPolicy Bypass -File .\install.ps1 -Project C:\Repo\my-app -GradleHook
 #>
 param(
     [string]$Project,
@@ -31,6 +35,10 @@ param(
     # Project scope: add exactly what the kit wrote to the repository's exclude file, so none of
     # it can reach the team's history by accident.
     [switch]$LocalOnly,
+    # Project scope: wire the gradle output hook and copy the filter it runs. Off by default, since a
+    # hook that starts a process on every shell call serves only a gradle project. Refused when a hook
+    # script in the project would not be the kit's after the run, or when the kit tree lacks one.
+    [switch]$GradleHook,
     # How Claude Code asks before it acts. 'bypass' is what the base ships: no permission
     # prompts, which is fast and is what most of these skills assume. 'ask' keeps the
     # normal prompts. See docs/PERMISSIONS.md before choosing.
@@ -48,11 +56,28 @@ $root = $PSScriptRoot
 . (Join-Path $root 'install\adopt.ps1')
 . (Join-Path $root 'install\herdr.ps1')
 if ($Herdr -and $NoHerdr) { throw '-Herdr and -NoHerdr cannot both be given.' }
+if ($GradleHook -and -not $Project) {
+    Write-Output 'refused: -GradleHook wires a hook into a project, so it needs -Project <path>. Nothing was written.'
+    exit 1
+}
 
 $kitHome      = Get-KitHome
 $stamp        = Get-KitStamp $kitHome
 $manifestPath = Join-Path $kitHome '.kit-manifest.json'
 $manifest     = Read-KitManifest $manifestPath
+if ($GradleHook) {
+    # An explicit request is answered before anything else happens: ahead of the preflight and the
+    # plan, and ahead of the two writes that come before them (the project folder, and a broken
+    # manifest moved aside). A refusal is one line and leaves the disk as it was, so no line of this
+    # run has to predict what the hook would call. The path is spelled the way the plan spells it,
+    # because the manifest is keyed by it.
+    $asked   = if (Test-Path -LiteralPath $Project) { (Resolve-Path -LiteralPath $Project).Path } else { $Project }
+    $refusal = Get-KitGradleHookRefusal $asked (Join-Path $root 'project-template') $manifest -Force:$Force
+    if ($refusal) {
+        Write-Output $refusal
+        exit 1
+    }
+}
 if (Test-KitManifestBroken) {
     Write-Output "warn: $manifestPath cannot be read, so every file already on disk counts as yours."
     if ($DryRun) {
@@ -84,6 +109,8 @@ function Invoke-KitPlan {
         }
         $finished = $true
     } finally {
+        # Kept for the one reader that comes after the plan (Get-KitGradleHookNote under -DryRun).
+        $script:KitPlanLines = @($lines)
         if ($DryRun) {
             Write-Output "plan (dry run, nothing is written):"
             foreach ($line in $lines) { Write-Output "  $line" }
@@ -93,6 +120,39 @@ function Invoke-KitPlan {
         Write-KitSummary $lines $finished
         Write-KitClosing
     }
+}
+
+function Get-KitGradleHookNote {
+    <#
+    One line for a project run that would otherwise leave the gradle hook unwired without a word, or
+    nothing. It remembers nothing and predicts nothing: it holds the project's settings.json as it
+    was before the plan against the file as it is after it. A dry run writes nothing, so there the
+    file after is what the plan's own line for it says: the rendered text behind write, refresh and
+    force, the file as it was behind every other verb.
+    #>
+    param([string]$Settings, [string]$Before, [string]$Rendered)
+    $filter = 'filter-gradle-output.py'
+    if ($DryRun) {
+        $verb = ''
+        foreach ($line in $script:KitPlanLines) {
+            if ($line.EndsWith(" $Settings") -or $line.Contains(" $Settings (")) { $verb = $line.Split(' ')[0] }
+        }
+        $after = if (@('write', 'refresh', 'force') -contains $verb) { $Rendered } else { $Before }
+    } else {
+        $after = if (Test-Path -LiteralPath $Settings -PathType Leaf) { [string](Get-Content -LiteralPath $Settings -Raw) } else { '' }
+    }
+    $wired = $after.Contains($filter)
+    if ($Before.Contains($filter) -and -not $wired) {
+        # The file named the filter and no longer does: a run without the switch refreshed or forced it.
+        if ($DryRun) { return "warn: a real run would leave the gradle hook unwired: it renders $Settings without it. Add -GradleHook to keep it wired." }
+        return "warn: the gradle hook is no longer wired: this run rendered $Settings without it. Run again with -GradleHook to wire it again."
+    }
+    if ($GradleHook -and -not $wired) {
+        # The switch was given and the file in place is the adopter's own, kept, with the kit's beside it.
+        if ($DryRun) { return "warn: a real run would not wire the gradle hook yet: it keeps $Settings as it is, and the hook block to merge is then in ${Settings}.new." }
+        return "warn: the gradle hook is not wired yet: $Settings is kept as it is, and the hook block to merge is in ${Settings}.new."
+    }
+    return $null
 }
 
 function Write-KitSummary {
@@ -143,15 +203,15 @@ if ($Project) {
     $tpl  = Join-Path $root 'project-template'
 
     Write-Output "Adoption preflight: what $proj already has"
-    $findings = @(Get-AdoptionFindings $proj $tpl)
+    $findings = @(Get-AdoptionFindings $proj $tpl $manifest -Force:$Force -GradleHook:$GradleHook)
     if ($findings) {
         $width = ($findings | ForEach-Object { $_.Item.Length } | Measure-Object -Maximum).Maximum
         foreach ($finding in $findings) { Write-Output ("  {0,-$width}  {1}" -f $finding.Item, $finding.Note) }
     } else {
         Write-Output "  nothing of yours is in the way; this looks like a fresh repository"
     }
-    $writes = if ($Sdd) { 'AGENTS.md, CLAUDE.md, CLAUDE.project.md, .claude/ and docs/ (the -Sdd spec tree)' }
-              else { 'AGENTS.md, CLAUDE.md, CLAUDE.project.md and .claude/' }
+    $writes = if ($Sdd) { 'AGENTS.md, CLAUDE.md, CLAUDE.project.md, .claude/, scripts/hooks/ and docs/ (the -Sdd spec tree)' }
+              else { 'AGENTS.md, CLAUDE.md, CLAUDE.project.md, .claude/ and scripts/hooks/' }
     Write-Output "  the installer writes only $writes, and deletes nothing"
     Write-Output ""
 
@@ -168,6 +228,23 @@ if ($Project) {
     foreach ($hook in @('branch-check.ps1', 'branch-upstream-fix.ps1')) {
         $pairs += New-KitPair (Join-Path $root "claude\hooks\$hook") (Join-Path $projClaude "hooks\$hook")
     }
+    # The logged runner goes into every project: the scaffolded CLAUDE.md sends long tools through
+    # scripts/hooks/run-logged.py. The gradle filter goes only with -GradleHook, and that switch was
+    # settled before anything was written, so on such a run both scripts exist in the kit tree and
+    # are the kit's in the project once the plan has run. Their tests (scripts/hooks/tests/) stay in
+    # the kit: the runner also reads the kit home's hooks, so it checks the kit and not a project.
+    foreach ($hookScript in @(Get-KitHookScripts -GradleHook:$GradleHook)) {
+        $hookSource = Join-Path $tpl "scripts\hooks\$hookScript"
+        if (Test-Path -LiteralPath $hookSource -PathType Leaf) {
+            $pairs += New-KitPair $hookSource (Join-Path $proj "scripts\hooks\$hookScript")
+        } else {
+            # Only a plain run gets here. Nothing is wired to the runner, so the run goes on and says so.
+            Write-Output "warn: this kit tree does not carry $hookSource,"
+            Write-Output "      so this run writes no scripts/hooks/$hookScript into the project. The scaffolded"
+            Write-Output "      CLAUDE.md names that runner; scaffold from a complete clone of the kit to get it."
+            Write-Output ""
+        }
+    }
     # The project's settings are rendered, not copied. The tracked template names the source of
     # the single-channel plugins with placeholders, because the real one is this clone and a real
     # owner and repository committed to a shared template would be a leak. Both placeholders are
@@ -179,7 +256,10 @@ if ($Project) {
     # source that does not exist, with a plugin enabled against it, is worse off than a project
     # with no plugin source at all. It is said out loud rather than passed over in silence.
     $origin = Get-KitOrigin $root
-    $projSettings = (Get-Content -LiteralPath (Join-Path $tpl '.claude\settings.json') -Raw)
+    # One whole template or the other, never a text cut out of one: settings.gradle.json is
+    # settings.json plus the gradle hook block, and the project suite keeps the two in step.
+    $settingsTemplate = if ($GradleHook) { 'settings.gradle.json' } else { 'settings.json' }
+    $projSettings = (Get-Content -LiteralPath (Join-Path $tpl ".claude\$settingsTemplate") -Raw)
     if ($origin) {
         $projSettings = $projSettings.Replace('<owner>/<repo>', $origin.Slug).Replace('<pinned-commit>', $origin.Sha)
     } else {
@@ -197,7 +277,16 @@ if ($Project) {
         $pairs += Get-KitPairs (Join-Path $tpl 'docs') (Join-Path $proj 'docs')
     }
 
+    # Read before the plan and held against the result after it, so a run that leaves the gradle hook
+    # unwired says so in one line instead of passing in silence.
+    $settingsTarget = Join-Path $projClaude 'settings.json'
+    $settingsBefore = if (Test-Path -LiteralPath $settingsTarget -PathType Leaf) { [string](Get-Content -LiteralPath $settingsTarget -Raw) } else { '' }
     Invoke-KitPlan $pairs "project scope install at $proj"
+    $hookNote = Get-KitGradleHookNote $settingsTarget $settingsBefore $projSettings
+    if ($hookNote) {
+        Write-Output ""
+        Write-Output $hookNote
+    }
 
     if ($LocalOnly) {
         Write-Output ""
