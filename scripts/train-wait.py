@@ -6,7 +6,8 @@ train-<name>" or "merge(train): <sha> into train-<name>, <tail>" is a lane lande
 last; any other first-parent merge (merge(proxy), merge(scripts), merge(docs), merge(main)) is not a lane and is
 only counted apart. From them: trains per day and lanes per train. The token of a merge(train) subject is the
 tail's first word when it is a lane token (letters and digits, 2 to 8, ending the tail or followed by ":" or "-",
-as in "csnv: ...", "pshq", "n1", "lrfq-lockrun-fifo-ticket"), else the first token of a closing "(item N, <token>...)";
+as in "csnv: ...", "pshq", "n1", "lrfq-lockrun-fifo-ticket"), else the first token of a closing "(item N, <token>...)",
+else a first word that carries a digit and is followed by a space ("mp7 the sender and the correction road");
 a hyphenated first word ("ab12-b, ...") is tried whole before it, since a lane cut beside another is often named so.
 A prose tail with neither ("the join screen reads the QR first"), or whose word no lane report or review carries,
 takes the one lane that cites the tip it merges, in a lane report titled "# Lane <token>" ("# Lane report:" names
@@ -68,6 +69,10 @@ SLUG_TOKEN_RE = re.compile(r"^([a-z0-9]{2,8})(?=$|[:\-\s]*\[skip ci\]|:|-|,)")  
 # a hyphenated lane token ("ab12-b", "cd34-a", "ab12-impl"), tried before its first word
 COMPOUND_TOKEN_RE = re.compile(r"^([a-z0-9]{2,8}(?:-[a-z0-9]{1,8})+)(?=$|\s*\[skip ci\]|:|,)")
 ITEM_TOKEN_RE = re.compile(r"\(item \d+, ([a-z0-9]{3,8})\b[^()]*\)\s*(?:\[skip ci\])?$")
+# "<tok> <topic>": read only when the word carries a digit, so a prose tail ("the join screen ...", "gate exit ...")
+# never names a lane a review stem starts with, and only after the item form, which older tails close with; a two-lane
+# tail ("cp1 and cp2", "ab1 with cd2") reads none and goes to the tip route, which names the lane whose tip merged
+SPACE_TOKEN_RE = re.compile(r"^((?=[a-z0-9]*[0-9])[a-z0-9]{2,8})(?=\s)(?!\s+(?:and|with|\+)\s+[a-z0-9]*[0-9])")
 STEM_RE = re.compile(r"(-r\d+)?-\d{4}-\d\d-\d\d(-r\d+)?\.md$")
 LANE_TITLE_RE = re.compile(r"^\ufeff?# Lane ([A-Za-z0-9._-]+)")
 SHA_RE = re.compile(r"\b[0-9a-f]{7,12}\b")
@@ -94,7 +99,7 @@ def token_of(m):
     if m.group(1):
         return m.group(1)
     tail = m.group(3).strip()
-    t = SLUG_TOKEN_RE.match(tail) or ITEM_TOKEN_RE.search(tail)
+    t = SLUG_TOKEN_RE.match(tail) or ITEM_TOKEN_RE.search(tail) or SPACE_TOKEN_RE.match(tail)
     return t.group(1) if t else ""
 
 

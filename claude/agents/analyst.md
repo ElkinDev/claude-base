@@ -4,7 +4,7 @@ description: Decision-shaping analysis (spec drafts, architecture options, deep 
 model: opus
 effort: xhigh
 maxTurns: 100
-tools: Bash, PowerShell, Read, Write, Edit, Glob, Grep, WebFetch, WebSearch, Agent, Skill, ToolSearch
+tools: Bash, PowerShell, Read, Write, Edit, Glob, Grep, WebFetch, WebSearch, Agent, ToolSearch
 skills:
   - investigate-issue
   - decision-rounds

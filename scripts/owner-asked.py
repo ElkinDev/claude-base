@@ -26,6 +26,11 @@ bare number of seven digits or more, such as an eight-digit date, cannot be sear
 A date later than today never dates a line (a line that names a future deadline would otherwise sort first in
 every search). Output is UTF-8 whatever the console's codepage.
 
+Search one question at a time: a search that carries five questions needs half of all their words on one line and
+misses a one-question answer. On a miss, up to five near lines follow, the lines that carry a rare word (one carried by
+at most 25 lines of the searched window, --since included), the lines carrying more rare words first, then the rarer,
+then the newest, each printed as 'near <date> <source>:<line>: [<rare words>] <text>'; read them before asking.
+
 When the owner writes in another language than the register, search the topic in both. Prints one line per hit, the
 most words carried first, then newest first: date, source:line, the count of words carried when three or more
 different words were given, the line cut to 320 characters. Exit 0 on a hit, 1 on none, 2 on a usage error. A hit
@@ -67,6 +72,7 @@ DATE = re.compile(r"(20\d\d-\d\d-\d\d)")
 ROW = re.compile(r"^(?:- )?(20\d\d-\d\d-\d\d) [0-9x]{2}:[0-9x]{2} \[([A-Za-z0-9_-]+)\]")
 REPORT_ROW = re.compile(r"^\|\s*[A-Za-z]+-\d+\s*\|")
 CUT = 320
+NEAR, RARE = 5, 25  # on a miss: near lines printed, and a word carried by at most RARE lines is rare
 HEAD = 22  # a memory line takes its own date only when the date opens it ("Superseded 2026-01-05 ...")
 HEX = re.compile(r"\b[0-9a-f]{7,40}\b")  # commit hashes: a word found only inside one is not a hit
 
@@ -143,6 +149,23 @@ def candidates(all_rows):
                 yield (m.group(1) if m else fdate), "memory/" + os.path.basename(path), i + 1, ln
 
 
+def near_lines(partial):
+    """On a miss, the lines that carry a rare word (in at most RARE partial lines): the most rare words first, then
+    the higher sum of 1/df, then the newest (a search that carries several questions matches few words of any one
+    line, and a miss there would call an answered question new)."""
+    df = {}
+    for carried, *_ in partial:
+        for w in carried:
+            df[w] = df.get(w, 0) + 1
+    scored = []
+    for carried, day, src, n, text in partial:
+        rare = [w for w in carried if df[w] <= RARE]
+        if rare:
+            scored.append((len(rare), sum(1.0 / df[w] for w in rare), day, src, n, rare, text))
+    scored.sort(key=lambda t: (t[0], t[1], t[2]), reverse=True)  # more rare words, then rarer, then newer
+    return [(rare, day, src, n, text) for _, _, day, src, n, rare, text in scored[:NEAR]]
+
+
 def main(argv):
     # A console in a legacy codepage cannot encode arrows or accents: an encode error there would print no hit
     # and exit 1, the "question is new" code.
@@ -165,14 +188,18 @@ def main(argv):
     if not words:
         ap.error("give at least one word that is not blank")
     need = len(words) if len(words) <= 2 else (len(words) + 1) // 2
-    hits = []
+    hits, partial = [], []
     for day, src, n, text in candidates(a.all_rows):
         if a.since and day and day < a.since:
             continue
         folded = HEX.sub(" ", fold(text))
-        k = sum(1 for w in words if w in folded)
-        if k >= need:
-            hits.append((k, day, src, n, re.sub(r"\s+", " ", text).strip()))
+        carried = [w for w in words if w in folded]
+        k = len(carried)
+        if k < need:
+            if carried:
+                partial.append((carried, day or "", src, n, text))
+            continue
+        hits.append((k, day, src, n, re.sub(r"\s+", " ", text).strip()))
     hits.sort(key=lambda h: (h[0], h[1], h[2], h[3]), reverse=True)
     try:
         for k, day, src, n, text in hits[: a.max]:
@@ -188,8 +215,13 @@ def main(argv):
             pass
         return 0 if hits else 1
     if not hits:
+        near = near_lines(partial)
         print("no hit for %s in the register, the decisions files, the owner reports, the landings or the memory;"
-              " the question is new" % " ".join(a.words))
+              " the question is new%s" % (" ".join(a.words), "; read the near lines below before asking" if near else ""))
+        for rare, day, src, n, text in near:
+            text = " ".join(text.split())
+            cut = text if len(text) <= CUT else text[: CUT - 6] + " [cut]"
+            print("near %s %s:%d: [%s] %s" % (day or "----------", src, n, ",".join(rare), cut))
         return 1
     return 0
 

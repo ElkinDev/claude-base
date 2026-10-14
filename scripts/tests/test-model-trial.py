@@ -30,7 +30,7 @@ class ModelTrialTest(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def agent(self, kind, description, turns, when="2026-09-20T15:00:00Z", project="proj-a"):
+    def agent(self, kind, description, turns, when="2026-09-20T15:00:00Z", project="proj-a", cache_read=0):
         """One agent: meta.json plus a jsonl of assistant turns (model, message id, output tokens)."""
         self.n += 1
         folder = os.path.join(self.projects, project, "session-%d" % self.n, "subagents")
@@ -42,7 +42,7 @@ class ModelTrialTest(unittest.TestCase):
             for model, mid, out in turns:
                 h.write(json.dumps({"type": "assistant", "timestamp": when, "message": {
                     "id": mid, "model": model, "usage": {
-                        "input_tokens": 1000000, "output_tokens": out, "cache_read_input_tokens": 0,
+                        "input_tokens": 1000000, "output_tokens": out, "cache_read_input_tokens": cache_read,
                         "cache_creation_input_tokens": 0}}}) + "\n")
 
     def review(self, name, first_line):
@@ -69,6 +69,19 @@ class ModelTrialTest(unittest.TestCase):
         self.assertIn("blocked lanes 1 of 1 (1.00)", cheap)
         strong = next(ln for ln in out.splitlines() if ln.startswith("implementer-light " + STRONG))
         self.assertIn("pure lanes 0", strong)
+
+    def test_a_cache_read_is_priced_at_the_model_own_row(self):
+        # one million cache-read tokens: the cheap model reads at $0.10 per million, the strong one at $0.20
+        self.agent("implementer-light", "Lane abcd one", [(CHEAP, "m1", 0)], cache_read=1000000)
+        self.agent("implementer-light", "Lane efgh two", [(STRONG, "m2", 0)], cache_read=1000000)
+        self.review("abcd-2026-09-20.md", "CLEAR")
+        self.review("efgh-2026-09-20.md", "CLEAR")
+        code, out = self.run_on()
+        self.assertEqual(0, code, out)
+        cheap = next(ln for ln in out.splitlines() if ln.startswith("implementer-light " + CHEAP))
+        strong = next(ln for ln in out.splitlines() if ln.startswith("implementer-light " + STRONG))
+        self.assertIn("cost $2.10", cheap)
+        self.assertIn("cost $4.20", strong)
 
     def test_a_message_id_seen_twice_is_counted_once_and_a_mixed_agent_is_not_priced(self):
         self.agent("implementer-light", "Lane abcd one", [(CHEAP, "m1", 10), (CHEAP, "m1", 20)])

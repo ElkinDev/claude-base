@@ -233,6 +233,27 @@ class TipRouteTest(RunFixture):
         self.assertEqual(0, code, err)
         self.assertRegex(out, r"found: 2 of 2 \((ab12-b, w99|w99, ab12-b)\)")
 
+    def test_a_space_separated_token_with_a_digit_is_read(self):
+        self.lane_merge("lane-mp7", "mp7 the sender and the correction road")
+        self.review("mp7-2026-09-18.md", "Review of lane mp7, round 1\n\nDisposition: CLEAR\n")
+        code, out, err = self.run_script("--verbose")
+        self.assertEqual(0, code, err)
+        self.assertIn("mp7-2026-09-18.md (header)", out, out)
+
+    def test_a_prose_tail_and_a_two_lane_tail_read_no_space_separated_token(self):
+        # a prose word with no digit never names a lane a review stem starts with, and "cp1 and cp2" reads no token, so cp1's own review does not match
+        self.lane_merge("lane-gate", "gate exit reads the mutex owner")
+        self.review("gate-2026-09-18.md", "Review of lane gate, round 1\n\nDisposition: CLEAR\n")
+        self.lane_merge("lane-cp1", "cp1 and cp2, the card print")
+        self.review("cp1-2026-09-18.md", "Review of lane cp1, round 1\n\nDisposition: CLEAR\n")
+        self.lane_merge("lane-eph1", "eph1 with eph2, the ephemeris pages")  # the "with" form of the same two-lane tail
+        self.review("eph1-2026-09-18.md", "Review of lane eph1, round 1\n\nDisposition: CLEAR\n")
+        code, out, err = self.run_script("--verbose")
+        self.assertEqual(0, code, err)
+        self.assertNotIn("gate-2026-09-18.md (header", out, out)
+        self.assertNotIn("cp1-2026-09-18.md (header", out, out)
+        self.assertNotIn("eph1-2026-09-18.md (header", out, out)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
