@@ -10,6 +10,20 @@ tokens until a fact is recalled, and it keeps the always-on slice small.
 - An index file lists one line per fact: `- [Title](file.md) - hook`. Keep the index tight (a couple
   hundred lines at most) so the loaded slice stays small.
 
+An index that has grown can be shortened with the optional `scripts/trim-index.py <index>`: it rewrites
+`- [Title](file.md) - hook` as `- file.md - hook`, so every file name and every hook byte is kept and only a
+link title it can prove redundant is dropped. A title made only of ASCII is dropped when each of its words of
+three characters or more (a word is a run of letters and digits) is in the file name or the hook, while words under
+three characters and digit runs under three are not checked, so `Round 2` against a hook holding `round` goes;
+otherwise the whole title stays in parentheses after the name, `- file.md (Title) - hook`. A title with any
+character outside ASCII is never split into words: it stays whole unless the whole title is already in the file
+name or the hook.
+Both sides are compared without regard to case, to composed or decomposed accents, or to the amount of white
+space. Lines of any other shape are left alone. It is a dry run until `--apply`, which writes a backup first
+(default `memory-bak` beside the index's folder; an index at a drive or share root, or one whose default
+backup folder would be the index's own folder or inside it, needs `--bak-dir`). The tool is optional: nothing
+in the base requires it.
+
 ## What to capture
 - Decisions and their reasons, conventions, and gotchas.
 - Durable operational facts a future session needs but cannot derive from the committed code (who is
