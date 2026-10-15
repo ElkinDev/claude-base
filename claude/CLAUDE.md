@@ -70,6 +70,8 @@ Never say a change is "in", "live", or "in place" unless it is merged, passed th
 UAT, and deployed to production. "Built and tested by me" is only the first step. Verify with git
 before claiming anything is live.
 
+Work that keeps running past the message carries its clock time. Any message to the owner saying a job, an agent or a render is still running gives the time it should finish ("ready by 14:20") and what that rests on: a measured run, the steps left, or an agent's own estimate. When it will be late, a new time reaches the owner before the old one passes. "Still in progress" alone is never a status (owner rule 2026-10-15).
+
 <!-- /cb:rules -->
 
 ## Context economy (orchestrator)
