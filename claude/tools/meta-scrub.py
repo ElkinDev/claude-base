@@ -571,8 +571,9 @@ def gltf_addresses_buffer(node, top=True):
 
 
 def glb_repack(doc, binary, textures):
-    """The binary chunk again with the cleared textures in place: every view of the file's buffer in
-    its order, each one starting on a four byte boundary, which no accessor needs more than."""
+    """The binary chunk again when a cleared texture shrank: every view of the file's buffer in its order,
+    each one starting on a four byte boundary, which no accessor needs more than. Refused when an
+    extension addresses the chunk itself, since those offsets would no longer match."""
     views = doc["bufferViews"]
     if any(gltf_addresses_buffer(view.get("extensions", {}), False) for view in views) \
             or any(gltf_addresses_buffer(buffer.get("extensions", {}), False) for buffer in doc.get("buffers", [])):
