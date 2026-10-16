@@ -5,7 +5,13 @@ model: haiku
 effort: low
 maxTurns: 10
 tools: Read, Grep, Glob
+omitClaudeMd: true
 ---
+
+House rules (the global CLAUDE.md does not load for this agent).
+- Write English only. No em-dashes anywhere; use periods and commas.
+- Name each file by its full absolute path with the drive letter, never relative.
+- A claim about code names the file and symbol, the line where known, or is marked unverified.
 
 # Bulk reader
 

@@ -123,6 +123,11 @@ evidence sits beside the repository and is never committed. A machine that alrea
 somewhere else writes one `Evidence root:` line in `CLAUDE.local.md`. See `docs/EVIDENCE.md`, and
 check what a project resolves to with `python scripts\evidence-path.py --print-spec`.
 
+The project's `CLAUDE.md` imports `FACTS.local.md`, the owner's standing facts (see its section "Standing
+facts"). Create it beside `CLAUDE.local.md` when the first such fact arrives, and keep both out of git:
+add `FACTS.local.md` to `.git\info\exclude` next to the `CLAUDE.local.md` line. Until it exists the
+import is skipped.
+
 For a spec-driven project (a new build governed by a `docs/` spec structure), add `-Sdd` to also
 copy the kit's agent definitions into `.claude/agents/` and scaffold the `docs/` spec structure,
 then drive it with `/sdd` (`/delivery:sdd` from the marketplace):

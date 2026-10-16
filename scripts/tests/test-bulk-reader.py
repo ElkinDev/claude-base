@@ -149,6 +149,14 @@ class BulkReaderAgent(unittest.TestCase):
     def test_body_caps_the_input_at_four_files(self):
         self.assertIn(CAP_IN_AGENT, self.text.lower())
 
+    def test_omits_the_global_claude_md_and_carries_the_house_rules(self):
+        # Measured 2026-10-16 on claude-code 2.1.301: the first turn of a bulk-reader spawn fell from 14,061
+        # to 4,076 tokens without the global CLAUDE.md and the memory index; the four rules it then lacks ride
+        # in the body, so dropping either half reddens this test.
+        self.assertEqual("true", self.fields.get("omitClaudeMd"))
+        for rule in ("English only", "full absolute path", "names the file and symbol"):
+            self.assertIn(rule, body(self.text))
+
 
 class BulkReadSkill(unittest.TestCase):
     def setUp(self):

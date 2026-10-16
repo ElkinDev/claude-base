@@ -79,6 +79,12 @@ Use the native file-based memory. Keep the index tight, one line per fact, one f
 Capture decisions, conventions, gotchas, and durable operational facts a future session needs but
 cannot derive from the committed code. See `docs/MEMORY.md`.
 
+## Standing facts
+
+@FACTS.local.md
+
+`FACTS.local.md`, beside this file and kept out of git like `CLAUDE.local.md`, holds one line per fact the owner gave that stays true: what was bought, created or paid (an account by its name, never a secret), identity and business facts, closed choices, standing project rules. Each line ends with the stamp of the register row that records it. The orchestrator writes or strikes the line in the same turn as that row, and nobody asks again what it holds. The import above loads it at every start and after every compaction, so a fact never depends on a summary: a summary is rewritten from the one before it, and a closed fact nobody touched for a day falls out of it. Cap 3,500 characters. A missing file is ignored.
+
 ## Compaction instructions
 
 When this conversation is compacted, the summary must keep verbatim: the acceptance list of the work in flight; every decision taken and every ruling from the owner, quoted; the next step and who owns it; the agent reports received and the board line per branch, and the path of the session brief; the branch and tip of every worktree touched; the last gate verdict; every ban in force. Drop tool outputs, build logs and intermediate reasoning: the files are the record, not the summary.
