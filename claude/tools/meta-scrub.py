@@ -26,8 +26,8 @@ Office document leaves with its core properties cleared. It covers every kind th
         C2PA chunks of its WebP images, and the zip comment. An entry other than meta.json or a WebP
         image is refused. No dependency.
   .spz  version 4: the reserved header bytes; extension records are named and refused, since dropping
-        them would move every stream. A legacy gzip file loses the file name and comment fields of
-        its gzip header. No dependency.
+        them would move every stream. A legacy gzip file loses the extra, file name and comment fields
+        of its gzip header; a second gzip member is named and refused. No dependency.
   .hdr  the comment lines, SOFTWARE and any variable outside the Radiance set in the header; the
         pixels are copied byte for byte. No dependency.
   .ktx2  the KTXwriter and KTXwriterScParams values, blanked in place so every offset holds. A key
@@ -69,6 +69,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
+import zlib
 
 OFFICE = {".docx", ".xlsx", ".pptx", ".docm", ".xlsm", ".pptm"}
 VIDEO = {".mp4", ".mov", ".m4a", ".m4v"}
@@ -653,24 +654,50 @@ def ply_first_word(line):
     return words[0] if words else b""
 
 
+def ply_lines(head):
+    """The header's lines split on line feeds only, each with its end, so a bare carriage return stays
+    inside the line it belongs to."""
+    return [line + b"\n" for line in head.split(b"\n")[:-1]]
+
+
 def ply_names(data):
     head, _ = ply_parts(data)
-    return sorted({ply_first_word(line).decode("ascii") for line in head.splitlines()
+    return sorted({ply_first_word(line).decode("ascii") for line in ply_lines(head)
                    if ply_first_word(line) in PLY_DROP})
 
 
 def ply_clean(data):
     head, rest = ply_parts(data)
-    return b"".join(line for line in head.splitlines(True) if ply_first_word(line) not in PLY_DROP) + rest
+    return b"".join(line for line in ply_lines(head) if ply_first_word(line) not in PLY_DROP) + rest
 
 
-GZIP_NAMES = {0x08: "gzip file name", 0x10: "gzip comment"}
+GZIP_NAMES = {0x04: "gzip extra field", 0x08: "gzip file name", 0x10: "gzip comment"}
+
+
+def gzip_header_end(data):
+    """Where the first gzip member's compressed data starts."""
+    flags, i = data[3], 10
+    if flags & 0x04:
+        i += 2 + int.from_bytes(data[i:i + 2], "little")
+    for bit in (0x08, 0x10):
+        if flags & bit:
+            i = data.index(b"\x00", i) + 1
+    if flags & 0x02:
+        i += 2
+    return i
+
+
+def spz_v4(data):
+    if len(data) < 32:
+        raise Refused("damaged SPZ: shorter than its 32 byte header")
+    version = int.from_bytes(data[4:8], "little")
+    if version != 4:
+        raise Refused("SPZ version %d with an NGSP header is not read" % version)
 
 
 def spz_names(data):
     if data[:4] == b"NGSP":
-        if len(data) < 32:
-            raise Refused("damaged SPZ: shorter than its 32 byte header")
+        spz_v4(data)
         found = set()
         if data[14] & 0x2 or int.from_bytes(data[16:20], "little") > 32:
             found.add("extension records")
@@ -678,27 +705,24 @@ def spz_names(data):
             found.add("reserved bytes")
         return sorted(found)
     if data[:2] == b"\x1f\x8b" and len(data) >= 10:
-        return sorted(name for bit, name in GZIP_NAMES.items() if data[3] & bit)
+        found = {name for bit, name in GZIP_NAMES.items() if data[3] & bit}
+        unpack = zlib.decompressobj(-15)
+        unpack.decompress(data[gzip_header_end(data):])
+        if unpack.unused_data[8:].strip(b"\x00"):
+            found.add("data after the first gzip member")  # left as it is, so a clear refuses the file
+        return sorted(found)
     raise Refused("not an SPZ file")
 
 
 def spz_clean(data):
     if data[:4] == b"NGSP":
+        spz_v4(data)
         if data[14] & 0x2 or int.from_bytes(data[16:20], "little") > 32:
             raise Refused("SPZ extension records are not read, and dropping them would move every stream: "
                           "export it without extensions")
         return data[:20] + bytes(12) + data[32:]
-    flags, i = data[3], 10
-    extra = b""
-    if flags & 0x04:
-        extra = data[i:i + 2 + int.from_bytes(data[i:i + 2], "little")]
-        i += len(extra)
-    for bit in (0x08, 0x10):
-        if flags & bit:
-            i = data.index(b"\x00", i) + 1
-    if flags & 0x02:
-        i += 2  # the header checksum covered the fields that go, so it goes too
-    return data[:3] + bytes([flags & 0x04]) + data[4:10] + extra + data[i:]
+    # the extra field, the name, the comment and the header checksum that covered them all go
+    return data[:3] + bytes([0]) + data[4:10] + data[gzip_header_end(data):]
 
 
 def sog_open(path):

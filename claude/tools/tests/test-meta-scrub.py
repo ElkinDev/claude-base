@@ -864,6 +864,26 @@ class SplatFiles(Base):
         self.assertEqual(2, run(q).returncode)
         self.assertEqual(before, read(q))
 
+    def test_a_bare_carriage_return_cannot_hide_a_name_in_a_ply_header(self):
+        p = self.path("cr.ply")
+        with open(p, "wb") as f:
+            f.write(b"ply\r\nformat ascii 1.0\r\ncomment foo\rSome Desk\r\nelement vertex 0\r\nend_header\r\n")
+        self.assertEqual(0, run(p).returncode)
+        self.assertEqual(b"ply\r\nformat ascii 1.0\r\nelement vertex 0\r\nend_header\r\n", read(p))
+
+    def test_spz_v4_reserved_bytes_are_zeroed_and_another_version_is_refused(self):
+        head = b"NGSP" + (4).to_bytes(4, "little") + (3).to_bytes(4, "little") + bytes([0, 12, 0, 6]) + (32).to_bytes(4, "little")
+        p = self.path("res.spz")
+        with open(p, "wb") as f:
+            f.write(head + b"desk-name-12" + b"STREAMS")
+        self.assertEqual(1, run("--check", p).returncode)
+        self.assertEqual(0, run(p).returncode)
+        self.assertEqual(head + bytes(12) + b"STREAMS", read(p))
+        q = self.path("v3.spz")
+        with open(q, "wb") as f:
+            f.write(b"NGSP" + (3).to_bytes(4, "little") + bytes(40))
+        self.assertEqual(2, run("--check", q).returncode)
+
     def test_a_legacy_gzip_spz_loses_its_file_name_and_still_decompresses(self):
         p = self.path("old.spz")
         buf = io.BytesIO()
