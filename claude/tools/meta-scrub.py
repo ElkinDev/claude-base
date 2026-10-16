@@ -20,11 +20,15 @@ Office document leaves with its core properties cleared. It covers every kind th
         tag it would show turned, so rotate it first.
   .webp  the EXIF, XMP and C2PA chunks, with the VP8X flags that announced them, and any data after
         the picture. No dependency, no re-encode.
+  .hdr  the comment lines, SOFTWARE and any variable outside the Radiance set in the header; the
+        pixels are copied byte for byte. No dependency.
   .ktx2  the KTXwriter and KTXwriterScParams values, blanked in place so every offset holds. A key
         outside the KTX set is named and refused, since its name alone can carry one. No dependency.
   .glb  in the JSON chunk, asset.generator, asset.copyright, every extras and the KHR_xmp_json_ld
-        packets; the embedded PNG, JPEG, WebP and KTX2 textures, cleared as above, with the binary chunk packed
-        again. Geometry, Draco data included, is copied byte for byte. A local path in any name or URI is
+        packets; the embedded PNG, JPEG, WebP and KTX2 textures, cleared as above. A texture that keeps its
+        length is written back in place; one that shrinks has the binary chunk packed again, which is
+        refused when an extension such as EXT_meshopt_compression points into that chunk itself, so
+        clear such a model before compressing it. Geometry, Draco data included, is copied byte for byte. A local path in any name or URI is
         named and refused, since clearing it would change the model. An embedded texture of another
         kind, an image in a data URI or a chunk it does not know is refused. No dependency.
   .mp4 .mov .m4a .m4v  the container and stream tags, the encoder tags, and on H.264 the SEI units
@@ -60,7 +64,7 @@ import zipfile
 
 OFFICE = {".docx", ".xlsx", ".pptx", ".docm", ".xlsm", ".pptm"}
 VIDEO = {".mp4", ".mov", ".m4a", ".m4v"}
-KINDS = OFFICE | VIDEO | {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".glb", ".ktx2"}
+KINDS = OFFICE | VIDEO | {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".glb", ".ktx2", ".hdr"}
 # kinds that can carry a name too, which this tool does not clear: named, never passed in silence
 NOT_READ = {".webm", ".mkv", ".avi", ".wmv", ".flv", ".gif", ".heic", ".heif", ".avif", ".tif",
             ".tiff", ".bmp", ".svg", ".psd", ".mp3", ".wav", ".flac", ".ogg", ".opus", ".aac", ".odt",
@@ -554,10 +558,27 @@ def glb_names(data):
     return sorted(found)
 
 
+def gltf_addresses_buffer(node, top=True):
+    """True when an object other than a buffer view itself names a buffer, the way EXT_meshopt_compression
+    points a view's compressed bytes into the file's binary chunk; moving bytes would break it."""
+    if isinstance(node, dict):
+        if not top and "buffer" in node:
+            return True
+        return any(gltf_addresses_buffer(value, False) for value in node.values())
+    if isinstance(node, list):
+        return any(gltf_addresses_buffer(value, False) for value in node)
+    return False
+
+
 def glb_repack(doc, binary, textures):
-    """The binary chunk again with the cleared textures in place: every view of the file's buffer in
-    its order, each one starting on a four byte boundary, which no accessor needs more than."""
+    """The binary chunk again when a cleared texture shrank: every view of the file's buffer in its order,
+    each one starting on a four byte boundary, which no accessor needs more than. Refused when an
+    extension addresses the chunk itself, since those offsets would no longer match."""
     views = doc["bufferViews"]
+    if any(gltf_addresses_buffer(view.get("extensions", {}), False) for view in views) \
+            or any(gltf_addresses_buffer(buffer.get("extensions", {}), False) for buffer in doc.get("buffers", [])):
+        raise Refused("an extension points into the binary chunk (EXT_meshopt_compression or the like), so "
+                      "a texture that shrinks cannot be cleared after compression: clear the model first")
     order = sorted((n for n, view in enumerate(views) if view.get("buffer", 0) == 0),
                    key=lambda n: views[n].get("byteOffset", 0))
     if any("extensions" in views[n] for n in order):
@@ -583,10 +604,16 @@ def glb_clean(data):
     for field in ("generator", "copyright"):
         asset.pop(field, None)
     gltf_strip(doc)
-    textures = {view: clean(texture) for _, view, texture, (names, clean) in glb_images(doc, binary)
+    textures = {view: (texture, clean(texture)) for _, view, texture, (names, clean) in glb_images(doc, binary)
                 if names(texture)}
-    if textures:
-        binary = glb_repack(doc, binary, textures)
+    if all(len(old) == len(new) for old, new in textures.values()):
+        patched = bytearray(binary or b"")  # same length: written back where it was, no offset moves
+        for view, (_, new) in textures.items():
+            start = doc["bufferViews"][view].get("byteOffset", 0)
+            patched[start:start + len(new)] = new
+        binary = bytes(patched) if binary is not None else None
+    else:
+        binary = glb_repack(doc, binary, {view: new for view, (_, new) in textures.items()})
     text = json.dumps(doc, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     text += b" " * (-len(text) % 4)
     body = len(text).to_bytes(4, "little") + GLB_JSON.to_bytes(4, "little") + text
@@ -594,6 +621,40 @@ def glb_clean(data):
         padded = binary + b"\x00" * (-len(binary) % 4)
         body += len(padded).to_bytes(4, "little") + GLB_BIN.to_bytes(4, "little") + padded
     return b"glTF" + (2).to_bytes(4, "little") + (12 + len(body)).to_bytes(4, "little") + body
+
+
+HDR_KEEP = {b"FORMAT", b"EXPOSURE", b"COLORCORR", b"PRIMARIES", b"PIXASPECT", b"VIEW", b"GAMMA"}
+
+
+def hdr_parts(data):
+    """(the header lines after the magic line, everything from the resolution line on)."""
+    if not (data.startswith(b"#?RADIANCE\n") or data.startswith(b"#?RGBE\n")):
+        raise Refused("not a Radiance HDR file")
+    end = data.find(b"\n\n", 0, 65536)
+    if end < 0:
+        raise Refused("damaged Radiance header: no blank line in its first 64 KB")
+    return data[:end].split(b"\n"), data[end + 2:]
+
+
+def hdr_dropped(line):
+    """What a header line names, None for one that stays."""
+    if line.startswith(b"#"):
+        return "comment"
+    var = line.split(b"=", 1)[0].strip()
+    if b"=" in line and var in HDR_KEEP:
+        return None
+    return "header %s" % var.decode("ascii", "replace")
+
+
+def hdr_names(data):
+    lines, _ = hdr_parts(data)
+    return sorted({hdr_dropped(line) for line in lines[1:] if line} - {None})
+
+
+def hdr_clean(data):
+    lines, rest = hdr_parts(data)
+    kept = [lines[0]] + [line for line in lines[1:] if line and hdr_dropped(line) is None]
+    return b"\n".join(kept) + b"\n\n" + rest
 
 
 def bytes_check(names):
@@ -672,7 +733,8 @@ def video_scrub(path, tmp):
 HANDLERS = {".pdf": (pdf_check, pdf_scrub)}
 HANDLERS.update({ext: (bytes_check(names), bytes_scrub(clean)) for ext, names, clean in (
     (".png", png_names, png_clean), (".jpg", jpeg_names, jpeg_clean), (".jpeg", jpeg_names, jpeg_clean),
-    (".webp", webp_names, webp_clean), (".glb", glb_names, glb_clean), (".ktx2", ktx2_names, ktx2_clean))})
+    (".webp", webp_names, webp_clean), (".glb", glb_names, glb_clean), (".ktx2", ktx2_names, ktx2_clean),
+    (".hdr", hdr_names, hdr_clean))})
 HANDLERS.update({ext: (office_check, office_scrub) for ext in OFFICE})
 HANDLERS.update({ext: (video_check, video_scrub) for ext in VIDEO})
 

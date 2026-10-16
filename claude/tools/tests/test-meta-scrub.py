@@ -712,6 +712,92 @@ class Ktx2Files(Base):
         self.assertEqual(0, run("--check", p).returncode)
 
 
+def meshopt_glb(path, texture, mime):
+    """A GLB shaped like a glTF-Transform meshopt output: the texture view and the compressed bytes in the
+    file's buffer, and a view on a fallback buffer whose extension points at those compressed bytes."""
+    compressed = b"MESHOPTDATA!"
+    geometry = b"GEOMETRY-12B"
+    blob = geometry + texture + b"\x00" * (-len(texture) % 4)
+    at = len(blob)
+    blob += compressed
+    doc = {"asset": {"version": "2.0"}, "extensionsUsed": ["EXT_meshopt_compression"],
+           "images": [{"bufferView": 0, "mimeType": mime}],
+           "bufferViews": [{"buffer": 0, "byteOffset": len(geometry), "byteLength": len(texture)},
+                           {"buffer": 1, "byteOffset": 0, "byteLength": 48, "extensions": {"EXT_meshopt_compression": {
+                               "buffer": 0, "byteOffset": at, "byteLength": len(compressed), "mode": "ATTRIBUTES",
+                               "byteStride": 4, "count": 12}}}],
+           "buffers": [{"byteLength": len(blob)}, {"byteLength": 48, "extensions": {"EXT_meshopt_compression": {"fallback": True}}}]}
+    blob += b"\x00" * (-len(blob) % 4)
+    text = json.dumps(doc).encode("utf-8")
+    text += b" " * (-len(text) % 4)
+    body = len(text).to_bytes(4, "little") + b"JSON" + text + len(blob).to_bytes(4, "little") + b"BIN\x00" + blob
+    with open(path, "wb") as f:
+        f.write(b"glTF" + (2).to_bytes(4, "little") + (12 + len(body)).to_bytes(4, "little") + body)
+    return compressed, at
+
+
+class MeshoptGlb(Base):
+    def test_a_ktx2_texture_is_cleared_in_place_and_the_compressed_bytes_stay_where_they_point(self):
+        p = self.path("rock.glb")
+        compressed, at = meshopt_glb(p, ktx2([("KTXwriter", b"ktx create v4.4.2")]), "image/ktx2")
+        self.assertEqual(1, run("--check", p).returncode)
+        self.assertEqual(0, run(p).returncode)
+        total, size, doc, views = read_glb(p)
+        self.assertEqual(size, total)
+        ext = doc["bufferViews"][1]["extensions"]["EXT_meshopt_compression"]
+        data = read(p)
+        blob_at = 20 + int.from_bytes(data[12:16], "little") + 8
+        self.assertEqual(compressed, data[blob_at + ext["byteOffset"]:blob_at + ext["byteOffset"] + ext["byteLength"]])
+        self.assertEqual(at, ext["byteOffset"])
+        self.assertEqual(b"GEOMETRY-12B", data[blob_at:blob_at + 12])
+        self.assertTrue(data[blob_at + 12:blob_at + 24].startswith(b"\xabKTX 20\xbb"))
+        self.assertNotIn(b"ktx create", data)
+        self.assertEqual(0, run("--check", p).returncode)
+
+    def test_a_texture_that_would_shrink_is_refused_and_the_model_left_as_it_is(self):
+        p = self.path("rock-png.glb")
+        meshopt_glb(p, tiny_png(b"Some Editor 3.1"), "image/png")
+        before = read(p)
+        done = run(p)
+        self.assertEqual(2, done.returncode)
+        self.assertIn("EXT_meshopt_compression", done.stderr)
+        self.assertEqual(before, read(p))
+
+
+class HdrFiles(Base):
+    def test_comments_and_software_go_and_the_pixels_stay(self):
+        p = self.path("sky.hdr")
+        pixels = b"-Y 2 +X 2\n\x01\x02\x03\x80" * 1
+        with open(p, "wb") as f:
+            f.write(b"#?RADIANCE\n# Made with Some Editor 3.1\nSOFTWARE=Some Editor\nFORMAT=32-bit_rle_rgbe\n"
+                    b"EXPOSURE=1.0\n\n" + pixels)
+        done = run("--check", p)
+        self.assertEqual(1, done.returncode)
+        self.assertIn("comment", done.stdout)
+        self.assertIn("header SOFTWARE", done.stdout)
+        self.assertEqual(0, run(p).returncode)
+        self.assertEqual(b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\nEXPOSURE=1.0\n\n" + pixels, read(p))
+        self.assertEqual(0, run("--check", p).returncode)
+
+    def test_a_file_without_the_magic_or_a_header_end_is_refused_and_left_as_it_is(self):
+        for name, data in (("envi.hdr", b"ENVI\nsamples = 2\n"), ("long.hdr", b"#?RADIANCE\n" + b"x" * 70000)):
+            p = self.path(name)
+            with open(p, "wb") as f:
+                f.write(data)
+            self.assertEqual(2, run("--check", p).returncode)
+            self.assertEqual(2, run(p).returncode)
+            self.assertEqual(data, read(p))
+
+    def test_a_plain_header_is_clean(self):
+        p = self.path("plain.hdr")
+        with open(p, "wb") as f:
+            f.write(b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 1\n\x01\x02\x03\x80")
+        before = read(p)
+        self.assertEqual(0, run("--check", p).returncode)
+        self.assertEqual(0, run(p).returncode)
+        self.assertEqual(before, read(p))
+
+
 class Walk(Base):
     def test_a_kind_it_does_not_read_is_named_never_passed(self):
         webm = self.path("w.webm")
