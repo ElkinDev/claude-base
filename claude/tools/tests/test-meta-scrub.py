@@ -5,6 +5,7 @@ them, and say so.
     python test-meta-scrub.py
 """
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -90,6 +91,66 @@ def jpeg_with_segment(path, marker, body):
     data = read(path)
     with open(path, "wb") as f:
         f.write(data[:2] + jpeg_segment(marker, body) + data[2:])
+
+
+def png_chunk(kind, body):
+    return len(body).to_bytes(4, "big") + kind + body + zlib.crc32(kind + body).to_bytes(4, "big")
+
+
+def tiny_png(text=None):
+    """A 1x1 PNG built by hand, with a tEXt chunk when text is given."""
+    chunks = png_chunk(b"IHDR", (1).to_bytes(4, "big") * 2 + bytes([8, 2, 0, 0, 0]))
+    if text:
+        chunks += png_chunk(b"tEXt", b"Software\x00" + text)
+    chunks += png_chunk(b"IDAT", zlib.compress(b"\x00\x0a\x14\x1e")) + png_chunk(b"IEND", b"")
+    return b"\x89PNG\r\n\x1a\n" + chunks
+
+
+def riff_chunk(fourcc, body):
+    return fourcc + len(body).to_bytes(4, "little") + body + (b"\x00" if len(body) & 1 else b"")
+
+
+def webp(chunks, after=b""):
+    body = b"WEBP" + b"".join(chunks)
+    return b"RIFF" + len(body).to_bytes(4, "little") + body + after
+
+
+def riff_list(data):
+    out, i = [], 12
+    while i + 8 <= len(data):
+        size = int.from_bytes(data[i + 4:i + 8], "little")
+        out.append((data[i:i + 4], data[i + 8:i + 8 + size]))
+        i += 8 + size + (size & 1)
+    return out
+
+
+def write_glb(path, doc, views):
+    """A GLB whose binary chunk holds the given views in order, each on a four byte boundary."""
+    doc = json.loads(json.dumps(doc))
+    blob = bytearray()
+    doc["bufferViews"] = []
+    for part in views:
+        blob += b"\x00" * (-len(blob) % 4)
+        doc["bufferViews"].append({"buffer": 0, "byteOffset": len(blob), "byteLength": len(part)})
+        blob += part
+    doc["buffers"] = [{"byteLength": len(blob)}]
+    blob += b"\x00" * (-len(blob) % 4)
+    text = json.dumps(doc).encode("utf-8")
+    text += b" " * (-len(text) % 4)
+    body = len(text).to_bytes(4, "little") + b"JSON" + text + len(blob).to_bytes(4, "little") + b"BIN\x00" + blob
+    with open(path, "wb") as f:
+        f.write(b"glTF" + (2).to_bytes(4, "little") + (12 + len(body)).to_bytes(4, "little") + bytes(body))
+
+
+def read_glb(path):
+    """(the header length, the file length, the JSON document, each view's bytes)."""
+    data = read(path)
+    length = int.from_bytes(data[12:16], "little")
+    doc = json.loads(data[20:20 + length].decode("utf-8"))
+    at = 20 + length
+    blob = data[at + 8:at + 8 + int.from_bytes(data[at:at + 4], "little")]
+    views = [blob[v["byteOffset"]:v["byteOffset"] + v["byteLength"]] for v in doc["bufferViews"]]
+    return int.from_bytes(data[8:12], "little"), len(data), doc, views
 
 
 class Base(unittest.TestCase):
@@ -468,6 +529,123 @@ class Video(Base):
         self.assertEqual(before, read(p))
 
 
+class WebpFiles(Base):
+    def test_exif_xmp_and_c2pa_chunks_go_the_flags_follow_and_every_other_chunk_stays_byte_for_byte(self):
+        p = self.path("a.webp")
+        kept = [riff_chunk(b"ICCP", b"icc12"), riff_chunk(b"VP8L", b"\x2f\x00\x00")]
+        with open(p, "wb") as f:
+            f.write(webp([riff_chunk(b"VP8X", bytes([0x2C]) + bytes(9))] + kept[:1]
+                         + [riff_chunk(b"EXIF", b"Exif\x00\x00Some Editor 3.1")] + kept[1:]
+                         + [riff_chunk(b"XMP ", b"<x:xmpmeta>someone</x:xmpmeta>"),
+                            riff_chunk(b"C2PA", b"jumbc2pa")], after=b"a note after the picture"))
+        done = run("--check", p)
+        self.assertEqual(1, done.returncode)
+        for name in ("EXIF", "XMP", "C2PA", "data after the picture"):
+            self.assertIn(name, done.stdout)
+        self.assertEqual(0, run(p).returncode)
+        data = read(p)
+        self.assertEqual(len(data) - 8, int.from_bytes(data[4:8], "little"))
+        chunks = riff_list(data)
+        self.assertEqual([b"VP8X", b"ICCP", b"VP8L"], [c for c, _ in chunks])
+        self.assertEqual(0x20, chunks[0][1][0])
+        self.assertEqual(b"".join(kept), data[12 + 18:])
+        self.assertEqual(0, run("--check", p).returncode)
+
+    def test_a_simple_webp_with_nothing_to_clear_is_left_as_it_is(self):
+        p = self.path("b.webp")
+        with open(p, "wb") as f:
+            f.write(webp([riff_chunk(b"VP8 ", b"\x10\x02\x00\x9d\x01\x2a")]))
+        before = read(p)
+        self.assertEqual(0, run("--check", p).returncode)
+        self.assertEqual(0, run(p).returncode)
+        self.assertEqual(before, read(p))
+
+    @unittest.skipUnless(has("PIL"), "needs Pillow")
+    def test_a_webp_saved_with_exif_and_xmp_still_decodes_to_the_same_pixels(self):
+        from PIL import Image
+        p = self.path("c.webp")
+        exif = Image.Exif()
+        exif[0x0131] = "Some Editor 3.1"
+        Image.new("RGB", (8, 6), (10, 20, 30)).save(p, "WEBP", lossless=True, exif=exif.tobytes(),
+                                                    xmp=b"<x:xmpmeta>someone</x:xmpmeta>")
+        self.assertEqual(1, run("--check", p).returncode)
+        self.assertEqual(0, run(p).returncode)
+        self.assertNotIn(b"Some Editor", read(p))
+        self.assertNotIn(b"someone", read(p))
+        with Image.open(p) as im:
+            self.assertEqual((10, 20, 30), im.convert("RGB").getpixel((3, 3)))
+        self.assertEqual(0, run("--check", p).returncode)
+
+
+class GlbFiles(Base):
+    DOC = {"asset": {"version": "2.0", "generator": "Some Exporter v5.2", "copyright": "someone"},
+           "extras": {"made": "on a machine"},
+           "extensionsUsed": ["KHR_draco_mesh_compression", "KHR_xmp_json_ld"],
+           "extensions": {"KHR_xmp_json_ld": {"packets": [{"dc:creator": "someone"}]}},
+           "nodes": [{"name": "mill", "mesh": 0, "extras": {"author": "someone"},
+                      "extensions": {"KHR_xmp_json_ld": {"packet": 0}}}],
+           "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "extensions": {
+               "KHR_draco_mesh_compression": {"bufferView": 2, "attributes": {"POSITION": 0}}}}]}],
+           "accessors": [{"count": 3, "componentType": 5126, "type": "VEC3", "max": [1.5, 0.800000011920929, 1],
+                          "min": [0, 0, 0]}],
+           "images": [{"bufferView": 1, "mimeType": "image/png", "name": "mill_color"}],
+           "textures": [{"source": 0}]}
+
+    def test_the_generator_copyright_extras_and_xmp_go_and_the_texture_is_cleared_in_a_repacked_chunk(self):
+        p = self.path("mill.glb")
+        geometry, draco = b"thirteen byte", b"DRACO\x01\x02\x03"
+        write_glb(p, self.DOC, [geometry, tiny_png(b"Some Editor 3.1"), draco])
+        done = run("--check", p)
+        self.assertEqual(1, done.returncode)
+        for name in ("asset.generator", "asset.copyright", "extras", "XMP", "image 0 tEXt"):
+            self.assertIn(name, done.stdout)
+        self.assertEqual(0, run(p).returncode)
+        total, size, doc, views = read_glb(p)
+        self.assertEqual(size, total)
+        self.assertEqual({"version": "2.0"}, doc["asset"])
+        text = json.dumps(doc)
+        for gone in ("extras", "someone", "xmp", "Some Exporter"):
+            self.assertNotIn(gone, text)
+        self.assertEqual(["KHR_draco_mesh_compression"], doc["extensionsUsed"])
+        self.assertEqual(self.DOC["meshes"], doc["meshes"])
+        self.assertEqual(self.DOC["accessors"], doc["accessors"])
+        self.assertEqual([geometry, tiny_png(), draco], views)
+        self.assertTrue(all(v["byteOffset"] % 4 == 0 for v in doc["bufferViews"]))
+        last = doc["bufferViews"][-1]
+        self.assertEqual(last["byteOffset"] + last["byteLength"], doc["buffers"][0]["byteLength"])
+        self.assertNotIn(b"Some Editor", read(p))
+        self.assertEqual(0, run("--check", p).returncode)
+
+    def test_a_local_path_is_named_and_the_model_is_left_as_it_is(self):
+        p = self.path("path.glb")
+        doc = {"asset": {"version": "2.0"}, "nodes": [{"name": "D:\\art\\mill.blend"}]}
+        write_glb(p, doc, [b"abcd"])
+        before = read(p)
+        done = run("--check", p)
+        self.assertEqual(1, done.returncode)
+        self.assertIn("a local path at nodes[0].name", done.stdout)
+        done = run(p)
+        self.assertEqual(2, done.returncode)
+        self.assertIn("a local path", done.stderr)
+        self.assertEqual(before, read(p))
+
+    def test_a_texture_or_a_chunk_it_does_not_read_is_refused(self):
+        p = self.path("ktx.glb")
+        write_glb(p, {"asset": {"version": "2.0"}, "images": [{"bufferView": 0, "mimeType": "image/ktx2"}]},
+                  [b"\xabKTX 20\xbb"])
+        done = run("--check", p)
+        self.assertEqual(2, done.returncode)
+        self.assertIn("image/ktx2", done.stdout)
+        q = self.path("extra.glb")
+        write_glb(q, {"asset": {"version": "2.0"}}, [b"abcd"])
+        data = read(q) + (4).to_bytes(4, "little") + b"XTRA" + b"note"
+        with open(q, "wb") as f:
+            f.write(data[:8] + len(data).to_bytes(4, "little") + data[12:])
+        done = run("--check", q)
+        self.assertEqual(2, done.returncode)
+        self.assertIn("chunk it does not read", done.stdout)
+
+
 class Walk(Base):
     def test_a_kind_it_does_not_read_is_named_never_passed(self):
         webm = self.path("w.webm")
@@ -503,6 +681,22 @@ class Walk(Base):
         self.assertEqual(1, done.returncode)
         self.assertEqual(1, len(done.stdout.strip().splitlines()))
         self.assertIn(os.path.join("docs", "a.docx"), done.stdout)
+
+    def test_in_a_folder_a_binary_file_of_a_kind_it_does_not_know_is_named_and_text_is_not(self):
+        with open(self.path("font.woff2"), "wb") as f:
+            f.write(b"wOF2\x00\x01\x00\x00Some Foundry")
+        with open(self.path("model.gltf"), "w") as f:
+            f.write('{"asset": {"generator": "Some Exporter"}}')
+        for name, text in (("data.json", '{"a": 1}'), ("page.html", "<p>hola</p>"), ("README", "words")):
+            with open(self.path(name), "w", encoding="utf-8") as f:
+                f.write(text)
+        write_glb(self.path("clean.glb"), {"asset": {"version": "2.0"}}, [b"abcd"])
+        done = run("--check", self.tmp)
+        self.assertEqual(2, done.returncode)
+        lines = done.stdout.strip().splitlines()
+        self.assertEqual(2, len(lines), done.stdout)
+        self.assertIn("font.woff2: not read", done.stdout)
+        self.assertIn("model.gltf: not read", done.stdout)
 
     def test_a_damaged_file_is_named_and_the_rest_still_run(self):
         with open(self.path("bad.docx"), "wb") as f:

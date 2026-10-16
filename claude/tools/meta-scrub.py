@@ -18,22 +18,32 @@ Office document leaves with its core properties cleared. It covers every kind th
         segments, and any image a phone appends after the end of the picture. No dependency, no
         re-encode. A photo whose EXIF orientation is not 1 is refused and left as it is: without the
         tag it would show turned, so rotate it first.
+  .webp  the EXIF, XMP and C2PA chunks, with the VP8X flags that announced them, and any data after
+        the picture. No dependency, no re-encode.
+  .glb  in the JSON chunk, asset.generator, asset.copyright, every extras and the KHR_xmp_json_ld
+        packets; the embedded PNG, JPEG and WebP textures, cleared as above, with the binary chunk packed
+        again. Geometry, Draco data included, is copied byte for byte. A local path in any name or URI is
+        named and refused, since clearing it would change the model. An embedded texture of another
+        kind, an image in a data URI or a chunk it does not know is refused. No dependency.
   .mp4 .mov .m4a .m4v  the container and stream tags, the encoder tags, and on H.264 the SEI units
         where x264 writes its name and settings, by an ffmpeg stream copy (no re-encode). Needs
         ffmpeg and ffprobe on PATH. A name written inside the frames is out of a stream copy's
         reach (ffmpeg's own AAC encoder writes one unless the encode took -flags +bitexact, x265
         writes one unless it took -x265-params info=0): such a file is refused and left as it is.
 
-Other media and document kinds (.webm, .mkv, .gif, .webp, .heic, .svg, .mp3, .doc and the like) are
-not read: each one is named as not read and the run exits 2, so a check never passes a file it did not
-open. Text, code and data files are ignored.
+Other media, document and model kinds (.webm, .mkv, .gif, .heic, .svg, .mp3, .doc, .gltf, .obj, .fbx and
+the like) are not read: each one is named as not read and the run exits 2, so a check never passes a file
+it did not open.
 
     python meta-scrub.py <file or folder>...           # clear in place, one line per file changed
     python meta-scrub.py --check <file or folder>...   # change nothing; one line per file that still
                                                        # names something or could not be read
 
-A folder is walked whole, skipping .git, node_modules and .venv. A file is replaced only through a
-temporary file in its own folder, checked again before a rename, so a run that stops halfway, or a
+A folder is walked whole, skipping .git, node_modules and .venv. In a folder, a text, code or data file
+(no control byte in its first 8 KB) is ignored, and a binary file of a kind the tool does not know (a
+font, an archive, a model) is named as not read, the same as when it is named directly; UTF-16 text
+holds NUL bytes, so it counts as binary. A file is replaced only through a temporary file in its own
+folder, checked again before a rename, so a run that stops halfway, or a
 clear that would leave a name behind, leaves the original. Exit codes: 0 every file read is clean
 (--check) or cleared; 1 --check found a name; 2 a file was not read, refused or failed, which wins
 over 1. Under --check every line goes to stdout; a clear names its failures on stderr.
@@ -48,11 +58,15 @@ import zipfile
 
 OFFICE = {".docx", ".xlsx", ".pptx", ".docm", ".xlsm", ".pptm"}
 VIDEO = {".mp4", ".mov", ".m4a", ".m4v"}
-KINDS = OFFICE | VIDEO | {".pdf", ".png", ".jpg", ".jpeg"}
+KINDS = OFFICE | VIDEO | {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".glb"}
 # kinds that can carry a name too, which this tool does not clear: named, never passed in silence
-NOT_READ = {".webm", ".mkv", ".avi", ".wmv", ".flv", ".gif", ".webp", ".heic", ".heif", ".avif", ".tif",
+NOT_READ = {".webm", ".mkv", ".avi", ".wmv", ".flv", ".gif", ".heic", ".heif", ".avif", ".tif",
             ".tiff", ".bmp", ".svg", ".psd", ".mp3", ".wav", ".flac", ".ogg", ".opus", ".aac", ".odt",
-            ".ods", ".odp", ".doc", ".xls", ".ppt", ".rtf", ".epub"}
+            ".ods", ".odp", ".doc", ".xls", ".ppt", ".rtf", ".epub", ".gltf", ".obj", ".mtl", ".fbx",
+            ".blend", ".usd", ".usda", ".usdc", ".usdz", ".dae", ".ply", ".stl", ".3mf"}
+# bytes that never occur in a text file: every control byte but tab, line feed, form feed, carriage
+# return and escape
+CONTROL = bytes(set(range(32)) - {9, 10, 12, 13, 27})
 SKIP_DIRS = {".git", "node_modules", ".venv"}
 
 CORE_PART = "docProps/core.xml"
@@ -70,6 +84,13 @@ ABS_PATH_BLOCK = re.compile(r"<((?:[\w.-]+:)?AlternateContent)\b[^>]*>(?:(?!</\1
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 PNG_DROP = {b"tEXt", b"zTXt", b"iTXt", b"tIME", b"eXIf", b"caBX"}
 JPEG_DROP = {0xE1: "APP1", 0xEB: "APP11", 0xED: "APP13", 0xFE: "COM"}
+WEBP_DROP = {b"EXIF": "EXIF", b"XMP ": "XMP", b"C2PA": "C2PA"}
+WEBP_FLAGS = 0x08 | 0x04  # the VP8X bits that announce EXIF and XMP
+
+GLB_JSON = 0x4E4F534A
+GLB_BIN = 0x004E4942
+GLTF_XMP = "KHR_xmp_json_ld"
+LOCAL_PATH = re.compile(r"\b[A-Za-z]:[\\/]|\\\\[^\\\s]+\\|/Users/|/home/|/mnt/|/Volumes/|~/")
 
 # keys that carry a generator or its private data: on the catalog (an /Info there is not standard, but
 # some writers put one) and on any other object
@@ -247,18 +268,12 @@ def png_chunks(data):
             break
 
 
-def png_check(path):
-    with open(path, "rb") as f:
-        data = f.read()
+def png_names(data):
     return sorted({kind.decode("ascii") for kind, _ in png_chunks(data) if kind in PNG_DROP})
 
 
-def png_scrub(path, tmp):
-    with open(path, "rb") as f:
-        data = f.read()
-    kept = [chunk for kind, chunk in png_chunks(data) if kind not in PNG_DROP]
-    with open(tmp, "wb") as f:
-        f.write(PNG_SIGNATURE + b"".join(kept))
+def png_clean(data):
+    return PNG_SIGNATURE + b"".join(chunk for kind, chunk in png_chunks(data) if kind not in PNG_DROP)
 
 
 def jpeg_parts(data):
@@ -326,9 +341,7 @@ def jpeg_orientation(segment):
     return 1
 
 
-def jpeg_check(path):
-    with open(path, "rb") as f:
-        data = f.read()
+def jpeg_names(data):
     segments, after = jpeg_parts(data)
     found = {jpeg_dropped(m, s) for m, s in segments} - {None}
     if after.rstrip(b"\x00"):
@@ -336,16 +349,217 @@ def jpeg_check(path):
     return sorted(found)
 
 
-def jpeg_scrub(path, tmp):
-    with open(path, "rb") as f:
-        data = f.read()
+def jpeg_clean(data):
     segments, _ = jpeg_parts(data)
     for marker, segment in segments:
         if marker == 0xE1 and jpeg_orientation(segment) != 1:
             raise Refused("EXIF orientation %d: rotate the photo first, the tag is all that turns it"
                           % jpeg_orientation(segment))
-    with open(tmp, "wb") as f:
-        f.write(b"".join(s for m, s in segments if jpeg_dropped(m, s) is None))
+    return b"".join(s for m, s in segments if jpeg_dropped(m, s) is None)
+
+
+def webp_parts(data):
+    """(the chunks as (fourcc, bytes with their pad byte), what follows the RIFF container)."""
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+        raise Refused("not a WebP file")
+    end = 8 + int.from_bytes(data[4:8], "little")
+    if end > len(data):
+        raise Refused("damaged WebP: shorter than its header says")
+    chunks, i = [], 12
+    while i + 8 <= end:
+        size = int.from_bytes(data[i + 4:i + 8], "little")
+        if i + 8 + size > end:
+            raise Refused("damaged WebP chunk at byte %d" % i)
+        chunks.append((data[i:i + 4], data[i:i + 8 + size] + (b"\x00" if size & 1 else b"")))
+        i += 8 + size + (size & 1)
+    return chunks, data[end:]
+
+
+def webp_names(data):
+    chunks, after = webp_parts(data)
+    found = {WEBP_DROP[fourcc] for fourcc, _ in chunks if fourcc in WEBP_DROP}
+    if after.rstrip(b"\x00"):
+        found.add("data after the picture")
+    return sorted(found)
+
+
+def webp_clean(data):
+    kept = []
+    for fourcc, chunk in webp_parts(data)[0]:
+        if fourcc == b"VP8X":
+            if len(chunk) < 18:
+                raise Refused("damaged WebP: a VP8X chunk shorter than its ten bytes")
+            chunk = chunk[:8] + bytes([chunk[8] & ~WEBP_FLAGS & 0xFF]) + chunk[9:]
+        if fourcc not in WEBP_DROP:
+            kept.append(chunk)
+    body = b"WEBP" + b"".join(kept)
+    return b"RIFF" + len(body).to_bytes(4, "little") + body
+
+
+IMAGE_BYTES = {"image/png": (png_names, png_clean), "image/jpeg": (jpeg_names, jpeg_clean),
+               "image/webp": (webp_names, webp_clean)}
+
+
+def glb_parts(data):
+    """(the JSON document, the binary chunk or None, what follows the file its header measures)."""
+    if len(data) < 20 or data[:4] != b"glTF":
+        raise Refused("not a binary glTF file")
+    if int.from_bytes(data[4:8], "little") != 2:
+        raise Refused("glTF version %d, only 2 is read" % int.from_bytes(data[4:8], "little"))
+    total = int.from_bytes(data[8:12], "little")
+    if total > len(data):
+        raise Refused("damaged glTF: shorter than its header says")
+    doc = binary = None
+    i = 12
+    while i + 8 <= total:
+        length = int.from_bytes(data[i:i + 4], "little")
+        chunk_type = int.from_bytes(data[i + 4:i + 8], "little")
+        if i + 8 + length > total:
+            raise Refused("damaged glTF chunk at byte %d" % i)
+        body = data[i + 8:i + 8 + length]
+        if chunk_type == GLB_JSON and doc is None:
+            doc = json.loads(body.decode("utf-8"))
+        elif chunk_type == GLB_BIN and doc is not None and binary is None:
+            binary = body
+        else:
+            raise Refused("a glTF chunk it does not read (type 0x%08X)" % chunk_type)
+        i += 8 + length
+    if not isinstance(doc, dict):
+        raise Refused("glTF with no JSON chunk")
+    return doc, binary, data[total:]
+
+
+def gltf_walk(node, where, found):
+    """Name the extras, the XMP packets and any local path under a JSON node; the walk does not go into
+    the extras or the XMP packets, which go whole."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "extras":
+                found.add("extras")
+                continue
+            if key == "extensions" and isinstance(value, dict) and GLTF_XMP in value:
+                found.add("XMP")
+                value = {k: v for k, v in value.items() if k != GLTF_XMP}
+            if key in ("extensionsUsed", "extensionsRequired") and isinstance(value, list) \
+                    and GLTF_XMP in value:
+                found.add("XMP")
+            gltf_walk(value, "%s.%s" % (where, key) if where else key, found)
+    elif isinstance(node, list):
+        for n, value in enumerate(node):
+            gltf_walk(value, "%s[%d]" % (where, n), found)
+    elif isinstance(node, str) and LOCAL_PATH.search(node):
+        found.add("a local path at %s" % where)
+
+
+def gltf_strip(node):
+    if isinstance(node, dict):
+        node.pop("extras", None)
+        extensions = node.get("extensions")
+        if isinstance(extensions, dict) and GLTF_XMP in extensions:
+            del extensions[GLTF_XMP]
+            if not extensions:
+                del node["extensions"]
+        for key in ("extensionsUsed", "extensionsRequired"):
+            if isinstance(node.get(key), list) and GLTF_XMP in node[key]:
+                node[key] = [name for name in node[key] if name != GLTF_XMP]
+                if not node[key]:
+                    del node[key]
+        for value in node.values():
+            gltf_strip(value)
+    elif isinstance(node, list):
+        for value in node:
+            gltf_strip(value)
+
+
+def glb_images(doc, binary):
+    """(view number, the texture's bytes, its two handlers) for each texture embedded in the file."""
+    views, buffers = doc.get("bufferViews", []), doc.get("buffers", [])
+    for n, image in enumerate(doc.get("images", [])):
+        if str(image.get("uri", "")).startswith("data:"):
+            raise Refused("image %d sits in a data URI, which is not read" % n)
+        if "bufferView" not in image:
+            continue  # a file beside the model, read on its own
+        handlers = IMAGE_BYTES.get(image.get("mimeType"))
+        if handlers is None:
+            raise Refused("image %d is %s, which is not read" % (n, image.get("mimeType") or "untyped"))
+        view = views[image["bufferView"]]
+        if binary is None or view.get("buffer", 0) != 0 or "uri" in buffers[0]:
+            raise Refused("image %d sits outside the file's binary chunk, which is not read" % n)
+        start = view.get("byteOffset", 0)
+        if start + view["byteLength"] > len(binary):
+            raise Refused("image %d runs past the binary chunk" % n)
+        yield n, image["bufferView"], binary[start:start + view["byteLength"]], handlers
+
+
+def glb_names(data):
+    doc, binary, after = glb_parts(data)
+    found = set()
+    asset = doc.get("asset", {})
+    found.update("asset.%s" % field for field in ("generator", "copyright") if asset.get(field))
+    gltf_walk(doc, "", found)
+    for n, _, texture, (names, _) in glb_images(doc, binary):
+        found.update("image %d %s" % (n, name) for name in names(texture))
+    if after.rstrip(b"\x00"):
+        found.add("data after the model")
+    return sorted(found)
+
+
+def glb_repack(doc, binary, textures):
+    """The binary chunk again with the cleared textures in place: every view of the file's buffer in
+    its order, each one starting on a four byte boundary, which no accessor needs more than."""
+    views = doc["bufferViews"]
+    order = sorted((n for n, view in enumerate(views) if view.get("buffer", 0) == 0),
+                   key=lambda n: views[n].get("byteOffset", 0))
+    if any("extensions" in views[n] for n in order):
+        raise Refused("a buffer view carries an extension, so its bytes cannot be moved")
+    spans = [(views[n].get("byteOffset", 0), views[n].get("byteOffset", 0) + views[n]["byteLength"])
+             for n in order]
+    if any(later[0] < earlier[1] for earlier, later in zip(spans, spans[1:])):
+        raise Refused("buffer views overlap, so the textures cannot be cleared in place")
+    out = bytearray()
+    for n, (start, stop) in zip(order, spans):
+        out += b"\x00" * (-len(out) % 4)
+        part = textures.get(n, binary[start:stop])
+        views[n]["byteOffset"] = len(out)
+        views[n]["byteLength"] = len(part)
+        out += part
+    doc["buffers"][0]["byteLength"] = len(out)
+    return bytes(out)
+
+
+def glb_clean(data):
+    doc, binary, _ = glb_parts(data)
+    asset = doc.get("asset", {})
+    for field in ("generator", "copyright"):
+        asset.pop(field, None)
+    gltf_strip(doc)
+    textures = {view: clean(texture) for _, view, texture, (names, clean) in glb_images(doc, binary)
+                if names(texture)}
+    if textures:
+        binary = glb_repack(doc, binary, textures)
+    text = json.dumps(doc, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    text += b" " * (-len(text) % 4)
+    body = len(text).to_bytes(4, "little") + GLB_JSON.to_bytes(4, "little") + text
+    if binary is not None:
+        padded = binary + b"\x00" * (-len(binary) % 4)
+        body += len(padded).to_bytes(4, "little") + GLB_BIN.to_bytes(4, "little") + padded
+    return b"glTF" + (2).to_bytes(4, "little") + (12 + len(body)).to_bytes(4, "little") + body
+
+
+def bytes_check(names):
+    def check(path):
+        with open(path, "rb") as f:
+            return names(f.read())
+    return check
+
+
+def bytes_scrub(clean):
+    def scrub_to(path, tmp):
+        with open(path, "rb") as f:
+            data = f.read()
+        with open(tmp, "wb") as f:
+            f.write(clean(data))
+    return scrub_to
 
 
 def tool(name):
@@ -405,8 +619,10 @@ def video_scrub(path, tmp):
         raise Refused("ffmpeg failed: " + (done.stderr.strip().splitlines() or ["no message"])[-1])
 
 
-HANDLERS = {".pdf": (pdf_check, pdf_scrub), ".png": (png_check, png_scrub),
-            ".jpg": (jpeg_check, jpeg_scrub), ".jpeg": (jpeg_check, jpeg_scrub)}
+HANDLERS = {".pdf": (pdf_check, pdf_scrub)}
+HANDLERS.update({ext: (bytes_check(names), bytes_scrub(clean)) for ext, names, clean in (
+    (".png", png_names, png_clean), (".jpg", jpeg_names, jpeg_clean), (".jpeg", jpeg_names, jpeg_clean),
+    (".webp", webp_names, webp_clean), (".glb", glb_names, glb_clean))})
 HANDLERS.update({ext: (office_check, office_scrub) for ext in OFFICE})
 HANDLERS.update({ext: (video_check, video_scrub) for ext in VIDEO})
 
@@ -415,14 +631,25 @@ def kind(path):
     return os.path.splitext(path)[1].lower()
 
 
+def is_binary(path):
+    """True for a file with a control byte in its first 8 KB, which no text, code or data file has."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(8192)
+    except OSError:
+        return True  # named, and the read fails again with its reason
+    return any(byte in CONTROL for byte in head)
+
+
 def files(targets):
     for target in targets:
         if os.path.isdir(target):
             for root, dirs, names in os.walk(target):
                 dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
                 for name in sorted(names):
-                    if kind(name) in KINDS or kind(name) in NOT_READ:
-                        yield os.path.join(root, name)
+                    path = os.path.join(root, name)
+                    if kind(name) in KINDS or kind(name) in NOT_READ or is_binary(path):
+                        yield path  # a binary file of a kind it does not know is named, never passed
         elif os.path.isfile(target):
             yield target  # named directly: read, or named as not read, whatever its kind
         else:
