@@ -20,8 +20,8 @@ Office document leaves with its core properties cleared. It covers every kind th
         tag it would show turned, so rotate it first.
   .webp  the EXIF, XMP and C2PA chunks, with the VP8X flags that announced them, and any data after
         the picture. No dependency, no re-encode.
-  .ktx2  the KTXwriter and KTXwriterScParams values and any key outside the KTX set, blanked in
-        place so every offset holds. No dependency, no re-encode.
+  .ktx2  the KTXwriter and KTXwriterScParams values, blanked in place so every offset holds. A key
+        outside the KTX set is named and refused, since its name alone can carry one. No dependency.
   .glb  in the JSON chunk, asset.generator, asset.copyright, every extras and the KHR_xmp_json_ld
         packets; the embedded PNG, JPEG, WebP and KTX2 textures, cleared as above, with the binary chunk packed
         again. Geometry, Draco data included, is copied byte for byte. A local path in any name or URI is
@@ -400,9 +400,10 @@ def webp_clean(data):
 
 KTX2_ID = b"\xabKTX 20\xbb\r\n\x1a\n"
 # keys the KTX 2.0 spec defines that describe the texture; KTXwriter and KTXwriterScParams name the tool
-# and its settings, and a key outside the KTX set can carry anything
+# and its settings, and a key outside the KTX set can carry anything, in its name as much as its value
 KTX2_KEEP = {"KTXcubemapIncomplete", "KTXorientation", "KTXglFormat", "KTXdxgiFormat__",
              "KTXmetalPixelFormat", "KTXswizzle", "KTXanimData", "KTXastcDecodeMode"}
+KTX2_WRITER = {"KTXwriter", "KTXwriterScParams"}
 
 
 def ktx2_values(data):
@@ -428,14 +429,19 @@ def ktx2_values(data):
 
 
 def ktx2_names(data):
-    return sorted({key for key, start, end in ktx2_values(data)
-                   if key not in KTX2_KEEP and data[start:end].strip(b"\x00")})
+    found = set()
+    for key, start, end in ktx2_values(data):
+        if key in KTX2_WRITER and data[start:end].strip(b"\x00"):
+            found.add(key)
+        elif key not in KTX2_WRITER and key not in KTX2_KEEP:
+            found.add("key %s" % key)  # a clear cannot drop an entry without moving every offset after it
+    return sorted(found)
 
 
 def ktx2_clean(data):
     out = bytearray(data)
     for key, start, end in ktx2_values(data):
-        if key not in KTX2_KEEP:
+        if key in KTX2_WRITER:
             out[start:end] = bytes(end - start)  # an empty string in the same bytes
     return bytes(out)
 

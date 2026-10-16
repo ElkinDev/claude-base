@@ -642,7 +642,7 @@ class GlbFiles(Base):
         self.assertEqual(before, read(p))
 
     def test_a_texture_or_a_chunk_it_does_not_read_is_refused(self):
-        p = self.path("ktx.glb")
+        p = self.path("avif.glb")
         write_glb(p, {"asset": {"version": "2.0"}, "images": [{"bufferView": 0, "mimeType": "image/avif"}]},
                   [b"....ftypavif"])
         done = run("--check", p)
@@ -663,22 +663,42 @@ class Ktx2Files(Base):
         p = self.path("t.ktx2")
         with open(p, "wb") as f:
             f.write(ktx2([("KTXwriter", b"ktx create v4.4.2 / libktx v4.4.2"),
-                          ("KTXorientation", b"rd"), ("KTXwriterScParams", b"--encode uastc"),
-                          ("author", b"someone")]))
+                          ("KTXorientation", b"rd"), ("KTXwriterScParams", b"--encode uastc")]))
         before = read(p)
         done = run("--check", p)
         self.assertEqual(1, done.returncode)
-        for name in ("KTXwriter", "KTXwriterScParams", "author"):
+        for name in ("KTXwriter", "KTXwriterScParams"):
             self.assertIn(name, done.stdout)
         self.assertNotIn("KTXorientation", done.stdout)
         self.assertEqual(0, run(p).returncode)
         after = read(p)
         self.assertEqual(len(before), len(after))
         self.assertTrue(after.endswith(b"LEVELDATA"))
-        for gone in (b"ktx create", b"uastc", b"someone"):
+        for gone in (b"ktx create", b"uastc"):
             self.assertNotIn(gone, after)
         self.assertIn(b"KTXorientation\x00rd", after)
         self.assertEqual(0, run("--check", p).returncode)
+
+    def test_a_key_outside_the_ktx_set_is_named_even_empty_and_the_file_is_refused(self):
+        p = self.path("odd.ktx2")
+        with open(p, "wb") as f:
+            f.write(ktx2([("exported-by-a-desk", b"")]))
+        before = read(p)
+        done = run("--check", p)
+        self.assertEqual(1, done.returncode)
+        self.assertIn("key exported-by-a-desk", done.stdout)
+        self.assertEqual(2, run(p).returncode)
+        self.assertEqual(before, read(p))
+
+    def test_damaged_key_value_data_is_refused(self):
+        p = self.path("bad.ktx2")
+        data = bytearray(ktx2([("KTXwriter", b"x")]))
+        data[60:64] = (4096).to_bytes(4, "little")
+        with open(p, "wb") as f:
+            f.write(bytes(data))
+        done = run("--check", p)
+        self.assertEqual(2, done.returncode)
+        self.assertIn("damaged KTX2", done.stdout)
 
     def test_a_ktx2_texture_inside_a_glb_is_cleared_too(self):
         p = self.path("k.glb")
