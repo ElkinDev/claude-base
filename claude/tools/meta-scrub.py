@@ -20,6 +20,14 @@ Office document leaves with its core properties cleared. It covers every kind th
         tag it would show turned, so rotate it first.
   .webp  the EXIF, XMP and C2PA chunks, with the VP8X flags that announced them, and any data after
         the picture. No dependency, no re-encode.
+  .ply  the comment and obj_info lines of the header (Gaussian splat and mesh files alike); the data is
+        copied byte for byte. No dependency.
+  .sog  a splat zip: asset.generator, asset.copyright and any extras in meta.json, the EXIF, XMP and
+        C2PA chunks of its WebP images, and the zip comment. An entry other than meta.json or a WebP
+        image is refused. No dependency.
+  .spz  version 4: the reserved header bytes; extension records are named and refused, since dropping
+        them would move every stream. A legacy gzip file loses the file name and comment fields of
+        its gzip header. No dependency.
   .hdr  the comment lines, SOFTWARE and any variable outside the Radiance set in the header; the
         pixels are copied byte for byte. No dependency.
   .ktx2  the KTXwriter and KTXwriterScParams values, blanked in place so every offset holds. A key
@@ -64,12 +72,12 @@ import zipfile
 
 OFFICE = {".docx", ".xlsx", ".pptx", ".docm", ".xlsm", ".pptm"}
 VIDEO = {".mp4", ".mov", ".m4a", ".m4v"}
-KINDS = OFFICE | VIDEO | {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".glb", ".ktx2", ".hdr"}
+KINDS = OFFICE | VIDEO | {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".glb", ".ktx2", ".hdr", ".ply", ".sog", ".spz"}
 # kinds that can carry a name too, which this tool does not clear: named, never passed in silence
 NOT_READ = {".webm", ".mkv", ".avi", ".wmv", ".flv", ".gif", ".heic", ".heif", ".avif", ".tif",
             ".tiff", ".bmp", ".svg", ".psd", ".mp3", ".wav", ".flac", ".ogg", ".opus", ".aac", ".odt",
             ".ods", ".odp", ".doc", ".xls", ".ppt", ".rtf", ".epub", ".gltf", ".obj", ".mtl", ".fbx",
-            ".blend", ".usd", ".usda", ".usdc", ".usdz", ".dae", ".ply", ".stl", ".3mf"}
+            ".blend", ".usd", ".usda", ".usdc", ".usdz", ".dae", ".stl", ".3mf"}
 # bytes that never occur in a text file: every control byte but tab, line feed, form feed, carriage
 # return and escape
 CONTROL = bytes(set(range(32)) - {9, 10, 12, 13, 27})
@@ -623,6 +631,125 @@ def glb_clean(data):
     return b"glTF" + (2).to_bytes(4, "little") + (12 + len(body)).to_bytes(4, "little") + body
 
 
+PLY_DROP = {b"comment", b"obj_info"}
+
+
+def ply_parts(data):
+    """(the header through its end_header line, the data after it)."""
+    if not (data.startswith(b"ply\n") or data.startswith(b"ply\r\n")):
+        raise Refused("not a PLY file")
+    pos = 0
+    while True:
+        end = data.find(b"\n", pos)
+        if end < 0 or end > 1 << 20:
+            raise Refused("damaged PLY: no end_header line in its first MB")
+        if data[pos:end].strip() == b"end_header":
+            return data[:end + 1], data[end + 1:]
+        pos = end + 1
+
+
+def ply_first_word(line):
+    words = line.split(None, 1)
+    return words[0] if words else b""
+
+
+def ply_names(data):
+    head, _ = ply_parts(data)
+    return sorted({ply_first_word(line).decode("ascii") for line in head.splitlines()
+                   if ply_first_word(line) in PLY_DROP})
+
+
+def ply_clean(data):
+    head, rest = ply_parts(data)
+    return b"".join(line for line in head.splitlines(True) if ply_first_word(line) not in PLY_DROP) + rest
+
+
+GZIP_NAMES = {0x08: "gzip file name", 0x10: "gzip comment"}
+
+
+def spz_names(data):
+    if data[:4] == b"NGSP":
+        if len(data) < 32:
+            raise Refused("damaged SPZ: shorter than its 32 byte header")
+        found = set()
+        if data[14] & 0x2 or int.from_bytes(data[16:20], "little") > 32:
+            found.add("extension records")
+        if data[20:32].strip(b"\x00"):
+            found.add("reserved bytes")
+        return sorted(found)
+    if data[:2] == b"\x1f\x8b" and len(data) >= 10:
+        return sorted(name for bit, name in GZIP_NAMES.items() if data[3] & bit)
+    raise Refused("not an SPZ file")
+
+
+def spz_clean(data):
+    if data[:4] == b"NGSP":
+        if data[14] & 0x2 or int.from_bytes(data[16:20], "little") > 32:
+            raise Refused("SPZ extension records are not read, and dropping them would move every stream: "
+                          "export it without extensions")
+        return data[:20] + bytes(12) + data[32:]
+    flags, i = data[3], 10
+    extra = b""
+    if flags & 0x04:
+        extra = data[i:i + 2 + int.from_bytes(data[i:i + 2], "little")]
+        i += len(extra)
+    for bit in (0x08, 0x10):
+        if flags & bit:
+            i = data.index(b"\x00", i) + 1
+    if flags & 0x02:
+        i += 2  # the header checksum covered the fields that go, so it goes too
+    return data[:3] + bytes([flags & 0x04]) + data[4:10] + extra + data[i:]
+
+
+def sog_open(path):
+    z = zipfile.ZipFile(path)
+    names = [info.filename for info in z.infolist()]
+    other = [n for n in names if n != "meta.json" and not n.lower().endswith(".webp")]
+    if "meta.json" not in names or other:
+        z.close()
+        raise Refused("a SOG entry it does not read: %s" % (other[0] if other else "no meta.json"))
+    return z
+
+
+def sog_check(path):
+    z = sog_open(path)
+    found = set()
+    with z:
+        doc = json.loads(z.read("meta.json").decode("utf-8"))
+        asset = doc.get("asset") if isinstance(doc, dict) else None
+        if isinstance(asset, dict):
+            found.update("meta.json asset.%s" % f for f in ("generator", "copyright") if asset.get(f))
+        walked = set()
+        gltf_walk(doc, "", walked)
+        found.update("meta.json %s" % name for name in walked)
+        if z.comment:
+            found.add("zip comment")
+        for info in z.infolist():
+            if info.filename.lower().endswith(".webp"):
+                found.update("%s %s" % (info.filename, name) for name in webp_names(z.read(info)))
+            if info.comment:
+                found.add("%s comment" % info.filename)
+    return sorted(found)
+
+
+def sog_scrub(path, tmp):
+    z = sog_open(path)
+    with z as zin, zipfile.ZipFile(tmp, "w") as zout:
+        for info in zin.infolist():
+            data = zin.read(info)
+            if info.filename == "meta.json":
+                doc = json.loads(data.decode("utf-8"))
+                if isinstance(doc.get("asset"), dict):
+                    for field in ("generator", "copyright"):
+                        doc["asset"].pop(field, None)
+                gltf_strip(doc)
+                data = json.dumps(doc, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            elif info.filename.lower().endswith(".webp") and webp_names(data):
+                data = webp_clean(data)
+            info.comment = b""
+            zout.writestr(info, data, compress_type=info.compress_type)
+
+
 HDR_KEEP = {b"FORMAT", b"EXPOSURE", b"COLORCORR", b"PRIMARIES", b"PIXASPECT", b"VIEW", b"GAMMA"}
 
 
@@ -734,7 +861,8 @@ HANDLERS = {".pdf": (pdf_check, pdf_scrub)}
 HANDLERS.update({ext: (bytes_check(names), bytes_scrub(clean)) for ext, names, clean in (
     (".png", png_names, png_clean), (".jpg", jpeg_names, jpeg_clean), (".jpeg", jpeg_names, jpeg_clean),
     (".webp", webp_names, webp_clean), (".glb", glb_names, glb_clean), (".ktx2", ktx2_names, ktx2_clean),
-    (".hdr", hdr_names, hdr_clean))})
+    (".hdr", hdr_names, hdr_clean), (".ply", ply_names, ply_clean), (".spz", spz_names, spz_clean))})
+HANDLERS[".sog"] = (sog_check, sog_scrub)
 HANDLERS.update({ext: (office_check, office_scrub) for ext in OFFICE})
 HANDLERS.update({ext: (video_check, video_scrub) for ext in VIDEO})
 

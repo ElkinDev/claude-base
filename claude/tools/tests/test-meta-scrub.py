@@ -4,6 +4,7 @@ them, and say so.
 
     python test-meta-scrub.py
 """
+import gzip
 import io
 import json
 import os
@@ -796,6 +797,87 @@ class HdrFiles(Base):
         self.assertEqual(0, run("--check", p).returncode)
         self.assertEqual(0, run(p).returncode)
         self.assertEqual(before, read(p))
+
+
+class SplatFiles(Base):
+    def test_ply_header_comments_go_and_the_data_stays(self):
+        p = self.path("splat.ply")
+        data = b"\x01\x02\x03\x04end_header\n\x00\xff"
+        with open(p, "wb") as f:
+            f.write(b"ply\nformat binary_little_endian 1.0\ncomment Exported from Some Trainer\n"
+                    b"obj_info made on a desk\nelement vertex 1\nproperty float x\nend_header\n" + data)
+        done = run("--check", p)
+        self.assertEqual(1, done.returncode)
+        self.assertIn("comment", done.stdout)
+        self.assertIn("obj_info", done.stdout)
+        self.assertEqual(0, run(p).returncode)
+        self.assertEqual(b"ply\nformat binary_little_endian 1.0\nelement vertex 1\nproperty float x\nend_header\n"
+                         + data, read(p))
+        self.assertEqual(0, run("--check", p).returncode)
+
+    def test_sog_meta_generator_and_webp_metadata_go_and_the_rest_stays(self):
+        p = self.path("scene.sog")
+        image = webp([riff_chunk(b"VP8X", bytes([0x08]) + bytes(9)), riff_chunk(b"VP8L", b"\x2f\x00\x00"),
+                      riff_chunk(b"EXIF", b"Exif\x00\x00Some Editor")])
+        with zipfile.ZipFile(p, "w") as z:
+            z.writestr("meta.json", json.dumps({"version": 2, "count": 5,
+                                                "asset": {"generator": "splat-transform v1.2"}}))
+            z.writestr("means_l.webp", image, compress_type=zipfile.ZIP_STORED)
+            z.comment = b"made by a tool"
+        done = run("--check", p)
+        self.assertEqual(1, done.returncode)
+        for name in ("meta.json asset.generator", "means_l.webp EXIF", "zip comment"):
+            self.assertIn(name, done.stdout)
+        self.assertEqual(0, run(p).returncode)
+        with zipfile.ZipFile(p) as z:
+            meta = json.loads(z.read("meta.json"))
+            self.assertEqual({"version": 2, "count": 5, "asset": {}}, meta)
+            self.assertNotIn(b"Some Editor", z.read("means_l.webp"))
+            self.assertEqual(b"", z.comment)
+        self.assertEqual(0, run("--check", p).returncode)
+
+    def test_a_sog_entry_it_does_not_read_is_refused(self):
+        p = self.path("odd.sog")
+        with zipfile.ZipFile(p, "w") as z:
+            z.writestr("meta.json", "{}")
+            z.writestr("notes.txt", "x")
+        self.assertEqual(2, run("--check", p).returncode)
+
+    def test_spz_v4_with_no_extension_is_clean_and_one_with_extensions_is_refused(self):
+        def spz(flags, toc, tail):
+            return (b"NGSP" + (4).to_bytes(4, "little") + (3).to_bytes(4, "little") + bytes([0, 12, flags, 6])
+                    + toc.to_bytes(4, "little") + bytes(12) + tail)
+        p = self.path("plain.spz")
+        with open(p, "wb") as f:
+            f.write(spz(0, 32, b"TOC-AND-STREAMS"))
+        before = read(p)
+        self.assertEqual(0, run("--check", p).returncode)
+        self.assertEqual(0, run(p).returncode)
+        self.assertEqual(before, read(p))
+        q = self.path("ext.spz")
+        with open(q, "wb") as f:
+            f.write(spz(0x2, 44, b"EXTRECORD123TOC-AND-STREAMS"))
+        before = read(q)
+        done = run("--check", q)
+        self.assertEqual(1, done.returncode)
+        self.assertIn("extension records", done.stdout)
+        self.assertEqual(2, run(q).returncode)
+        self.assertEqual(before, read(q))
+
+    def test_a_legacy_gzip_spz_loses_its_file_name_and_still_decompresses(self):
+        p = self.path("old.spz")
+        buf = io.BytesIO()
+        with gzip.GzipFile(filename="scene-on-a-desk.ply", mode="wb", fileobj=buf, mtime=0) as g:
+            g.write(b"splat payload")
+        with open(p, "wb") as f:
+            f.write(buf.getvalue())
+        done = run("--check", p)
+        self.assertEqual(1, done.returncode)
+        self.assertIn("gzip file name", done.stdout)
+        self.assertEqual(0, run(p).returncode)
+        self.assertNotIn(b"scene-on-a-desk", read(p))
+        self.assertEqual(b"splat payload", gzip.decompress(read(p)))
+        self.assertEqual(0, run("--check", p).returncode)
 
 
 class Walk(Base):
