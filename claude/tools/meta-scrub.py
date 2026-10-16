@@ -20,8 +20,10 @@ Office document leaves with its core properties cleared. It covers every kind th
         tag it would show turned, so rotate it first.
   .webp  the EXIF, XMP and C2PA chunks, with the VP8X flags that announced them, and any data after
         the picture. No dependency, no re-encode.
+  .ktx2  the KTXwriter and KTXwriterScParams values and any key outside the KTX set, blanked in
+        place so every offset holds. No dependency, no re-encode.
   .glb  in the JSON chunk, asset.generator, asset.copyright, every extras and the KHR_xmp_json_ld
-        packets; the embedded PNG, JPEG and WebP textures, cleared as above, with the binary chunk packed
+        packets; the embedded PNG, JPEG, WebP and KTX2 textures, cleared as above, with the binary chunk packed
         again. Geometry, Draco data included, is copied byte for byte. A local path in any name or URI is
         named and refused, since clearing it would change the model. An embedded texture of another
         kind, an image in a data URI or a chunk it does not know is refused. No dependency.
@@ -58,7 +60,7 @@ import zipfile
 
 OFFICE = {".docx", ".xlsx", ".pptx", ".docm", ".xlsm", ".pptm"}
 VIDEO = {".mp4", ".mov", ".m4a", ".m4v"}
-KINDS = OFFICE | VIDEO | {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".glb"}
+KINDS = OFFICE | VIDEO | {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".glb", ".ktx2"}
 # kinds that can carry a name too, which this tool does not clear: named, never passed in silence
 NOT_READ = {".webm", ".mkv", ".avi", ".wmv", ".flv", ".gif", ".heic", ".heif", ".avif", ".tif",
             ".tiff", ".bmp", ".svg", ".psd", ".mp3", ".wav", ".flac", ".ogg", ".opus", ".aac", ".odt",
@@ -396,8 +398,50 @@ def webp_clean(data):
     return b"RIFF" + len(body).to_bytes(4, "little") + body
 
 
+KTX2_ID = b"\xabKTX 20\xbb\r\n\x1a\n"
+# keys the KTX 2.0 spec defines that describe the texture; KTXwriter and KTXwriterScParams name the tool
+# and its settings, and a key outside the KTX set can carry anything
+KTX2_KEEP = {"KTXcubemapIncomplete", "KTXorientation", "KTXglFormat", "KTXdxgiFormat__",
+             "KTXmetalPixelFormat", "KTXswizzle", "KTXanimData", "KTXastcDecodeMode"}
+
+
+def ktx2_values(data):
+    """(key, start, end of its value) for each key/value entry."""
+    if len(data) < 80 or not data.startswith(KTX2_ID):
+        raise Refused("not a KTX2 file")
+    start = int.from_bytes(data[56:60], "little")
+    end = start + int.from_bytes(data[60:64], "little")
+    if end > len(data):
+        raise Refused("damaged KTX2: its key/value data runs past the file")
+    entries, i = [], start
+    while i + 4 <= end:
+        length = int.from_bytes(data[i:i + 4], "little")
+        body = i + 4
+        if length == 0 or body + length > end:
+            raise Refused("damaged KTX2 key/value entry at byte %d" % i)
+        cut = data.find(b"\x00", body, body + length)
+        if cut < 0:
+            raise Refused("KTX2 key/value entry at byte %d has no key end" % i)
+        entries.append((data[body:cut].decode("utf-8", "replace"), cut + 1, body + length))
+        i = body + length + (-length % 4)
+    return entries
+
+
+def ktx2_names(data):
+    return sorted({key for key, start, end in ktx2_values(data)
+                   if key not in KTX2_KEEP and data[start:end].strip(b"\x00")})
+
+
+def ktx2_clean(data):
+    out = bytearray(data)
+    for key, start, end in ktx2_values(data):
+        if key not in KTX2_KEEP:
+            out[start:end] = bytes(end - start)  # an empty string in the same bytes
+    return bytes(out)
+
+
 IMAGE_BYTES = {"image/png": (png_names, png_clean), "image/jpeg": (jpeg_names, jpeg_clean),
-               "image/webp": (webp_names, webp_clean)}
+               "image/webp": (webp_names, webp_clean), "image/ktx2": (ktx2_names, ktx2_clean)}
 
 
 def glb_parts(data):
@@ -622,7 +666,7 @@ def video_scrub(path, tmp):
 HANDLERS = {".pdf": (pdf_check, pdf_scrub)}
 HANDLERS.update({ext: (bytes_check(names), bytes_scrub(clean)) for ext, names, clean in (
     (".png", png_names, png_clean), (".jpg", jpeg_names, jpeg_clean), (".jpeg", jpeg_names, jpeg_clean),
-    (".webp", webp_names, webp_clean), (".glb", glb_names, glb_clean))})
+    (".webp", webp_names, webp_clean), (".glb", glb_names, glb_clean), (".ktx2", ktx2_names, ktx2_clean))})
 HANDLERS.update({ext: (office_check, office_scrub) for ext in OFFICE})
 HANDLERS.update({ext: (video_check, video_scrub) for ext in VIDEO})
 
