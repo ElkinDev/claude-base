@@ -477,6 +477,22 @@ class Pdf(Base):
 
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "needs ffmpeg and ffprobe")
 class Video(Base):
+    def test_webm_opus_audio_loses_its_encoder_names_and_still_decodes(self):
+        p = self.path("loop.webm")
+        made = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=duration=1", "-c:a", "libopus",
+                               "-metadata", "title=draft", p], capture_output=True, text=True)
+        if made.returncode != 0:
+            self.skipTest("this ffmpeg cannot write Opus in WebM: " + made.stderr.strip()[-80:])
+        done = run("--check", p)
+        self.assertEqual(1, done.returncode)
+        self.assertEqual(0, run(p).returncode)
+        self.assertEqual(0, run("--check", p).returncode)
+        for note in (b"Lavf6", b"Lavc6", b"draft"):
+            self.assertNotIn(note, read(p))
+        out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name", "-of", "csv=p=0", p],
+                             capture_output=True, text=True, check=True).stdout
+        self.assertEqual("opus", out.strip())
+
     def frames(self, path):
         out = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v",
                               "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", path],
@@ -902,7 +918,7 @@ class SplatFiles(Base):
 
 class Walk(Base):
     def test_a_kind_it_does_not_read_is_named_never_passed(self):
-        webm = self.path("w.webm")
+        webm = self.path("w.avi")
         with open(webm, "wb") as f:
             f.write(b"ENCODER Lavf62.12.101")
         before = read(webm)
@@ -911,9 +927,9 @@ class Walk(Base):
         self.assertIn("not read", done.stdout)
         done = run(webm)
         self.assertEqual(2, done.returncode)
-        self.assertIn("w.webm", done.stderr)
+        self.assertIn("w.avi", done.stderr)
         self.assertEqual(before, read(webm))
-        self.assertEqual(2, run("--check", self.path("w.webm")).returncode)
+        self.assertEqual(2, run("--check", self.path("w.avi")).returncode)
         folder = self.path("site")
         os.makedirs(folder)
         with open(os.path.join(folder, "a.gif"), "wb") as f:
