@@ -39,7 +39,7 @@ Office document leaves with its core properties cleared. It covers every kind th
         clear such a model before compressing it. Geometry, Draco data included, is copied byte for byte. A local path in any name or URI is
         named and refused, since clearing it would change the model. An embedded texture of another
         kind, an image in a data URI or a chunk it does not know is refused. No dependency.
-  .mp4 .mov .m4a .m4v  the container and stream tags, the encoder tags, and on H.264 the SEI units
+  .mp4 .mov .m4a .m4v .webm .mkv  the container and stream tags, the encoder tags, and on H.264 the SEI units
         where x264 writes its name and settings, by an ffmpeg stream copy (no re-encode). Needs
         ffmpeg and ffprobe on PATH. A name written inside the frames is out of a stream copy's
         reach (ffmpeg's own AAC encoder writes one unless the encode took -flags +bitexact, x265
@@ -72,10 +72,10 @@ import zipfile
 import zlib
 
 OFFICE = {".docx", ".xlsx", ".pptx", ".docm", ".xlsm", ".pptm"}
-VIDEO = {".mp4", ".mov", ".m4a", ".m4v"}
+VIDEO = {".mp4", ".mov", ".m4a", ".m4v", ".webm", ".mkv"}
 KINDS = OFFICE | VIDEO | {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".glb", ".ktx2", ".hdr", ".ply", ".sog", ".spz"}
 # kinds that can carry a name too, which this tool does not clear: named, never passed in silence
-NOT_READ = {".webm", ".mkv", ".avi", ".wmv", ".flv", ".gif", ".heic", ".heif", ".avif", ".tif",
+NOT_READ = {".avi", ".wmv", ".flv", ".gif", ".heic", ".heif", ".avif", ".tif",
             ".tiff", ".bmp", ".svg", ".psd", ".mp3", ".wav", ".flac", ".ogg", ".opus", ".aac", ".odt",
             ".ods", ".odp", ".doc", ".xls", ".ppt", ".rtf", ".epub", ".gltf", ".obj", ".mtl", ".fbx",
             ".blend", ".usd", ".usda", ".usdc", ".usdz", ".dae", ".stl", ".3mf"}
@@ -854,11 +854,16 @@ def video_notes(path):
 
 def video_check(path):
     probe = video_probe(path)
-    found = ["format " + k for k in (probe.get("format", {}).get("tags") or {})
-             if k not in VIDEO_PLAIN_FORMAT_TAGS]
+    matroska = os.path.splitext(path)[1].lower() in (".webm", ".mkv")
+    # an empty tag names nothing, and a bare "Lavf" is the muxing app Matroska must write, which ffmpeg
+    # leaves without its version under bitexact; a versioned one is still named, here and by the notes
+    found = ["format " + k for k, v in (probe.get("format", {}).get("tags") or {}).items()
+             if k not in VIDEO_PLAIN_FORMAT_TAGS and v != "" and not (matroska and v == "Lavf")]
     for stream in probe.get("streams", []):
         for k, v in (stream.get("tags") or {}).items():
-            if k == "language" or (k == "handler_name" and v in VIDEO_PLAIN_HANDLERS):
+            # Matroska and WebM carry a DURATION tag on every stream, a time and nothing else
+            if (k == "language" or v == "" or (matroska and k == "DURATION")
+                    or (k == "handler_name" and v in VIDEO_PLAIN_HANDLERS)):
                 continue
             found.append("stream %s %s" % (stream.get("index"), k))
     return found + ["note " + n for n in video_notes(path) if not any(n in f for f in found)]
