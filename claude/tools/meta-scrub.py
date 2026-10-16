@@ -854,14 +854,16 @@ def video_notes(path):
 
 def video_check(path):
     probe = video_probe(path)
+    matroska = os.path.splitext(path)[1].lower() in (".webm", ".mkv")
     # an empty tag names nothing, and a bare "Lavf" is the muxing app Matroska must write, which ffmpeg
     # leaves without its version under bitexact; a versioned one is still named, here and by the notes
     found = ["format " + k for k, v in (probe.get("format", {}).get("tags") or {}).items()
-             if k not in VIDEO_PLAIN_FORMAT_TAGS and v not in ("", "Lavf")]
+             if k not in VIDEO_PLAIN_FORMAT_TAGS and v != "" and not (matroska and v == "Lavf")]
     for stream in probe.get("streams", []):
         for k, v in (stream.get("tags") or {}).items():
             # Matroska and WebM carry a DURATION tag on every stream, a time and nothing else
-            if k in ("language", "DURATION") or v == "" or (k == "handler_name" and v in VIDEO_PLAIN_HANDLERS):
+            if (k == "language" or v == "" or (matroska and k == "DURATION")
+                    or (k == "handler_name" and v in VIDEO_PLAIN_HANDLERS)):
                 continue
             found.append("stream %s %s" % (stream.get("index"), k))
     return found + ["note " + n for n in video_notes(path) if not any(n in f for f in found)]

@@ -492,6 +492,18 @@ class Video(Base):
         out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name", "-of", "csv=p=0", p],
                              capture_output=True, text=True, check=True).stdout
         self.assertEqual("opus", out.strip())
+        decoded = subprocess.run(["ffmpeg", "-v", "error", "-i", p, "-f", "null", "-"], capture_output=True, text=True)
+        self.assertEqual(("", 0), (decoded.stderr.strip(), decoded.returncode))
+
+    def test_a_versioned_encoder_in_a_webm_is_still_named(self):
+        p = self.path("kept.webm")
+        made = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=duration=1", "-c:a", "libopus", p],
+                              capture_output=True, text=True)
+        if made.returncode != 0:
+            self.skipTest("this ffmpeg cannot write Opus in WebM: " + made.stderr.strip()[-80:])
+        done = run("--check", p)
+        self.assertEqual(1, done.returncode)
+        self.assertIn("format ENCODER", done.stdout)
 
     def frames(self, path):
         out = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v",
