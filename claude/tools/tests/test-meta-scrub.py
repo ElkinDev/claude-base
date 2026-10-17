@@ -928,6 +928,56 @@ class SplatFiles(Base):
         self.assertEqual(0, run("--check", p).returncode)
 
 
+class SvgFiles(Base):
+    INKSCAPE = (b'<?xml version="1.0" encoding="UTF-8"?>\n<!-- Created with Inkscape (http://www.inkscape.org/) -->\n'
+                b'<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" '
+                b'xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" '
+                b'xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/" '
+                b'width="10" height="10" inkscape:version="1.3" sodipodi:docname="desk-name.svg">'
+                b'<sodipodi:namedview id="nv" inkscape:zoom="2"/>'
+                b'<metadata><rdf:RDF><dc:creator>Some Person</dc:creator></rdf:RDF></metadata>'
+                b'<desc>Created with Some Tool.</desc>'
+                b'<g inkscape:label="Layer 1" inkscape:groupmode="layer"><rect width="4" height="4" fill="red"/></g></svg>')
+
+    def test_editor_names_go_and_the_drawing_stays(self):
+        p = self.path("drawn.svg")
+        with open(p, "wb") as f:
+            f.write(self.INKSCAPE)
+        done = run("--check", p)
+        self.assertEqual(1, done.returncode)
+        for name in ("comment", "metadata", "editor attributes", "desc naming a tool"):
+            self.assertIn(name, done.stdout)
+        self.assertEqual(0, run(p).returncode)
+        out = read(p)
+        for gone in (b"Inkscape", b"inkscape", b"sodipodi", b"Some Person", b"desk-name", b"Some Tool", b"rdf"):
+            self.assertNotIn(gone, out)
+        self.assertIn(b'<rect width="4" height="4" fill="red"/>', out)
+        self.assertEqual(0, run("--check", p).returncode)
+
+    def test_a_code_made_svg_is_clean_and_left_as_it_is(self):
+        p = self.path("plain.svg")
+        body = (b'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 8 8">'
+                b'<title>A hut</title><circle cx="4" cy="4" r="3"/></svg>')
+        with open(p, "wb") as f:
+            f.write(body)
+        self.assertEqual(0, run("--check", p).returncode)
+        self.assertEqual(0, run(p).returncode)
+        self.assertEqual(body, read(p))
+
+    def test_an_embedded_image_or_another_editor_is_named_and_refused(self):
+        for name, body in (
+                ("img.svg", b'<svg xmlns="http://www.w3.org/2000/svg"><image href="data:image/png;base64,AAAA"/></svg>'),
+                ("path.svg", b'<svg xmlns="http://www.w3.org/2000/svg"><image href="file:///C:/x/a.png"/></svg>'),
+                ("ai.svg", b'<svg xmlns="http://www.w3.org/2000/svg" xmlns:i="http://ns.adobe.com/AdobeIllustrator/10.0/">'
+                           b'<i:pgf>data</i:pgf></svg>')):
+            p = self.path(name)
+            with open(p, "wb") as f:
+                f.write(body)
+            self.assertEqual(1, run("--check", p).returncode, name)
+            self.assertEqual(2, run(p).returncode, name)
+            self.assertEqual(body, read(p), name)
+
+
 class Walk(Base):
     def test_a_kind_it_does_not_read_is_named_never_passed(self):
         webm = self.path("w.avi")
