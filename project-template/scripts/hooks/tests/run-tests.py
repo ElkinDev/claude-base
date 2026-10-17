@@ -364,6 +364,40 @@ def test_big_result_alarms_without_herdr(ws):
     assert fields[2] == "Bash" and fields[3] == str(len(BIG_RESPONSE)), rows[-1]
 
 
+def fake_herdr(directory):
+    """A herdr stand-in on PATH that records that it was called, and nothing else."""
+    os.makedirs(directory, exist_ok=True)
+    marker = os.path.join(directory, "called.txt")
+    with open(os.path.join(directory, "herdr.cmd"), "w", encoding="ascii") as handle:
+        handle.write('@echo %%* > "%s"\r\n' % marker)
+    return marker
+
+
+def test_big_result_toast_is_off_by_default(ws):
+    directory = os.path.join(ws.ledger, "toast-off")
+    marker = fake_herdr(os.path.join(ws.root, "herdr-off"))
+    payload = fixture("post-big-result.json", ws.replacements())
+    path = os.pathsep.join([os.path.dirname(marker), os.environ.get("PATH", "")])
+    code, stdout = run_hook(ALARM_HOOK, payload,
+                            {"CLAUDE_LEDGER_DIR": directory, "PATH": path, "BIG_RESULT_NOTIFY": None})
+    assert code == 0, code
+    assert "systemMessage" in json.loads(stdout), stdout
+    assert not os.path.exists(marker), "no desktop toast unless BIG_RESULT_NOTIFY=1"
+
+
+def test_big_result_toast_when_asked(ws):
+    directory = os.path.join(ws.ledger, "toast-on")
+    marker = fake_herdr(os.path.join(ws.root, "herdr-on"))
+    payload = fixture("post-big-result.json", ws.replacements())
+    path = os.pathsep.join([os.path.dirname(marker), os.environ.get("PATH", "")])
+    code, _ = run_hook(ALARM_HOOK, payload,
+                       {"CLAUDE_LEDGER_DIR": directory, "PATH": path, "BIG_RESULT_NOTIFY": "1"})
+    assert code == 0, code
+    assert os.path.exists(marker), "BIG_RESULT_NOTIFY=1 must still fire the toast"
+    with open(marker, encoding="ascii", errors="replace") as handle:
+        assert "notification show" in handle.read()
+
+
 TESTS = [
     test_gradle_command_is_wrapped,
     test_wrapped_command_is_untouched,
@@ -387,6 +421,8 @@ TESTS = [
     test_small_file_is_allowed,
     test_small_result_is_only_logged,
     test_big_result_alarms_without_herdr,
+    test_big_result_toast_is_off_by_default,
+    test_big_result_toast_when_asked,
 ]
 
 

@@ -4,9 +4,10 @@ It cannot change anything, it counts. Every tool result adds a row to
 $CLAUDE_LEDGER_DIR/tool-sizes.csv (time, session, tool, characters, agent), so the ledger can
 later rank which tools fill the window, and whose window they filled: a session's own turn loop
 and each of its subagents pay separately, and a total that mixes them hides which one to brief.
-Above the alarm threshold it also fires a herdr notification, when herdr is on PATH, and returns
-a one-line systemMessage naming the tool and the size, so the offender is visible while it
-happens.
+Above the alarm threshold it returns a one-line systemMessage naming the tool and the size, so
+the offender is visible in the session while it happens. A herdr desktop notification is fired as
+well only when BIG_RESULT_NOTIFY=1 and herdr is on PATH. By default it is off: on a busy machine
+it fired over a thousand desktop toasts a day, mostly for Read, and nobody acted on them.
 
 The agent column was added after the four-column file already existed on every machine, so a
 file that has a header keeps it: rows written from here carry five fields whatever the header
@@ -25,6 +26,7 @@ from datetime import datetime
 ALARM_CHARS = 50000
 CSV_NAME = "tool-sizes.csv"
 CSV_HEADER = ("time", "session_id", "tool_name", "chars", "agent")
+NOTIFY_ENV = "BIG_RESULT_NOTIFY"
 SUBAGENTS_SEGMENT = "/subagents/"
 AGENT_PREFIX = "agent-"
 TRANSCRIPT_SUFFIX = ".jsonl"
@@ -116,8 +118,8 @@ def main():
         except Exception:
             pass
         if chars > ALARM_CHARS:
-            message = "%s returned %d chars" % (tool, chars)
-            notify(message)
+            if os.environ.get(NOTIFY_ENV) == "1":
+                notify("%s returned %d chars" % (tool, chars))
             out = {
                 "systemMessage": "%s returned %d characters, above the %d alarm. Narrow the next "
                 "call (a filter, a range, a count) instead of asking for the whole thing again."
