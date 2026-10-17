@@ -964,6 +964,26 @@ class SvgFiles(Base):
         self.assertEqual(0, run(p).returncode)
         self.assertEqual(body, read(p))
 
+    def test_a_utf16_svg_is_refused_and_script_text_is_kept(self):
+        p = self.path("wide.svg")
+        body = '<svg xmlns="http://www.w3.org/2000/svg"><!-- a desk --></svg>'.encode("utf-16")
+        with open(p, "wb") as f:
+            f.write(body)
+        self.assertEqual(2, run("--check", p).returncode)
+        self.assertEqual(2, run(p).returncode)
+        self.assertEqual(body, read(p))
+        q = self.path("script.svg")
+        with open(q, "wb") as f:
+            f.write(b'<svg xmlns="http://www.w3.org/2000/svg"><!-- note --><style>/* by a desk */ rect{fill:red}</style>'
+                    b'<script><![CDATA[var a="<!--"; var b="-->";]]></script></svg>')
+        done = run("--check", q)
+        self.assertEqual(1, done.returncode)
+        self.assertIn("style comment", done.stdout)
+        self.assertEqual(0, run(q).returncode)
+        self.assertEqual(b'<svg xmlns="http://www.w3.org/2000/svg"><style> rect{fill:red}</style>'
+                         b'<script><![CDATA[var a="<!--"; var b="-->";]]></script></svg>', read(q))
+        self.assertEqual(0, run("--check", q).returncode)
+
     def test_an_embedded_image_or_another_editor_is_named_and_refused(self):
         for name, body in (
                 ("img.svg", b'<svg xmlns="http://www.w3.org/2000/svg"><image href="data:image/png;base64,AAAA"/></svg>'),

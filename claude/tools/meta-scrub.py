@@ -28,8 +28,8 @@ Office document leaves with its core properties cleared. It covers every kind th
   .spz  version 4: the reserved header bytes; extension records are named and refused, since dropping
         them would move every stream. A legacy gzip file loses the extra, file name and comment fields
         of its gzip header; a second gzip member is named and refused. No dependency.
-  .svg  comments, metadata, a desc that says what it was created with, and the Inkscape and Sodipodi
-        attributes, elements and namespaces (dc, cc and rdf with them). An embedded raster image, an
+  .svg  comments outside CDATA, style sheet comments, metadata, a desc that says what it was created
+        with, and the Inkscape and Sodipodi attributes, elements and namespaces (dc, cc and rdf with them). An embedded raster image, an
         absolute path in a link or another editor's namespace is named and refused, and a clear that
         would not parse is refused. No dependency.
   .hdr  the comment lines, SOFTWARE and any variable outside the Radiance set in the header; the
@@ -815,7 +815,10 @@ def hdr_clean(data):
 
 
 SVG_COMMENT = re.compile(rb"<!--.*?-->", re.S)
-SVG_METADATA = re.compile(rb"<(?:[\w.-]+:)?metadata\b[^>]*?(?:/>|>.*?</(?:[\w.-]+:)?metadata\s*>)", re.S)
+SVG_METADATA = re.compile(rb"<(?:[\w.-]+:)?metadata(?![\w.-])[^>]*?(?:/>|>.*?</(?:[\w.-]+:)?metadata\s*>)", re.S)
+SVG_CDATA = re.compile(rb"(<!\[CDATA\[.*?\]\]>)", re.S)
+SVG_STYLE = re.compile(rb"(<style\b[^>]*>)(.*?)(</style\s*>)", re.S | re.I)
+CSS_COMMENT = re.compile(rb"/\*.*?\*/", re.S)
 SVG_DESC_TOOL = re.compile(rb"<desc\b[^>]*>\s*(?:Created|Made|Generated) (?:with|by)\b[^<]*</desc\s*>", re.I)
 SVG_EDITORS = (b"inkscape", b"sodipodi", b"dc", b"cc", b"rdf")
 SVG_EDITOR_ELEMENT = re.compile(rb"<(inkscape|sodipodi|dc|cc|rdf):([\w.-]+)\b[^>]*?(?:/>|>.*?</\1:\2\s*>)", re.S)
@@ -833,12 +836,30 @@ def svg_other_ns(data):
                    and m.group(1) not in SVG_EDITORS})
 
 
+def svg_text(data):
+    """Refuse what the byte patterns cannot read: a UTF-16 file, or NUL bytes anywhere (review note 1)."""
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff") or b"\x00" in data:
+        raise Refused("a UTF-16 or binary SVG is not read: save it as UTF-8")
+
+
+def svg_outside_cdata(data, edit):
+    """Apply edit to the markup only; a CDATA block is script or style text and stays as written (review note 2)."""
+    return b"".join(part if i % 2 else edit(part) for i, part in enumerate(SVG_CDATA.split(data)))
+
+
+def svg_style_comments(data):
+    return any(CSS_COMMENT.search(m.group(2)) for m in SVG_STYLE.finditer(data))
+
+
 def svg_names(data):
+    svg_text(data)
     found = set()
-    if SVG_COMMENT.search(data):
+    if any(SVG_COMMENT.search(part) for i, part in enumerate(SVG_CDATA.split(data)) if not i % 2):
         found.add("comment")
     if SVG_METADATA.search(data):
         found.add("metadata")
+    if svg_style_comments(data):
+        found.add("style comment")
     if SVG_DESC_TOOL.search(data):
         found.add("desc naming a tool")
     if SVG_EDITOR_LEFT.search(data) or any(m.group(1) in SVG_EDITORS for m in SVG_NS.finditer(data)):
@@ -852,12 +873,14 @@ def svg_names(data):
 
 
 def svg_clean(data):
+    svg_text(data)
     if SVG_EMBEDDED.search(data) or SVG_ABS_LINK.search(data):
         raise Refused("an embedded image or an absolute path is inside it: export it again without that")
     other = svg_other_ns(data)
     if other:
         raise Refused("another editor's namespace (%s) is inside it: export it as plain SVG" % ", ".join(other))
-    data = SVG_COMMENT.sub(b"", data)
+    data = svg_outside_cdata(data, lambda part: SVG_COMMENT.sub(b"", part))
+    data = SVG_STYLE.sub(lambda m: m.group(1) + CSS_COMMENT.sub(b"", m.group(2)) + m.group(3), data)
     data = SVG_METADATA.sub(b"", data)
     data = SVG_DESC_TOOL.sub(b"", data)
     data = SVG_EDITOR_ELEMENT.sub(b"", data)
