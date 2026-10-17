@@ -129,9 +129,10 @@ with the pane id that call returns.
 herdr notification show <title> [--body <text>] [--sound none|done|request]
 ```
 
-`landing.py` raises one with `--sound done` when a landing is recorded, and `alarm-big-result.py`
-raises one when a tool result crosses the alarm threshold. Both check the gate first and both are
-silent when Herdr is absent.
+`landing.py` raises one with `--sound done` when a landing is recorded. `alarm-big-result.py`
+raises one when a tool result crosses the alarm threshold, but only with `BIG_RESULT_NOTIFY=1`,
+because on a busy machine it fired over a thousand toasts a day. Both check the gate first and both
+are silent when Herdr is absent.
 
 ## When Herdr updates
 
