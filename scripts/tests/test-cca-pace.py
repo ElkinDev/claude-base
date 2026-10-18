@@ -5,6 +5,7 @@
 
 Every run reads a saved probe output in a temp folder (--probe-output) at a fixed clock (--now); no probe runs.
 """
+import datetime
 import os
 import shutil
 import subprocess
@@ -105,6 +106,101 @@ class CcaPaceTest(unittest.TestCase):
         code, out = self.run_on(probe(week=31.0), now="2026-09-30")
         self.assertEqual(0, code, out)
         self.assertIn("2026-09-30 00:00", out)
+
+
+OPEN_UNTIL = "2026-10-14 04:00"  # after NOW in any zone, so the opening is in force; --now fixes the clock it is read against
+OPEN_TEXT = OPEN_UNTIL + "\nthe owner lets this account run to its limit tonight\n"
+
+
+class OpeningTest(unittest.TestCase):
+    """--open-file: while the file names a moment still ahead, both walls read 100 (module docstring, Opening)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="cca pace open ")
+        self.opening = os.path.join(self.tmp, "open.txt")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def put(self, raw):
+        with open(self.opening, "wb") as h:
+            h.write(raw if isinstance(raw, bytes) else raw.encode("utf-8"))
+
+    def read(self, hours, week, opening=True):
+        path = os.path.join(self.tmp, "probe.txt")
+        with open(path, "w", encoding="utf-8") as h:
+            h.write(probe(week=week, seven_day=week, hours=hours))
+        argv = [sys.executable, SCRIPT, "--probe-output", path, "--now", NOW]
+        if opening:
+            argv += ["--open-file", self.opening]
+        return subprocess.run(argv, capture_output=True, text=True, timeout=60)
+
+    def assertOpensNothing(self, why):
+        done = self.read(85, 90)
+        self.assertEqual(3, done.returncode, (why, done.stdout, done.stderr))
+        self.assertTrue(done.stdout.rstrip().endswith("-> wall"), (why, done.stdout))
+        self.assertIn("wall 80", done.stdout, why)
+        self.assertNotIn("open", done.stdout, why)
+
+    def test_hours_85_and_week_90_with_an_opening_ahead_are_not_a_wall(self):
+        self.put(OPEN_TEXT)
+        done = self.read(85, 90)
+        self.assertEqual(0, done.returncode, (done.stdout, done.stderr))
+        self.assertRegex(done.stdout, r"^\S+ \d{4}-\d{2}-\d{2} \d{2}:\d{2}: week 90% \(pace 46%, wall 100, gap \+44\), "
+                                      r"hours 85% \(wall 100, walls open until 2026-10-14 04:00\) -> launch\n$")
+
+    def test_a_week_far_behind_pace_reads_behind_while_open(self):
+        self.put(OPEN_TEXT)
+        done = self.read(10, 20)
+        self.assertEqual(0, done.returncode, done.stdout)
+        self.assertTrue(done.stdout.rstrip().endswith("(wall 100, walls open until 2026-10-14 04:00) -> behind"),
+                        done.stdout)
+
+    def test_a_meter_at_100_is_still_a_wall_while_open(self):
+        self.put(OPEN_TEXT)
+        for hours, week in ((100, 50), (50, 100), (100, 100)):
+            done = self.read(hours, week)
+            self.assertEqual(3, done.returncode, (hours, week, done.stdout))
+            self.assertTrue(done.stdout.rstrip().endswith(" -> wall"), done.stdout)
+            self.assertEqual(2, done.stdout.count("wall 100"), done.stdout)
+        self.assertEqual(0, self.read(99, 99).returncode)
+
+    def test_utf8_with_a_bom_and_utf16_files_open_too(self):
+        for raw in (b"\xef\xbb\xbf" + OPEN_TEXT.encode("utf-8"), OPEN_TEXT.replace("\n", "\r\n").encode("utf-16"),
+                    ("\r\n " + OPEN_UNTIL + " reason on the same line").encode("utf-8"),
+                    (OPEN_UNTIL.replace(" ", "T") + "\nreason").encode("utf-8")):
+            self.put(raw)
+            done = self.read(85, 90)
+            self.assertEqual(0, done.returncode, (raw, done.stdout))
+            self.assertIn("walls open until 2026-10-14 04:00", done.stdout, raw)
+
+    def test_no_open_file_and_a_missing_one_keep_the_normal_walls(self):
+        for done in (self.read(85, 90, opening=False), self.read(85, 90)):
+            self.assertEqual(3, done.returncode, done.stdout)
+            self.assertRegex(done.stdout, r"week 90% \(pace 46%, wall 80, gap \+44\), hours 85% \(wall 70\) -> wall\n$")
+
+    def test_an_opening_whose_moment_has_passed_gives_the_bytes_of_no_file(self):
+        none = self.read(85, 90, opening=False)
+        self.put(OPEN_TEXT)
+        lifted = self.read(85, 90)  # control: the same file is in force before its moment
+        self.assertEqual(0, lifted.returncode, lifted.stdout)
+        self.assertNotEqual(none.stdout, lifted.stdout)
+        here = datetime.datetime.fromisoformat(NOW).astimezone().replace(tzinfo=None)  # the moment as the machine reads it
+        past = datetime.timedelta(minutes=1)
+        for moment in ((here - past).strftime("%Y-%m-%d %H:%M"), here.strftime("%Y-%m-%d %H:%M"), "2026-09-29 04:00"):
+            self.put(moment + "\nan old opening\n")
+            gone = self.read(85, 90)
+            self.assertEqual((none.returncode, none.stdout, none.stderr), (gone.returncode, gone.stdout, gone.stderr),
+                             moment)
+
+    def test_garbage_an_empty_file_and_a_date_with_no_time_open_nothing(self):
+        self.put(OPEN_TEXT)
+        self.assertEqual(0, self.read(85, 90).returncode)  # control: a readable opening opens
+        cases = (b"not a date at all\n", b"", b"2026-10-14\nno time on this one\n", b"2026-10-14 25:99 bad time\n",
+                 b"\xff\xfe\x00", b"\x80\x81\x82\xfe", b"2026-10-14 4:00 one digit\n", b"20261014 04:00\n")
+        for raw in cases:
+            self.put(raw)
+            self.assertOpensNothing(raw)
 
 
 if __name__ == "__main__":

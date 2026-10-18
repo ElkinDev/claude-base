@@ -209,7 +209,7 @@ EXPECTED_LEAKS = (
      "walks the one root the config names and keeps its lock under it (ledger-nightly.ps1:722-737, evidence-"
      "retention.py:483). It rests on a fixture: the config names the first board's root"),
     ("nightly worktree-sweep.py", EVERY, OUTSIDE, ("repo/alpha",),
-     "its git child works on the one repository the config names (worktree-sweep.py:113; started at ledger-"
+     "its git child works on the one repository the config names (worktree-sweep.py:122; started at ledger-"
      "nightly.ps1:696-706): the spawn is what shows it, the tool itself opens no decoy. It rests on a fixture: the "
      "config names the first project, which has no linked worktree to sweep"),
     # S: a store under the home that is keyed on the session, on its project or on the repository, shared by design

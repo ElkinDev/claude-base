@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import zipfile
 
@@ -376,6 +377,34 @@ class WorktreeSweepTest(unittest.TestCase):
         self.assertEqual(0, applied_code, applied)
         self.assertIn("SWEEP applied: removed=0 stopped=0 left=0", applied)
         self.assertTrue(os.path.isdir(path))
+
+    def test_a_run_log_silent_for_a_day_is_a_dead_run_and_the_landed_lane_goes(self):
+        self.exclude_build()
+        dead = self.worktree("wt-dead", "dead", self.commits[0])
+        self.lockrun_files(dead, ("z.log",))
+        old = time.time() - 25 * 3600
+        os.utime(os.path.join(dead, "build", "lockrun", "z.log"), (old, old))
+        fresh = self.worktree("wt-fresh", "fresh", self.commits[1])
+        self.lockrun_files(fresh, ("w.log",))
+        code, out = self.sweep()
+        self.assertEqual(0, code, out)
+        self.assert_names(self.line_for(out, "REMOVE"), dead)
+        self.assert_names(self.line_for(out, "IN-FLIGHT"), fresh)
+        self.assertIn("remove=1 dirty=0 not-landed=0 in-flight=1", out)
+
+    def test_a_run_log_whose_age_cannot_be_read_stays_in_flight(self):
+        path = self.worktree("wt-unread", "unread", self.commits[0])
+        self.lockrun_files(path, ("u.log",))
+
+        def unreadable(_):
+            raise OSError("access denied")
+
+        real = SWEEP.os.path.getmtime
+        SWEEP.os.path.getmtime = unreadable
+        try:
+            self.assertEqual("u.log", SWEEP.run_in_flight(path))
+        finally:
+            SWEEP.os.path.getmtime = real
 
     def test_phase_logs_never_hold_a_finished_lane_in_flight(self):
         # lockrun leaves per-phase logs behind, and they never get a .done of their own.
