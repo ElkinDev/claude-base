@@ -23,6 +23,13 @@ CLAUDE_CONFIG_DIR, else ~/.claude). --account, when given, must equal the probe'
 never reads as this account's pace. --row prefixes the line with the account the probe names, for a ledger.
 --label names the line (default: the profile folder's name).
 --probe-output reads a saved probe output instead of running the probe, and --now fixes the clock (tests).
+
+Opening. --open-file names a file the owner writes to let an account run to its limit for a while: while it names a
+local moment still ahead, both walls read 100, so the verdict is wall only when a meter reads 100 or more, and the
+hours parenthesis says the walls are open and until when. The file starts with that moment, YYYY-MM-DD HH:MM; the
+rest is the reason; UTF-8 with or without a BOM, or UTF-16. It expires by its own moment, and a missing file or one
+whose moment cannot be read opens nothing. The pace figure keeps its formula (the week wall given); --now also fixes
+the clock the opening is read against.
 """
 import argparse
 import datetime
@@ -34,6 +41,7 @@ import sys
 PROBE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "usage-probe.py")
 METER_RE = re.compile(r"^(five_hour|seven_day): ([\d.]+)% used, resets (\S+)", re.M)
 WEEKLY_ALL_RE = re.compile(r"^limit weekly_all: ([\d.]+)% used", re.M)
+OPEN_WALL = 100.0  # both walls while an opening is in force
 ACCOUNT_RE = re.compile(r"^account: (\S+)", re.M)
 
 
@@ -80,6 +88,22 @@ def probe_text(path, profile):
     return (done.stdout or "") + (done.stderr or ""), done.returncode
 
 
+def walls_open(path, now):
+    """The local moment an opening ends (a naive datetime) while it is still ahead of now, else None. No path, a
+    missing, expired or unreadable file opens nothing."""
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as h:
+            raw = h.read()
+        text = raw.decode("utf-16") if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else raw.decode("utf-8-sig")
+        found = re.match(r"\s*(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?!\d)", text)
+        until = datetime.datetime.strptime("%s %s" % found.groups(), "%Y-%m-%d %H:%M")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return until if now.replace(tzinfo=None) < until else None
+
+
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--profile", default=None, help="profile folder of the account (CLAUDE_CONFIG_DIR of the probe)")
@@ -89,6 +113,7 @@ def main(argv):
     ap.add_argument("--behind", type=points, default=5.0, help="points under pace that read as behind")
     ap.add_argument("--label", default=None, help="the word the line starts with (default: the profile folder name)")
     ap.add_argument("--row", action="store_true", help="prefix the line with the account name for a ledger")
+    ap.add_argument("--open-file", default=None, help="the owner's opening: walls read 100 until its moment")
     ap.add_argument("--probe-output")
     ap.add_argument("--now")
     a = ap.parse_args(argv)
@@ -126,14 +151,17 @@ def main(argv):
     share = min(1.0, max(0.0, (now - start).total_seconds() / (7 * 86400)))
     pace = a.week_wall * share
     gap = week - pace
-    if week >= a.week_wall or hours >= a.hours_wall:
+    until = walls_open(a.open_file, now)
+    week_wall, hours_wall = (OPEN_WALL, OPEN_WALL) if until else (a.week_wall, a.hours_wall)
+    if week >= week_wall or hours >= hours_wall:
         verdict, rc = "wall", 3
     elif gap <= -a.behind:
         verdict, rc = "behind", 0
     else:
         verdict, rc = "launch", 0
-    line = "%s %s: week %.0f%%%s (pace %.0f%%, wall %g, gap %+.0f), hours %.0f%% (wall %g) -> %s" % (
-        label, stamp, week, source, pace, a.week_wall, gap, hours, a.hours_wall, verdict)
+    note = ", walls open until %s" % until.strftime("%Y-%m-%d %H:%M") if until else ""
+    line = "%s %s: week %.0f%%%s (pace %.0f%%, wall %g, gap %+.0f), hours %.0f%% (wall %g%s) -> %s" % (
+        label, stamp, week, source, pace, week_wall, gap, hours, hours_wall, note, verdict)
     print(("%s %s" % (account or "-", line)) if a.row else line)
     return rc
 

@@ -59,6 +59,7 @@ import os
 import stat
 import subprocess
 import sys
+import time
 import zipfile
 
 CLASS_ORDER = (
@@ -72,6 +73,11 @@ CLASS_ORDER = (
 )
 
 READ_TIMEOUT = 60
+# A run log with no .done that nothing has written for this long belongs to a run that died (killed, crashed,
+# the machine restarted), never to a live one: a runner of the gradle-lockrun convention writes its log while it
+# waits for the mutex, and a running phase holds the mutex, which the --lock-root belt reads. Left out, a dead
+# run holds its landed worktree IN-FLIGHT for ever.
+STALE_RUN_SECONDS = 24 * 3600
 ARCHIVE_LEAF = "worktree-archive"
 # Worktrees never swept, each with its reason, filled by --never-sweep (module docstring). The kit ships none.
 NEVER_SWEPT = {}
@@ -365,6 +371,7 @@ def run_in_flight(path):
     Only the run's own `<tag>.log` counts. lockrun also writes per-phase logs, `<tag>.launch.log`
     and `<tag>.phase1.log`, which never get a `.done` of their own, so a stem carrying a further
     dot segment is a phase log and is skipped: it would mark a finished lane in flight forever.
+    A log with no `.done` left untouched for STALE_RUN_SECONDS is a dead run and is skipped too.
     """
     lockrun = os.path.join(path, "build", "lockrun")
     if not os.path.isdir(lockrun):
@@ -379,7 +386,13 @@ def run_in_flight(path):
         stem = name[: -len(".log")]
         if not stem or "." in stem:
             continue
-        if not os.path.exists(os.path.join(lockrun, stem + ".done")):
+        if os.path.exists(os.path.join(lockrun, stem + ".done")):
+            continue
+        try:
+            silent = time.time() - os.path.getmtime(os.path.join(lockrun, name))
+        except OSError:
+            silent = 0
+        if silent < STALE_RUN_SECONDS:
             return name
     return ""
 
