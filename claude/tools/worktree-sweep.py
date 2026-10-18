@@ -38,7 +38,9 @@ under `--evidence-root` in `worktree-archive/`; left out, it is EVIDENCE_ROOT, e
 `{repo_parent}/evidence` (pass `--evidence-root "$(python scripts/evidence-path.py)"` to
 follow the project's own spec). The run belt and the two root leaves follow the kit's
 gradle-lockrun convention: a runner writes `build/lockrun/<tag>.log` when a run starts and
-`<tag>.done` when it ends, and `build/precheck` holds the precheck stamps. A project that writes no
+`<tag>.done` when it ends, and writes to the log at least once a day while it runs or waits for the
+mutex: a log with no .done that nothing has written for 24 hours (STALE_RUN_SECONDS) is a dead run and
+holds its worktree IN-FLIGHT no longer. `build/precheck` holds the precheck stamps. A project that writes no
 `build/lockrun` log and names no --lock-root has no in-flight belt at all: --apply there can remove a
 landed, clean worktree while a build still runs in it (the build dies; tracked source survives on the
 branch), so such a project passes --lock-root or runs --apply only when no build is running.
@@ -74,9 +76,9 @@ CLASS_ORDER = (
 
 READ_TIMEOUT = 60
 # A run log with no .done that nothing has written for this long belongs to a run that died (killed, crashed,
-# the machine restarted), never to a live one: a runner of the gradle-lockrun convention writes its log while it
-# waits for the mutex, and a running phase holds the mutex, which the --lock-root belt reads. Left out, a dead
-# run holds its landed worktree IN-FLIGHT for ever.
+# the machine restarted), never to a live one: a runner of the gradle-lockrun convention writes to its log at least
+# once a day while it waits for the mutex (module docstring), and a running phase holds the mutex, which the
+# --lock-root belt reads. Left out, a dead run holds its landed worktree IN-FLIGHT for ever.
 STALE_RUN_SECONDS = 24 * 3600
 ARCHIVE_LEAF = "worktree-archive"
 # Worktrees never swept, each with its reason, filled by --never-sweep (module docstring). The kit ships none.
