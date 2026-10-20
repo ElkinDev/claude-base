@@ -1,5 +1,5 @@
 """Pins for the role segment of claude/statusline.ps1: the role the launcher passes in CLAUDE_ROLE is the first segment of
-the line, as plain text in one pastel colour per role; a session with no role gets no badge; $RoleByFolder relabels a lane or role-less
+the line, as plain text in one pastel colour per role; a session with no role gets no role segment; $RoleByFolder relabels a lane or role-less
 session by the folder of its transcript, and never a session that has another role.
 
   python scripts/tests/test-statusline.py              the statusline.ps1 under claude/
@@ -61,11 +61,11 @@ class StatuslineRoleTest(unittest.TestCase):
     def test_role_is_read_trimmed_and_case_folded(self):
         self.assertTrue(self.render("  Analyst ").startswith(ESC + "38;5;153manalyst" + ESC))
 
-    def test_no_role_no_badge(self):
+    def test_no_role_no_segment(self):
         for role in (None, ""):
             line = self.render(role)
             self.assertTrue(line.startswith(ESC + "95;1m"), line[:40])
-            self.assertNotIn("lane", line)
+            self.assertNotIn(ESC + "38;5;", line)
 
     def test_folder_map_relabels_a_lane_by_its_transcript_folder(self):
         mapped = self.with_map("'C--work-my-app' = 'orchestrator my-app'")
