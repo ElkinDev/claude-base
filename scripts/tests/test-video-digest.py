@@ -2,14 +2,18 @@
 """Tests for scripts/video-digest.py on synthetic clips that ffmpeg generates in a temp folder.
 
 No real recording and no model: the transcription engine is replaced by the fake the tool reads
-from VIDEO_DIGEST_FAKE_ENGINE (fixed segments per audio stream), by a fake whisper-cli on PATH, or
-by fake faster_whisper and whisper modules on PYTHONPATH, so each adapter's command line and
-output parser run for real while nothing is downloaded. VIDEO_DIGEST_TOOL points the suite at
-another copy of the tool, which is how a mutant is shown to turn a pin red.
+from VIDEO_DIGEST_FAKE_ENGINE (fixed segments per audio stream, optionally with their words), by a
+fake whisper-cli on PATH or named by --whisper-cli, by a fake ffmpeg first on PATH that lists the
+whisper filter and answers it while every other call goes to the real ffmpeg, or by fake
+faster_whisper and whisper modules on PYTHONPATH, so each adapter's command line and output parser
+run for real while nothing is downloaded. The three-stream order test speaks its sentences with
+Windows SAPI (System.Speech) and is skipped where that is missing. VIDEO_DIGEST_TOOL points the
+suite at another copy of the tool, which is how a mutant is shown to turn a pin red.
 
 Run:
     python scripts/tests/test-video-digest.py
 """
+import array
 import importlib.util
 import json
 import os
@@ -19,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import wave
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -699,6 +704,571 @@ class VideoDigestSelectionUnitTest(unittest.TestCase):
         texture = bytes(range(256)) * (size // 256) + bytes(size % 256)
         frames = list(enumerate([flat, near, far, far, texture, texture]))
         self.assertEqual(tool.select_keyframes(frames, 0.9, 1000), [0, 2, 4, 5])
+
+
+# Region mode: two or more transcribed streams.
+
+DEFAULT_PROMPT = "Hello, everyone. Thanks for joining the meeting."
+
+
+def tone_bursts(*spans):
+    """A lavfi source: a 440 Hz tone at half scale inside each (start, end) span, silence elsewhere."""
+    gate = "+".join("between(t,%g,%g)" % span for span in spans)
+    return "aevalsrc='0.5*sin(2*PI*440*t)*(%s)':s=16000" % gate
+
+
+# Stream 1 sounds at 1-3 s and 8-10 s, stream 2 at 4.5-6.5 s and 10.5-11.5 s. With REGION_PAD
+# 0.25 s and REGION_GAP 1.0 s, the engine input of stream 1 holds 0.75-3.25 s at 0.0-2.5 s, a gap
+# at 2.5-3.5 s, and 7.75-10.25 s at 3.5-6.0 s; stream 2 holds 4.25-6.75 s at 0.0-2.5 s and
+# 10.25-11.75 s at 3.5-5.0 s.
+TWO_SPEAKERS = (tone_bursts((1, 3), (8, 10)), tone_bursts((4.5, 6.5), (10.5, 11.5)))
+
+
+def install_fake(folder, name, body):
+    """A fake executable `name` in folder that runs body with this Python; returns its path."""
+    os.makedirs(folder, exist_ok=True)
+    script = os.path.join(folder, name + "_fake.py")
+    with open(script, "w", encoding="utf-8") as handle:
+        handle.write(body)
+    if os.name == "nt":
+        wrapper = os.path.join(folder, name + ".bat")
+        with open(wrapper, "w") as handle:
+            handle.write('@"%s" "%s" %%*\n' % (sys.executable, script))
+    else:
+        wrapper = os.path.join(folder, name)
+        with open(wrapper, "w") as handle:
+            handle.write('#!/bin/sh\nexec "%s" "%s" "$@"\n' % (sys.executable, script))
+        os.chmod(wrapper, 0o755)
+    return wrapper
+
+
+def ggml_file(folder, name):
+    path = os.path.join(folder, name)
+    with open(path, "wb") as handle:
+        handle.write(b"lmgg")
+    return path
+
+
+SRT_STAMP = '''
+def stamp(t):
+    ms = int(round(t * 1000))
+    return "%02d:%02d:%02d,%03d" % (ms // 3600000, ms // 60000 % 60, ms // 1000 % 60, ms % 1000)
+
+
+def write_srt(path, cues):
+    with open(path, "w", encoding="utf-8") as out:
+        for n, (start, end, text) in enumerate(cues, 1):
+            out.write("%d\\n%s --> %s\\n %s\\n\\n" % (n, stamp(start), stamp(end), text))
+'''
+
+# A whisper-cli that logs its argv and the length of the WAV it was given, per stream
+# (FAKE_CLI_LOG-<stream from 0>). With FAKE_CLI_SCRIPT ({"<stream>": [[sentence, seconds], ...]})
+# it hears its input: each sentence starts at the first 10 ms window with a peak of -50 dBFS or more
+# from 0.2 s after the previous one ended and lasts its seconds (a pause inside a sentence can be
+# longer than one between two), each word gets an even share of it, and the times are bent the way
+# the spec measured whisper-cli: with --vad the pause before a sentence goes to its first word,
+# without it the word before a pause runs on to the next speech; without -ml it writes one
+# segment per 30 s decoding window. Otherwise it writes FAKE_CLI_CUES {"<stream>": [[s, e, text]]}.
+FAKE_CLI_WORDS = SRT_STAMP + r'''
+import array, json, os, sys, wave
+args = sys.argv[1:]
+wav = args[args.index("-f") + 1]
+base = args[args.index("-of") + 1]
+stream = base.rsplit("-", 1)[1]
+with wave.open(wav, "rb") as handle:
+    rate = handle.getframerate()
+    samples = array.array("h", handle.readframes(handle.getnframes()))
+seconds = len(samples) / rate
+with open("%s-%s" % (os.environ["FAKE_CLI_LOG"], stream), "w", encoding="utf-8") as log:
+    json.dump({"args": args, "seconds": seconds}, log)
+
+
+def sentences_heard(lengths):
+    step = rate // 100
+    loud = [max(map(abs, samples[i:i + step])) >= 104 for i in range(0, len(samples), step)]
+    spans, at = [], 0
+    for length in lengths:
+        onset = next((i for i in range(at, len(loud)) if loud[i]), None)
+        if onset is None:
+            sys.exit("fake whisper-cli: heard %d of %d sentences" % (len(spans), len(lengths)))
+        start = onset * step / rate
+        spans.append((start, start + length))
+        at = int((start + length + 0.2) * rate / step)
+    return spans
+
+
+script = os.environ.get("FAKE_CLI_SCRIPT")
+if script:
+    with open(script, encoding="utf-8") as handle:
+        said = json.load(handle)[stream]
+    spans = sentences_heard([seconds for _, seconds in said])
+    words = []
+    for k, ((start, end), (sentence, _)) in enumerate(zip(spans, said)):
+        parts = sentence.split()
+        size = (end - start) / len(parts)
+        row = [[start + m * size, start + (m + 1) * size, part] for m, part in enumerate(parts)]
+        if "--vad" in args:
+            row[0][0] = spans[k - 1][1] if k else 0.0
+        else:
+            row[-1][1] = spans[k + 1][0] if k + 1 < len(spans) else seconds
+        words += row
+    if "-ml" in args:
+        cues = words
+    else:
+        cues = []
+        for start, end, part in words:
+            if cues and int(start // 30) == int(cues[-1][0] // 30):
+                cues[-1] = [cues[-1][0], end, cues[-1][2] + " " + part]
+            else:
+                cues.append([start, end, part])
+else:
+    cues = json.loads(os.environ.get("FAKE_CLI_CUES", "{}")).get(stream, [[1.25, 2.5, "from the cli"]])
+write_srt(base + ".srt", cues)
+'''
+
+# An ffmpeg that lists the whisper filter and answers it: the filter's options go to
+# FAKE_FFMPEG_LOG-<stream from 0> and FAKE_FILTER_CUES {"<stream>": [[s, e, text]]} to its SRT
+# destination. Every other call runs FAKE_REAL_FFMPEG.
+FAKE_FFMPEG = SRT_STAMP + r'''
+import json, os, re, subprocess, sys
+real = os.environ["FAKE_REAL_FFMPEG"]
+args = sys.argv[1:]
+if "-filters" in args:
+    res = subprocess.run([real] + args, stdout=subprocess.PIPE)
+    sys.stdout.buffer.write(res.stdout + b" ... whisper           A->A       Transcribe audio.\n")
+    sys.exit(res.returncode)
+graph = [arg for arg in args if arg.startswith("whisper=")]
+if not graph:
+    sys.exit(subprocess.run([real] + args).returncode)
+options = {}
+for part in re.split(r"(?<!\\):", graph[0][len("whisper="):]):
+    name, _, value = part.partition("=")
+    options[name] = re.sub(r"\\(.)", r"\1", re.sub(r"\\(.)", r"\1", value))
+stream = re.search(r"whisper-(\d+)\.srt$", options["destination"]).group(1)
+with open("%s-%s" % (os.environ["FAKE_FFMPEG_LOG"], stream), "w", encoding="utf-8") as log:
+    json.dump(options, log)
+cues = json.loads(os.environ.get("FAKE_FILTER_CUES", "{}")).get(stream, [[0.5, 1.5, "from the filter"]])
+write_srt(options["destination"], cues)
+'''
+
+FAKE_FASTER_WORDS = FAKE_RECORD + """
+class Word:
+    def __init__(self, start, end, word):
+        self.start, self.end, self.word = start, end, word
+class Segment:
+    def __init__(self, words):
+        self.start, self.end, self.text, self.words = 0.5, 4.0, " alpha beta gamma", words
+class WhisperModel:
+    def __init__(self, name):
+        pass
+    def transcribe(self, wav, language=None, **kw):
+        record(kw)
+        words = [Word(0.5, 1.0, " alpha"), Word(1.2, 1.8, " beta"), Word(3.6, 4.0, " gamma")]
+        return iter([Segment(words if kw.get("word_timestamps") else None)]), None
+"""
+
+FAKE_OPENAI_WORDS = FAKE_RECORD + """
+class Model:
+    def transcribe(self, wav, language=None, **kw):
+        record(kw)
+        segment = {"start": 0.5, "end": 4.0, "text": " alpha beta gamma"}
+        if kw.get("word_timestamps"):
+            segment["words"] = [{"word": " alpha", "start": 0.5, "end": 1.0},
+                                {"word": " beta", "start": 1.2, "end": 1.8},
+                                {"word": " gamma", "start": 3.6, "end": 4.0}]
+        return {"segments": [segment]}
+def load_model(name):
+    return Model()
+"""
+
+
+class RegionBase(ClipTest):
+    def setUp(self):
+        super().setUp()
+        self.pair = make_clip(self.dir, "pair.mkv", "color=c=gray:s=160x90:r=1:d=12",
+                              audio=TWO_SPEAKERS, seconds=12)
+        self.single = make_clip(self.dir, "single.mkv", "color=c=gray:s=160x90:r=1:d=12",
+                                audio=TWO_SPEAKERS[:1], seconds=12)
+        self.model = ggml_file(self.dir, "ggml-fake.bin")
+        self.vad = ggml_file(self.dir, "ggml-vad.bin")
+
+    def digest(self, clip, *extra, env=None):
+        res = run_tool(clip, "--no-frames", "--track-labels", "me,others", *extra, env=env)
+        self.ok(res)
+        text = digest_of(clip)
+        return text, transcript_lines(text)
+
+    def word_cli(self, on_path=True, **extra):
+        """(env, wrapper, log prefix) for FAKE_CLI_WORDS, on PATH unless on_path is False."""
+        folder = os.path.join(self.dir, "cli-bin")
+        wrapper = install_fake(folder, "whisper-cli", FAKE_CLI_WORDS)
+        log = os.path.join(self.dir, "cli")
+        env = {"FAKE_CLI_LOG": log}
+        if on_path:
+            env["PATH"] = folder + os.pathsep + os.environ.get("PATH", "")
+        env.update(extra)
+        return env, wrapper, log
+
+    def fake_ffmpeg(self, **extra):
+        folder = os.path.join(self.dir, "ffmpeg-bin")
+        install_fake(folder, "ffmpeg", FAKE_FFMPEG)
+        log = os.path.join(self.dir, "filter")
+        env = {"PATH": folder + os.pathsep + os.environ.get("PATH", ""), "FAKE_REAL_FFMPEG": FFMPEG,
+               "FAKE_FFMPEG_LOG": log}
+        env.update(extra)
+        return env, log
+
+    def logged(self, prefix, stream):
+        with open("%s-%d" % (prefix, stream), encoding="utf-8") as handle:
+            return json.load(handle)
+
+
+class VideoDigestRegionMappingTest(RegionBase):
+    def test_words_map_through_the_offset_table_and_a_gap_word_is_dropped_and_counted(self):
+        rows = {"0": [[0.2, 4.6, "alpha beta, hum gamma delta.",
+                       [[0.2, 1.0, "alpha"], [1.2, 1.8, "beta,"], [2.7, 3.2, "hum"],
+                        [3.3, 3.8, "gamma"], [4.1, 4.6, "delta."]]]],
+                "1": [[0.3, 2.0, "others say this",
+                       [[0.3, 0.8, "others"], [0.9, 1.4, "say"], [1.5, 2.0, "this"]]]]}
+        text, lines = self.digest(self.pair, env=fake_engine(self.dir, rows))
+        # The segment crossing the gap is split into its two regions: alpha 0.2 s is 0.95 s,
+        # gamma starts in the gap and ends in region 2 (7.75 s); hum lies only in the gap.
+        self.assertEqual(lines, [("0:00:00", "me", "alpha beta,"),
+                                 ("0:00:04", "others", "others say this"),
+                                 ("0:00:07", "me", "gamma delta.")])
+        self.assertIn("\n- Region mode: audio track 1 (me): 2 regions, 1 gap-dropped; audio track 2"
+                      " (others): 2 regions, 0 gap-dropped\n", text)
+
+    def test_the_merge_and_the_echo_rule_work_on_the_rebuilt_region_lines(self):
+        clip = make_clip(self.dir, "echo.mkv", "color=c=gray:s=160x90:r=1:d=12",
+                         audio=(tone_bursts((1, 3), (5, 6), (8, 10)), tone_bursts((1, 3))), seconds=12)
+        mine = [[0.3, 0.6, "let"], [0.7, 1.0, "us"], [1.1, 1.4, "review"], [1.5, 1.8, "the"],
+                [1.9, 2.2, "budget"], [3.7, 4.2, "sounds"], [4.3, 4.8, "good"], [6.3, 6.8, "thanks"],
+                [6.9, 7.2, "a"], [7.3, 7.5, "lot"]]
+        theirs = [[0.4, 0.7, "Let"], [0.8, 1.1, "us"], [1.2, 1.5, "review"], [1.6, 1.9, "the"],
+                  [2.0, 2.3, "budget."]]
+        rows = {"0": [[0.3, 7.5, " ".join(w[2] for w in mine), mine]],
+                "1": [[0.4, 2.3, " ".join(w[2] for w in theirs), theirs]]}
+        text, lines = self.digest(clip, env=fake_engine(self.dir, rows))
+        # Region 1 of stream 1 echoes stream 2 and is dropped; regions 2 and 3 of stream 1 follow
+        # each other with no other label between, so the existing merge makes them one line.
+        self.assertEqual(lines, [("0:00:01", "others", "Let us review the budget."),
+                                 ("0:00:04", "me", "sounds good thanks a lot")])
+        self.assertIn("\n- Echo segments dropped: 1\n", text)
+        self.assertIn("\n- Region mode: audio track 1 (me): 3 regions, 0 gap-dropped; audio track 2"
+                      " (others): 1 region, 0 gap-dropped\n", text)
+
+
+class VideoDigestSingleStreamRegressionTest(RegionBase):
+    def test_one_stream_keeps_the_exact_transcript_of_the_main_tool(self):
+        rows = {"0": [[0.5, 4.6, "alpha beta, hum gamma delta.",
+                       [[0.5, 1.0, "alpha"], [1.2, 1.8, "beta,"], [2.7, 3.2, "hum"],
+                        [3.3, 3.8, "gamma"], [4.1, 4.6, "delta."]]],
+                      [5.0, 5.5, "in the quiet"], [8.2, 9.0, "omega"], [70.0, 71.0, "a new minute"],
+                      [71.5, 75.0, "tail runs past the end"]]}
+        clip = make_clip(self.dir, "long.mkv", "color=c=gray:s=160x90:r=1:d=72",
+                         audio=(tone_bursts((1, 3), (8, 10), (69, 71)),), seconds=72)
+        res = run_tool(clip, "--no-frames", env=fake_engine(self.dir, rows))
+        self.ok(res)
+        text = digest_of(clip)
+        section = text.split("## Transcript", 1)[1].split("## Keyframes", 1)[0]
+        self.assertEqual(section, "\n\n[0:00:00] speaker: alpha beta, hum gamma delta. in the quiet"
+                                  " omega\n[0:01:10] speaker: a new minute tail runs past the end\n\n")
+        self.assertNotIn("Region mode", text)
+
+
+class VideoDigestRegionUnitTest(unittest.TestCase):
+    def rounded(self, rows):
+        return [tuple(round(v, 6) if isinstance(v, float) else v for v in row) for row in rows]
+
+    def test_regions_join_quiet_under_a_second_pad_and_clamp(self):
+        tool = load_tool()
+        loud = [False] * 600
+        for first, last in ((100, 300), (399, 450), (550, 600)):
+            loud[first:last] = [True] * (last - first)
+        # 0.99 s of quiet stays inside a region, 1.00 s ends it; the last pad stops at the end.
+        self.assertEqual(tool.speech_regions(loud, 160, 96000, 16000), [(12000, 76000), (84000, 96000)])
+        self.assertEqual(self.rounded(tool.offset_table([(12000, 76000), (84000, 96000)], 16000)),
+                         [(0.0, 0.75, 4.0), (5.0, 5.25, 0.75)])
+
+    def test_units_map_by_start_and_words_rebuild_one_segment_per_region(self):
+        tool = load_tool()
+        table = [(0.0, 0.75, 2.5), (3.5, 7.75, 2.5)]
+        units = [(0.2, 1.0, "alpha"), (1.2, 1.8, "beta,"), (2.7, 3.2, "hum"), (3.3, 3.8, "gamma"),
+                 (4.1, 4.6, "delta."), (5.9, 6.4, "tail")]
+        words, dropped = tool.map_units(units, table, True)
+        self.assertEqual((self.rounded(words), dropped),
+                         ([(0.95, 2.55, "alpha beta,"), (7.75, 10.25, "gamma delta. tail")], 1))
+        segments, dropped = tool.map_units(units, table, False)
+        self.assertEqual((self.rounded(segments), dropped),
+                         ([(0.95, 1.75, "alpha"), (1.95, 2.55, "beta,"), (7.75, 8.05, "gamma"),
+                           (8.35, 8.85, "delta."), (10.15, 10.25, "tail")], 1))
+        long_words = [(0.0, 1.0, "one"), (30.0, 31.0, "two"), (61.0, 62.0, "three"), (100.0, 101.0, "four")]
+        pieces, _ = tool.map_units(long_words, [(0.0, 10.0, 130.0)], True)
+        self.assertEqual(self.rounded(pieces), [(10.0, 41.0, "one two"), (71.0, 111.0, "three four")])
+
+
+class WhisperCliRegionArgsTest(RegionBase):
+    def test_two_streams_ask_for_word_times_on_the_joined_regions_without_vad(self):
+        cues = {"0": [[0.2, 1.0, "alpha"], [2.7, 3.2, "hum"], [3.3, 3.8, "gamma"]],
+                "1": [[0.3, 0.8, "others"]]}
+        env, _, log = self.word_cli(FAKE_CLI_CUES=json.dumps(cues))
+        text, lines = self.digest(self.pair, "--engine", "whisper-cli", "--model", self.model,
+                                  "--vad-model", self.vad, "--prompt", "Names: Ana.", "--threads", "6",
+                                  env=env)
+        self.assertEqual(lines, [("0:00:00", "me", "alpha"), ("0:00:04", "others", "others"),
+                                 ("0:00:07", "me", "gamma")])
+        for stream, seconds in ((0, 6.0), (1, 5.0)):
+            got = self.logged(log, stream)
+            args = got["args"]
+            self.assertAlmostEqual(got["seconds"], seconds, places=3)
+            self.assertEqual(args[args.index("-ml") + 1:args.index("-ml") + 3], ["1", "-sow"])
+            self.assertNotIn("--vad", args)
+            self.assertNotIn("-vm", args)
+            self.assertEqual(args[args.index("--prompt") + 1], "Names: Ana.")
+            self.assertEqual(args[args.index("-t") + 1], "6")
+        self.assertIn("\n- Region mode: audio track 1 (me): 2 regions, 1 gap-dropped; audio track 2"
+                      " (others): 2 regions, 0 gap-dropped\n", text)
+
+    def test_one_stream_keeps_vad_and_segment_times(self):
+        env, _, log = self.word_cli()
+        text, lines = self.digest(self.single, "--engine", "whisper-cli", "--model", self.model,
+                                  "--vad-model", self.vad, env=env)
+        self.assertEqual(lines, [("0:00:01", "speaker", "from the cli")])
+        got = self.logged(log, 0)
+        self.assertAlmostEqual(got["seconds"], 12.0, places=3)
+        self.assertNotIn("-ml", got["args"])
+        self.assertNotIn("-sow", got["args"])
+        at = got["args"].index("--vad")
+        self.assertEqual(got["args"][at + 1:at + 3], ["-vm", self.vad])
+
+
+class PythonEngineRegionWordsTest(RegionBase):
+    def test_python_engines_get_word_timestamps_in_region_mode_only(self):
+        fakes = os.path.join(self.dir, "fakes")
+        for package, body in (("faster_whisper", FAKE_FASTER_WORDS), ("whisper", FAKE_OPENAI_WORDS)):
+            os.makedirs(os.path.join(fakes, package))
+            with open(os.path.join(fakes, package, "__init__.py"), "w", encoding="utf-8") as handle:
+                handle.write(body)
+        kw_log = os.path.join(self.dir, "kw.json")
+        env = {"PYTHONPATH": fakes, "FAKE_KW_LOG": kw_log}
+        for engine in ("faster-whisper", "openai-whisper"):
+            _, lines = self.digest(self.pair, "--engine", engine, "--model", "tiny", env=env)
+            self.assertEqual(lines, [("0:00:01", "me", "alpha beta"), ("0:00:04", "others", "alpha beta"),
+                                     ("0:00:07", "me", "gamma"), ("0:00:10", "others", "gamma")], engine)
+            with open(kw_log, encoding="utf-8") as handle:
+                self.assertIs(json.load(handle).get("word_timestamps"), True, engine)
+            _, lines = self.digest(self.single, "--engine", engine, "--model", "tiny", env=env)
+            self.assertEqual(lines, [("0:00:00", "speaker", "alpha beta gamma")], engine)
+            with open(kw_log, encoding="utf-8") as handle:
+                self.assertNotIn("word_timestamps", json.load(handle), engine)
+
+
+class FfmpegWhisperRegionTest(RegionBase):
+    def test_the_filter_maps_by_segment_start_without_vad_and_drops_gap_text(self):
+        cues = {"0": [[0.2, 1.4, "first words"], [2.6, 3.0, "Thank you."], [3.3, 4.4, "second words"]],
+                "1": [[0.3, 1.9, "their words"]]}
+        env, log = self.fake_ffmpeg(FAKE_FILTER_CUES=json.dumps(cues))
+        text, lines = self.digest(self.pair, "--engine", "ffmpeg-whisper", "--model", self.model,
+                                  "--vad-model", self.vad, env=env)
+        self.assertEqual(lines, [("0:00:00", "me", "first words"), ("0:00:04", "others", "their words"),
+                                 ("0:00:07", "me", "second words")])
+        self.assertIn("\n- Region mode: audio track 1 (me): 2 regions, 1 gap-dropped; audio track 2"
+                      " (others): 2 regions, 0 gap-dropped\n", text)
+        for stream in (0, 1):
+            self.assertNotIn("vad_model", self.logged(log, stream))
+        self.digest(self.single, "--engine", "ffmpeg-whisper", "--model", self.model,
+                    "--vad-model", self.vad, env=env)
+        self.assertIn("vad_model", self.logged(log, 0))
+
+
+class VideoDigestEngineChoiceTest(RegionBase):
+    def test_auto_tries_whisper_cli_then_faster_then_openai_then_the_filter(self):
+        cli_env, _, _ = self.word_cli()
+        filter_env, _ = self.fake_ffmpeg()
+        fakes = os.path.join(self.dir, "fakes")
+        for package, body in (("faster_whisper", FAKE_FASTER), ("whisper", FAKE_OPENAI)):
+            os.makedirs(os.path.join(fakes, package))
+            with open(os.path.join(fakes, package, "__init__.py"), "w", encoding="utf-8") as handle:
+                handle.write(body)
+        only_openai = os.path.join(self.dir, "only-openai")
+        os.makedirs(os.path.join(only_openai, "faster_whisper"))
+        with open(os.path.join(only_openai, "faster_whisper", "__init__.py"), "w") as handle:
+            handle.write("raise ImportError('not installed')\n")
+        shutil.copytree(os.path.join(fakes, "whisper"), os.path.join(only_openai, "whisper"))
+        both = dict(filter_env, PATH=os.path.join(self.dir, "cli-bin") + os.pathsep + filter_env["PATH"],
+                    FAKE_CLI_LOG=cli_env["FAKE_CLI_LOG"])
+        no_python = os.path.join(self.dir, "no-python")
+        cases = ((dict(both, PYTHONPATH=fakes), (), "whisper-cli"),
+                 (dict(filter_env, PYTHONPATH=fakes), (), "faster-whisper"),
+                 (dict(filter_env, PYTHONPATH=only_openai), (), "openai-whisper"),
+                 (filter_env, ("--engine-python", no_python), "ffmpeg-whisper"))
+        for env, extra, engine in cases:
+            text, _ = self.digest(self.single, "--model", self.model, *extra, env=env)
+            self.assertIn("\n- Engine: %s\n" % engine, text)
+
+    def test_the_explicit_whisper_cli_path_is_used_and_a_missing_one_is_exit_2(self):
+        env, wrapper, log = self.word_cli(on_path=False)
+        for extra in (("--engine", "whisper-cli"), ()):
+            text, lines = self.digest(self.single, "--whisper-cli", wrapper, "--model", self.model,
+                                      *extra, env=env)
+            self.assertIn("\n- Engine: whisper-cli\n", text)
+            self.assertEqual(lines, [("0:00:01", "speaker", "from the cli")])
+        res = run_tool(self.single, "--no-frames", "--whisper-cli", os.path.join(self.dir, "none.exe"),
+                       "--model", self.model)
+        self.assertEqual(res.returncode, 2, res.stderr)
+        self.assertIn("--whisper-cli", res.stderr)
+
+    def test_english_gets_the_default_prompt_unless_another_or_an_empty_one_is_given(self):
+        env, _, log = self.word_cli()
+        cases = ((("--language", "en"), DEFAULT_PROMPT), (("--language", "es"), None),
+                 (("--language", "en", "--prompt", ""), None),
+                 (("--language", "en", "--prompt", "Names: Bo."), "Names: Bo."))
+        for extra, prompt in cases:
+            text, _ = self.digest(self.single, "--engine", "whisper-cli", "--model", self.model,
+                                  *extra, env=env)
+            args = self.logged(log, 0)["args"]
+            if prompt is None:
+                self.assertNotIn("--prompt", args, extra)
+                self.assertIn("\n- Prompt: none\n", text)
+            else:
+                self.assertIn("--prompt", args, extra)
+                self.assertEqual(args[args.index("--prompt") + 1], prompt, extra)
+                self.assertIn("\n- Prompt: %s\n" % prompt, text)
+        fakes = os.path.join(self.dir, "fakes")
+        os.makedirs(os.path.join(fakes, "whisper"))
+        with open(os.path.join(fakes, "whisper", "__init__.py"), "w", encoding="utf-8") as handle:
+            handle.write(FAKE_OPENAI)
+        kw_log = os.path.join(self.dir, "kw.json")
+        self.digest(self.single, "--engine", "openai-whisper", "--model", "tiny", "--language", "en",
+                    env={"PYTHONPATH": fakes, "FAKE_KW_LOG": kw_log})
+        with open(kw_log, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle).get("initial_prompt"), DEFAULT_PROMPT)
+
+    def test_gpu_device_reaches_the_filter_only_when_given(self):
+        env, log = self.fake_ffmpeg()
+        text, _ = self.digest(self.single, "--engine", "ffmpeg-whisper", "--model", self.model,
+                              "--language", "en", "--gpu-device", "1", env=env)
+        self.assertEqual(self.logged(log, 0).get("gpu_device"), "1")
+        self.assertIn("\n- Prompt: none (the whisper filter takes no prompt)\n", text)
+        self.digest(self.single, "--engine", "ffmpeg-whisper", "--model", self.model, env=env)
+        self.assertNotIn("gpu_device", self.logged(log, 0))
+
+
+# The three-stream sample of the multi-track spec: (seconds, stream from 1, sentence).
+SAMPLE_SECONDS = 33
+SAMPLE = (
+    (0.0, 2, "Good morning everyone, thanks for joining the weekly status call."),
+    (6.0, 3, "Good morning. I have an update on the database migration."),
+    (12.0, 2, "Great, please go ahead and share the details."),
+    (16.0, 3, "The migration finished last night and all of the tests passed."),
+    (21.0, 2, "Excellent news."),
+    (23.0, 2, "Let us schedule the release for Thursday."),
+    (27.0, 3, "Thursday works for me."),
+    (29.0, 3, "I will send the notes after the call."),
+)
+QUIET_PEAK = 104  # a 16-bit sample at -50 dBFS, the tool's SILENCE_FLOOR_DB
+SPEAK_PS1 = r'''param([string]$Jobs)
+Add-Type -AssemblyName System.Speech
+$format = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000,
+    [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, [System.Speech.AudioFormat.AudioChannel]::Mono)
+$voice = New-Object System.Speech.Synthesis.SpeechSynthesizer
+foreach ($job in (Get-Content -Raw -Path $Jobs | ConvertFrom-Json)) {
+    $voice.SelectVoiceByHints([System.Speech.Synthesis.VoiceGender]$job.gender)
+    $voice.SetOutputToWaveFile($job.path, $format)
+    $voice.Speak($job.text)
+    $voice.SetOutputToNull()
+}
+$voice.Dispose()
+'''
+
+
+def powershell_speech():
+    """The Windows PowerShell that loads System.Speech, or None."""
+    shell = shutil.which("powershell") if os.name == "nt" else None
+    if not shell:
+        return None
+    res = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command",
+                          "Add-Type -AssemblyName System.Speech"], capture_output=True, timeout=TIMEOUT)
+    return shell if res.returncode == 0 else None
+
+
+def make_three_track_sample(folder, shell):
+    """sample-3track.mp4 in folder: SAMPLE_SECONDS long, a video stream and three AAC streams (1 the
+    mix, 2 a male voice, 3 a female one), each SAMPLE sentence trimmed to its sound and starting at
+    its time. Returns the path and the seconds each sentence lasts."""
+    jobs = [{"gender": "Male" if stream == 2 else "Female", "text": text,
+             "path": os.path.join(folder, "say-%d.wav" % index)}
+            for index, (_, stream, text) in enumerate(SAMPLE)]
+    jobs_path = os.path.join(folder, "speak.json")
+    with open(jobs_path, "w", encoding="utf-8") as handle:
+        json.dump(jobs, handle)
+    script = os.path.join(folder, "speak.ps1")
+    with open(script, "w", encoding="ascii") as handle:
+        handle.write(SPEAK_PS1)
+    res = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                          "-File", script, "-Jobs", jobs_path], capture_output=True, text=True,
+                         timeout=TIMEOUT)
+    if res.returncode != 0:
+        raise AssertionError("System.Speech did not speak: " + res.stderr[-400:])
+    rate = 16000
+    tracks = {stream: array.array("h", bytes(2 * SAMPLE_SECONDS * rate)) for stream in (2, 3)}
+    lengths = []
+    for (when, stream, text), job in zip(SAMPLE, jobs):
+        with wave.open(job["path"], "rb") as handle:
+            said = array.array("h", handle.readframes(handle.getnframes()))
+        loud = [i for i, value in enumerate(said) if abs(value) >= QUIET_PEAK]
+        said = said[loud[0]:loud[-1] + 1]
+        later = [w for w, s, _ in SAMPLE if s == stream and w > when]
+        limit = int(round(((min(later) - 0.3) if later else SAMPLE_SECONDS) * rate))
+        at = int(round(when * rate))
+        if at + len(said) > limit:
+            raise AssertionError("the sentence at %g s runs %.2f s, into the next one" % (when, len(said) / rate))
+        tracks[stream][at:at + len(said)] = said
+        lengths.append(len(said) / rate)
+    mix = array.array("h", (max(-32768, min(32767, a + b)) for a, b in zip(tracks[2], tracks[3])))
+    paths = []
+    for name, data in (("mix", mix), ("a", tracks[2]), ("b", tracks[3])):
+        path = os.path.join(folder, "track-%s.wav" % name)
+        with wave.open(path, "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(rate)
+            handle.writeframes(data.tobytes())
+        paths.append(path)
+    target = os.path.join(folder, "sample-3track.mp4")
+    ffmpeg("-f", "lavfi", "-i", "color=c=gray:s=320x180:r=5:d=%d" % SAMPLE_SECONDS, "-i", paths[0],
+           "-i", paths[1], "-i", paths[2], "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:a",
+           "-c:v", "mpeg4", "-q:v", "4", "-c:a", "aac", "-ar", "48000", "-b:a", "128k",
+           "-t", str(SAMPLE_SECONDS), target)
+    return target, lengths
+
+
+class VideoDigestMultitrackOrderTest(RegionBase):
+    # (expected start in seconds, label, the SAMPLE sentences the line holds)
+    EXPECTED = ((0, "me", (0,)), (6, "others", (1,)), (12, "me", (2,)), (16, "others", (3,)),
+                (21, "me", (4, 5)), (27, "others", (6, 7)))
+
+    def test_turns_come_in_spoken_order_each_within_a_second_of_its_onset(self):
+        shell = powershell_speech()
+        if not shell:
+            self.skipTest("needs Windows PowerShell with System.Speech")
+        sample, lengths = make_three_track_sample(self.dir, shell)
+        script = os.path.join(self.dir, "said.json")
+        with open(script, "w", encoding="utf-8") as handle:
+            json.dump({str(stream - 1): [[text, length] for (_, s, text), length in zip(SAMPLE, lengths)
+                                         if s == stream] for stream in (2, 3)}, handle)
+        env, _, _ = self.word_cli(FAKE_CLI_SCRIPT=script)
+        res = run_tool(sample, "--engine", "whisper-cli", "--model", self.model, "--vad-model",
+                       self.vad, "--language", "en", "--tracks", "2,3", "--track-labels", "me,others",
+                       "--no-frames", env=env)
+        self.ok(res)
+        lines = transcript_lines(digest_of(sample))
+        self.assertEqual([(label, text) for _, label, text in lines],
+                         [(label, " ".join(SAMPLE[i][2] for i in held)) for _, label, held in self.EXPECTED])
+        for (clock, _, _), (when, _, _) in zip(lines, self.EXPECTED):
+            h, m, s = (int(part) for part in clock.split(":"))
+            self.assertLessEqual(abs(h * 3600 + m * 60 + s - when), 1.0, (clock, when))
 
 
 if __name__ == "__main__":

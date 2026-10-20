@@ -2,11 +2,15 @@
 """Turn a meeting or screen recording into one Markdown file an agent can read.
 
     python scripts/video-digest.py <recording> [--out <dir>]
-        [--engine auto|ffmpeg-whisper|whisper-cli|faster-whisper|openai-whisper]
+        [--engine auto|whisper-cli|faster-whisper|openai-whisper|ffmpeg-whisper]
         [--model <name or path>] [--vad-model <ggml vad file>] [--language <code or auto>]
-        [--engine-python <python>] [--threshold 0.90] [--floor 60] [--frame-edge 1280]
+        [--engine-python <python>] [--whisper-cli <path>] [--gpu-device N]
+        [--threshold 0.90] [--floor 60] [--frame-edge 1280]
         [--tracks 1,2] [--track-labels me,others] [--min-gap 5] [--threads N] [--prompt TEXT]
         [--ffmpeg <dir>] [--no-frames] [--no-transcript]
+
+A recorder with a mixed track beside one track per side (OBS: track 1 the mix, 2 the microphone,
+3 the call) is run as --tracks 2,3 --track-labels me,others.
 
 It writes <out>/<stem>.digest.md and <out>/<stem>.frames/ (default <out>: the recording's
 folder). A model that reads images but not video reads the transcript first and opens only the
@@ -44,16 +48,36 @@ The label is `speaker` for a single chosen stream; with two or more, the --track
 the order given, then track<n> (the stream's own number) for any stream past the list.
 
 Engines, tried in this order by --engine auto, each a subprocess:
-  ffmpeg-whisper  FFmpeg's whisper filter, when `ffmpeg -filters` lists it and --model is a file
-                  (a ggml model); language set, queue=20, vad_model when --vad-model is given;
+  whisper-cli     whisper.cpp's whisper-cli, named by --whisper-cli <path> or found on PATH, when
+                  --model is a file (a ggml model); -t threads (--threads, default logical cores
+                  minus 4, at least 4), --prompt, --vad -vm <file> when --vad-model is given;
                   writes SRT.
-  whisper-cli     whisper.cpp's whisper-cli on PATH, when --model is a file; -t threads
-                  (--threads, default logical cores minus 4, at least 4), --prompt when given,
-                  --vad -vm <file> when --vad-model is given; writes SRT.
   faster-whisper  imported by --engine-python (default: this Python), --model a model name;
   openai-whisper  each writes a JSON list of [start, end, text] in seconds. --threads (faster-whisper
-                  cpu_threads) and --prompt (initial_prompt) are passed only when given.
+                  cpu_threads) is passed only when given, the prompt as initial_prompt.
+  ffmpeg-whisper  FFmpeg's whisper filter, when `ffmpeg -filters` lists it and --model is a file;
+                  language set, queue=20, vad_model when --vad-model is given, gpu_device when
+                  --gpu-device is given; writes SRT. The filter takes no prompt.
+The filter comes last: it measured 0.3 to 0.5x real time per stream, with cues up to its 20 s
+queue early. The prompt is --prompt as given (--prompt "" sends none); without it, --language en
+sends DEFAULT_PROMPTS["en"] and any other language none. The Metadata names the prompt sent.
 Segment times are clamped to the recording's duration and the clamped ones counted.
+
+Region mode, when two or more streams are transcribed (one stream takes the path above
+unchanged). On a stream that is silent half the time, whisper times run across the pauses: VAD
+hands a pause to the next word, and without VAD the word before a pause runs on to the next
+speech, so turns come out glued and out of order. So each stream's 16 kHz extraction is read back
+in REGION_WINDOW windows: a window is loud when its peak reaches SILENCE_FLOOR_DB, a quiet run of
+REGION_MIN_SILENCE or more ends a speech region (a shorter one, such as the pause after a
+sentence, stays inside it), and each region keeps REGION_PAD of the recording on both sides. The
+regions, joined by REGION_GAP of zeros, are the engine's input, with an offset table from the
+joined timeline back to the recording, and the engine runs WITHOUT VAD (the regions removed the
+silence). whisper-cli gets -ml 1 -sow and the Python engines word_timestamps=True, so every word
+is placed by its start and the text is rebuilt into one segment per region (split where
+TURN_SPLIT_SECONDS passed), and a segment that crosses a gap cannot glue two turns; the filter's
+segments, which carry no word times, are placed by their start. A word or segment that starts in
+a gap goes to the next region when it ends inside it; one that lies only inside a gap is dropped
+and counted. The Metadata lists each stream's regions and gap-dropped count.
 
 Echo rule, two or more transcribed streams only: a segment of the first chosen stream is dropped
 when it has at least ECHO_MIN_WORDS words, overlaps in time a segment of another stream, and their texts
@@ -67,7 +91,10 @@ start, so a single-track recording keeps a time index instead of one line for th
 
 Test seams, read only from the environment: VIDEO_DIGEST_FAKE_ENGINE names a JSON file
 {"<stream n>": [[start, end, text], ...]} that stands in for the engine under --engine auto (no
-model is loaded); VIDEO_DIGEST_COMPARE=previous compares each frame with the previous second
+model is loaded); its times are on the engine's input, which in region mode is the joined
+regions, and a row may carry its words as a fourth item [[start, end, word], ...], which region
+mode places one by one like whisper-cli's (rows without words are placed like the filter's
+segments, and one stream takes the rows as they are); VIDEO_DIGEST_COMPARE=previous compares each frame with the previous second
 instead of the last kept frame, for the test that shows why the tool does not;
 VIDEO_DIGEST_STEP_TIMEOUT=<step>=<seconds> replaces that step's timeout (steps: probe, filters,
 decode, frame, image-size, audio, engine, engine-probe), so a test can make one step time out.
@@ -82,6 +109,7 @@ own command line (the library leaves both unset, which decodes greedy); faster-w
 beam_size=5 explicitly.
 """
 import argparse
+import array
 import difflib
 import json
 import math
@@ -92,6 +120,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import wave
 from operator import mul
 
 GRAY_SIZE = (256, 144)
@@ -101,6 +130,16 @@ SILENCE_FLOOR_DB = -50.0
 ECHO_MIN_WORDS = 4
 ECHO_MIN_RATIO = 0.8
 TURN_SPLIT_SECONDS = 60.0
+# Region mode. A 10 ms window resolves a word's onset well inside the 1.0 s acceptance. A quiet
+# run of 1.0 s or more ends a region: the pauses inside one speaker's sentence measured up to
+# 0.82 s on the spec's sample, and the pause between two turns on one stream is longer. 0.25 s of
+# the recording on each side keeps a soft onset or a trailing consonant that peaks under the floor.
+# 1.0 s of zeros between regions keeps them apart for the engine while adding little to decode.
+REGION_WINDOW = 0.01
+REGION_MIN_SILENCE = 1.0
+REGION_PAD = 0.25
+REGION_GAP = 1.0
+DEFAULT_PROMPTS = {"en": "Hello, everyone. Thanks for joining the meeting."}
 EXCERPT_WORDS = 12
 PROBE_TIMEOUT = 60
 ENGINE_PROBE_TIMEOUT = 180
@@ -111,11 +150,12 @@ STEP_TIMEOUT_ENV = "VIDEO_DIGEST_STEP_TIMEOUT"
 MIN_THREADS = 4
 EXE = ".exe" if os.name == "nt" else ""
 FRAME_NAME = re.compile(r"^\d{4}_\d+-\d\d-\d\d\.jpg$")
-ENGINES = ("ffmpeg-whisper", "whisper-cli", "faster-whisper", "openai-whisper")
+ENGINES = ("whisper-cli", "faster-whisper", "openai-whisper", "ffmpeg-whisper")
 INSTALL = {
     "ffmpeg-whisper": "an FFmpeg 8.0 or later build with the whisper filter (ffmpeg -filters lists"
                       " it), with --model <ggml model file>",
-    "whisper-cli": "whisper.cpp's whisper-cli on PATH, with --model <ggml model file>",
+    "whisper-cli": "whisper.cpp's whisper-cli on PATH or named by --whisper-cli <path>, with --model"
+                   " <ggml model file>",
     "faster-whisper": "pip install faster-whisper into --engine-python, with --model <name, such as"
                       " large-v3>",
     "openai-whisper": "pip install openai-whisper into --engine-python, with --model <name, such as"
@@ -126,20 +166,30 @@ PYTHON_SNIPPET = {
     "faster-whisper": (
         "import json, sys\n"
         "from faster_whisper import WhisperModel\n"
-        "wav, model, language, out, threads, prompt = sys.argv[1:7]\n"
+        "wav, model, language, out, threads, prompt, words = sys.argv[1:8]\n"
         "load = {'cpu_threads': int(threads)} if int(threads) > 0 else {}\n"
         "ask = {'initial_prompt': prompt} if prompt else {}\n"
+        "if words == '1':\n"
+        "    ask['word_timestamps'] = True\n"
         "segments, _ = WhisperModel(model, **load).transcribe(wav, language=None if language == 'auto' else language, beam_size=5, **ask)\n"
-        "rows = [[s.start, s.end, s.text] for s in segments]\n"
+        "rows = []\n"
+        "for s in segments:\n"
+        "    found = (getattr(s, 'words', None) or []) if words == '1' else []\n"
+        "    rows += [[w.start, w.end, w.word] for w in found] or [[s.start, s.end, s.text]]\n"
         "with open(out, 'w', encoding='utf-8') as handle:\n"
         "    json.dump(rows, handle)\n"),
     "openai-whisper": (
         "import json, sys\n"
         "import whisper\n"
-        "wav, model, language, out, threads, prompt = sys.argv[1:7]\n"
+        "wav, model, language, out, threads, prompt, words = sys.argv[1:8]\n"
         "ask = {'initial_prompt': prompt} if prompt else {}\n"
+        "if words == '1':\n"
+        "    ask['word_timestamps'] = True\n"
         "result = whisper.load_model(model).transcribe(wav, language=None if language == 'auto' else language, beam_size=5, best_of=5, **ask)\n"
-        "rows = [[s['start'], s['end'], s['text']] for s in result['segments']]\n"
+        "rows = []\n"
+        "for s in result['segments']:\n"
+        "    found = (s.get('words') or []) if words == '1' else []\n"
+        "    rows += [[w['start'], w['end'], w['word']] for w in found] or [[s['start'], s['end'], s['text']]]\n"
         "with open(out, 'w', encoding='utf-8') as handle:\n"
         "    json.dump(rows, handle)\n"),
 }
@@ -435,14 +485,21 @@ class FfmpegWhisper:
     name = "ffmpeg-whisper"
     timeout = None
 
-    def __init__(self, ffmpeg, model, language, vad_model):
+    def __init__(self, ffmpeg, model, language, vad_model, gpu_device):
         self.ffmpeg, self.model, self.language, self.vad_model = ffmpeg, model, language, vad_model
+        self.gpu_device = gpu_device
 
-    def transcribe(self, wav, n, work):
+    def region_units(self, wav, n, work):
+        """Region mode: the filter's segments without VAD, placed by their start."""
+        return self.transcribe(wav, n, work, region=True), False
+
+    def transcribe(self, wav, n, work, region=False):
         out = os.path.join(work, "whisper-%d.srt" % n)
         options = ["model=" + filter_escape(self.model), "language=" + filter_escape(self.language),
                    "queue=20", "destination=" + filter_escape(out), "format=srt"]
-        if self.vad_model:
+        if self.gpu_device is not None:
+            options.append("gpu_device=%d" % self.gpu_device)
+        if self.vad_model and not region:
             options.append("vad_model=" + filter_escape(self.vad_model))
         res = run([self.ffmpeg, "-v", "error", "-nostdin", "-i", wav,
                    "-af", "whisper=" + ":".join(options), "-f", "null", "-"], "engine",
@@ -458,13 +515,19 @@ class WhisperCli:
         self.binary, self.model, self.language = binary, model, language
         self.threads, self.prompt, self.vad_model = threads, prompt, vad_model
 
-    def transcribe(self, wav, n, work):
+    def region_units(self, wav, n, work):
+        """Region mode: one SRT cue per word (-ml 1 -sow), without VAD."""
+        return self.transcribe(wav, n, work, region=True), True
+
+    def transcribe(self, wav, n, work, region=False):
         base = os.path.join(work, "whisper-%d" % n)
         cmd = [self.binary, "-m", self.model, "-f", wav, "-l", self.language, "-t",
                str(self.threads), "-osrt", "-of", base, "-np"]
         if self.prompt:
             cmd += ["--prompt", self.prompt]
-        if self.vad_model:
+        if region:
+            cmd += ["-ml", "1", "-sow"]
+        elif self.vad_model:
             cmd += ["--vad", "-vm", self.vad_model]
         res = run(cmd, "engine", timeout=self.timeout, engine=self.name)
         return read_output(self.name, base + ".srt", res, parse_srt)
@@ -479,11 +542,15 @@ class PythonWhisper:
         self.env = dict(os.environ)
         self.env["PATH"] = os.path.dirname(ffmpeg) + os.pathsep + self.env.get("PATH", "")
 
-    def transcribe(self, wav, n, work):
+    def region_units(self, wav, n, work):
+        """Region mode: word_timestamps=True, one row per word."""
+        return self.transcribe(wav, n, work, region=True), True
+
+    def transcribe(self, wav, n, work, region=False):
         out = os.path.join(work, "segments-%d.json" % n)
         res = run([self.python, "-c", PYTHON_SNIPPET[self.name], wav, self.model, self.language, out,
-                   str(self.threads), self.prompt], "engine", timeout=self.timeout, env=self.env,
-                  engine=self.name)
+                   str(self.threads), self.prompt, "1" if region else "0"], "engine",
+                  timeout=self.timeout, env=self.env, engine=self.name)
         return read_output(self.name, out, res, parse_rows)
 
 
@@ -499,6 +566,18 @@ class FakeEngine:
         if not os.path.isfile(wav) or os.path.getsize(wav) == 0:
             raise DigestError(3, "fake engine: no extracted audio for track %d" % n)
         return parse_rows(json.dumps(self.rows.get(str(n), [])))
+
+    def region_units(self, wav, n, work):
+        """The stream's words when any row carries them (a row without words is one unit),
+        else its rows, placed like the filter's segments."""
+        rows = self.transcribe(wav, n, work)
+        given = self.rows.get(str(n), [])
+        if not any(len(row) > 3 for row in given):
+            return rows, False
+        units = []
+        for row, plain in zip(given, rows):
+            units += parse_rows(json.dumps(row[3])) if len(row) > 3 else [plain]
+        return units, True
 
 
 def ffmpeg_lists_whisper(ffmpeg):
@@ -533,22 +612,36 @@ def try_engine(name, args, ffmpeg):
             return None, None
         if not (model and os.path.isfile(model)):
             return None, "ffmpeg lists the whisper filter, but --model is not a ggml model file"
-        return FfmpegWhisper(ffmpeg, model, args.language, args.vad_model), None
+        return FfmpegWhisper(ffmpeg, model, args.language, args.vad_model, args.gpu_device), None
     if name == "whisper-cli":
-        binary = shutil.which("whisper-cli")
+        binary = args.whisper_cli or shutil.which("whisper-cli")
         if not binary:
             return None, None
         if not (model and os.path.isfile(model)):
-            return None, "whisper-cli is on PATH, but --model is not a ggml model file"
+            return None, "whisper-cli %s, but --model is not a ggml model file" % (
+                "is named by --whisper-cli" if args.whisper_cli else "is on PATH")
         return WhisperCli(binary, model, args.language, args.threads or default_threads(),
-                          args.prompt, args.vad_model), None
+                          engine_prompt(args), args.vad_model), None
     imports, reason = python_imports(args.engine_python, PYTHON_MODULE[name])
     if not imports:
         return None, reason
     if not model:
         return None, "%s imports in %s, but no --model names a model" % (name, args.engine_python)
     return PythonWhisper(name, args.engine_python, model, args.language, ffmpeg, args.threads,
-                         args.prompt), None
+                         engine_prompt(args)), None
+
+
+def engine_prompt(args):
+    """The prompt the engine gets: --prompt as given ("" sends none), else the language's default."""
+    if args.prompt is not None:
+        return args.prompt or None
+    return DEFAULT_PROMPTS.get(args.language)
+
+
+def shown_prompt(engine, args):
+    if isinstance(engine, FfmpegWhisper):
+        return "none (the whisper filter takes no prompt)"
+    return engine_prompt(args) or "none"
 
 
 def resolve_engine(args, ffmpeg):
@@ -614,6 +707,126 @@ def clamp(segments, duration):
         end = min(max(end, start), duration)
         result.append((start, end, text))
     return result, clamped
+
+
+def wav_loudness(path):
+    """(rate, frames, window, loud) of a 16-bit mono WAV: loud[i] says whether window i (REGION_WINDOW
+    long, `window` samples) has a sample whose level reaches SILENCE_FLOOR_DB."""
+    limit = 32768.0 * 10 ** (SILENCE_FLOOR_DB / 20)
+    with wave.open(path, "rb") as handle:
+        if handle.getsampwidth() != 2 or handle.getnchannels() != 1:
+            raise DigestError(4, "cannot read %s: not 16-bit mono" % os.path.basename(path))
+        rate, frames = handle.getframerate(), handle.getnframes()
+        window = max(1, int(round(rate * REGION_WINDOW)))
+        loud = []
+        while True:
+            chunk = handle.readframes(window * 1000)
+            if not chunk:
+                break
+            samples = array.array("h", chunk)
+            if sys.byteorder == "big":
+                samples.byteswap()
+            for at in range(0, len(samples), window):
+                part = samples[at:at + window]
+                loud.append(max(part) >= limit or -min(part) >= limit)
+    return rate, frames, window, loud
+
+
+def speech_regions(loud, window, frames, rate):
+    """Speech regions of one stream as (first sample, end sample): loud windows joined across quiet
+    runs shorter than REGION_MIN_SILENCE, each widened by REGION_PAD on both sides, clamped to the
+    stream, and merged where two widened regions meet."""
+    shortest_quiet = REGION_MIN_SILENCE * rate
+    pad = int(round(REGION_PAD * rate))
+    spans = []
+    for index, flag in enumerate(loud):
+        if not flag:
+            continue
+        start, end = index * window, min(frames, (index + 1) * window)
+        if spans and start - spans[-1][1] < shortest_quiet:
+            spans[-1][1] = end
+        else:
+            spans.append([start, end])
+    regions = []
+    for start, end in spans:
+        start, end = max(0, start - pad), min(frames, end + pad)
+        if regions and start <= regions[-1][1]:
+            regions[-1][1] = max(regions[-1][1], end)
+        else:
+            regions.append([start, end])
+    return [tuple(region) for region in regions]
+
+
+def offset_table(regions, rate):
+    """[(engine start, recording start, length)] in seconds for regions joined by REGION_GAP."""
+    gap = int(round(REGION_GAP * rate))
+    table, at = [], 0
+    for start, end in regions:
+        table.append((at / rate, start / rate, (end - start) / rate))
+        at += end - start + gap
+    return table
+
+
+def join_regions(wav, regions, target):
+    """Writes the regions of wav to target, REGION_GAP of zeros between two; returns offset_table."""
+    with wave.open(wav, "rb") as source, wave.open(target, "wb") as out:
+        rate = source.getframerate()
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        gap = bytes(2 * int(round(REGION_GAP * rate)))
+        for index, (start, end) in enumerate(regions):
+            if index:
+                out.writeframes(gap)
+            source.setpos(start)
+            left = end - start
+            while left > 0:
+                chunk = source.readframes(min(left, 1 << 20))
+                if not chunk:
+                    raise DigestError(4, "cannot read %s past sample %d" % (os.path.basename(wav), end - left))
+                out.writeframes(chunk)
+                left -= len(chunk) // 2
+    return offset_table(regions, rate)
+
+
+def map_units(units, table, by_word):
+    """Engine units (start, end, text) on the joined timeline, back to the recording: (segments,
+    dropped). A unit is placed by its start; one that starts in a gap goes to the next region when it
+    ends inside it, and one that lies only inside a gap is dropped and counted. Ends stop at their
+    region's end. Words (by_word) are rebuilt into one segment per region, a new one once
+    TURN_SPLIT_SECONDS passed since its start; segments stay one each."""
+    placed, dropped = [], 0
+    for start, end, text in units:
+        start = max(start, 0.0)
+        index = None
+        for number, (joined, recorded, length) in enumerate(table):
+            if start < joined + length or number == len(table) - 1:
+                index = number
+                break
+        joined, recorded, length = table[index]
+        if start < joined:
+            if end <= joined:
+                dropped += 1
+                continue
+            at = recorded
+        else:
+            at = recorded + min(start - joined, length)
+        finish = max(at, recorded + min(max(end - joined, 0.0), length))
+        placed.append((index, at, finish, text))
+    if not by_word:
+        return [(at, finish, text) for _, at, finish, text in placed], dropped
+    pieces = []
+    for index, at, finish, text in placed:
+        if pieces and pieces[-1][0] == index and at - pieces[-1][1] < TURN_SPLIT_SECONDS:
+            pieces[-1][2] = max(pieces[-1][2], finish)
+            pieces[-1][3].append(text)
+        else:
+            pieces.append([index, at, finish, [text]])
+    return [(at, finish, " ".join(" ".join(texts).split())) for _, at, finish, texts in pieces], dropped
+
+
+def plural(count, word):
+    return "%d %s%s" % (count, word, "" if count == 1 else "s")
 
 
 def turns(segments, labels):
@@ -700,6 +913,7 @@ def markdown(recording, info, args, state):
         ("Model", state["model"]),
         ("VAD model", shown_model(args.vad_model)),
         ("Language", args.language),
+        ("Prompt", state["prompt"]),
         ("Frames", state["frames_note"]),
         ("Silent tracks", ", ".join("audio track %d (%s)" % (n + 1, labels[n]) for n in silent)
          if silent else "none"),
@@ -708,6 +922,10 @@ def markdown(recording, info, args, state):
     ]
     if not args.vad_model:
         meta = [pair for pair in meta if pair[0] != "VAD model"]
+    if state["regions"]:
+        meta.append(("Region mode", "; ".join(
+            "audio track %d (%s): %s, %d gap-dropped" % (n + 1, labels[n], plural(count, "region"), dropped)
+            for n, (count, dropped) in state["regions"].items())))
     lines_out += ["- %s: %s" % pair for pair in meta]
     lines_out += ["", "## Transcript", ""]
     if state["transcript_note"]:
@@ -738,6 +956,10 @@ def parse_args(argv):
     parser.add_argument("--language", default="auto", help="a language code, or auto")
     parser.add_argument("--engine-python", default=sys.executable,
                         help="the Python that runs faster-whisper or openai-whisper")
+    parser.add_argument("--whisper-cli", help="the whisper-cli binary to run (default: whisper-cli on"
+                                              " PATH)")
+    parser.add_argument("--gpu-device", type=int, help="the GPU the ffmpeg-whisper filter uses (its"
+                                                       " gpu_device option; not passed when absent)")
     parser.add_argument("--threshold", type=float, default=0.90)
     parser.add_argument("--floor", type=float, default=60.0, help="seconds between kept frames, at most")
     parser.add_argument("--min-gap", type=float, default=DEFAULT_MIN_GAP,
@@ -750,7 +972,8 @@ def parse_args(argv):
                                                " comma separated")
     parser.add_argument("--threads", type=int, help="CPU threads for the engine (default for"
                         " whisper-cli: logical cores minus 4, at least 4)")
-    parser.add_argument("--prompt", help="text that primes punctuation and casing")
+    parser.add_argument("--prompt", help="text that primes punctuation and casing (default for"
+                        " --language en: %s; \"\" for none)" % DEFAULT_PROMPTS["en"])
     parser.add_argument("--ffmpeg", help="the folder holding ffmpeg and ffprobe")
     parser.add_argument("--no-frames", action="store_true")
     parser.add_argument("--no-transcript", action="store_true")
@@ -765,11 +988,31 @@ def parse_args(argv):
         parser.error("--frame-edge must be at least 16")
     if args.threads is not None and args.threads < 1:
         parser.error("--threads must be at least 1")
+    if args.gpu_device is not None and args.gpu_device < 0:
+        parser.error("--gpu-device must be 0 or more")
+    if args.whisper_cli is not None and not os.path.isfile(args.whisper_cli):
+        parser.error("--whisper-cli %s is not a file" % args.whisper_cli)
     try:
         args.chosen = parse_tracks(args.tracks)
     except ValueError as error:
         parser.error(str(error))
     return args
+
+
+def region_pass(engine, wav, n, work, state):
+    """Region mode for one stream: its speech regions joined into the engine's input, the engine's
+    units mapped back to the recording; records (regions, gap-dropped) in state["regions"][n]."""
+    rate, frames, window, loud = wav_loudness(wav)
+    regions = speech_regions(loud, window, frames, rate)
+    if not regions:
+        state["regions"][n] = (0, 0)
+        return []
+    joined = os.path.join(work, "regions-%d.wav" % n)
+    table = join_regions(wav, regions, joined)
+    units, by_word = engine.region_units(joined, n, work)
+    found, dropped = map_units(units, table, by_word)
+    state["regions"][n] = (len(regions), dropped)
+    return found
 
 
 def digest(args):
@@ -785,8 +1028,8 @@ def digest(args):
                              % (args.tracks, info["audio"]))
     labels = track_labels(args.track_labels, chosen)
     state = {"labels": labels, "silent": [], "dropped": 0, "clamped": 0, "lines": [],
-             "engine": "none", "model": "none", "transcript_note": None,
-             "folder": os.path.join(out, stem + ".frames"), "frames": None}
+             "engine": "none", "model": "none", "prompt": "none", "regions": {},
+             "transcript_note": None, "folder": os.path.join(out, stem + ".frames"), "frames": None}
     want_text = not args.no_transcript
     segments = {}
     with tempfile.TemporaryDirectory(prefix="video-digest-") as work:
@@ -805,8 +1048,13 @@ def digest(args):
             engine.timeout = default_timeout("engine", info["duration"])
             state["engine"] = engine.name
             state["model"] = shown_model(args.model)
+            state["prompt"] = shown_prompt(engine, args)
             for n, wav in wavs.items():
-                segments[n], clamped = clamp(engine.transcribe(wav, n, work), info["duration"])
+                if len(wavs) < 2:
+                    found = engine.transcribe(wav, n, work)
+                else:
+                    found = region_pass(engine, wav, n, work, state)
+                segments[n], clamped = clamp(found, info["duration"])
                 state["clamped"] += clamped
     if args.no_transcript:
         state["transcript_note"] = "skipped (--no-transcript)"
