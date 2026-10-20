@@ -3,12 +3,12 @@
 A custom Claude Code status line for Windows / PowerShell. It renders one line:
 
 ```
- ANALYST  🐺 Opus 5  max  ⭐ alex  📁 my-app  main*  +142 -37  ctx [====......] 41%  7d 68% left
+analyst  🐺 Opus 5  max  ⭐ alex  📁 my-app  main*  +142 -37  ctx [====......] 41%  7d 68% left
 ```
 
 | Segment | Meaning |
 |---|---|
-| `ANALYST` | The session's role, from `CLAUDE_ROLE`, as a coloured badge: orchestrator magenta, analyst blue, research green, lane grey, anything else yellow. No badge when the session has no role |
+| `analyst` | The session's role, from `CLAUDE_ROLE`, as plain text in a soft colour: orchestrator lavender, analyst sky blue, research mint, lane grey, anything else peach (256-colour codes). Nothing when the session has no role |
 | 🐺 `Opus 5` | Model, one animal per family: 🐺 Opus, 🦁 Fable, 🐰 Sonnet, 🐭 Haiku. Anything unrecognised falls back to the wolf |
 | `max` | Effort level: low, medium, high, xhigh, max (cyan) |
 | ⭐ `alex` | The account this session runs as. Green when it points at a local model |
@@ -53,9 +53,9 @@ The label and icon can be overridden through the optional companion file the acc
 
 Four constants near the top of the script (`$AccountsDir`, `$AccountsFile`, `$KeyDefault`, `$KeyIcons`) are the only thing to change if your switcher writes a different layout.
 
-## The role badge
+## The role segment
 
-When many windows are open, the badge says which chair each one is. The account launcher passes the role in `CLAUDE_ROLE` (`-Role orchestrator`, `analyst`, `lane` or `research`, see `ACCOUNTS.md`), and Claude Code starts the status line as a child process, so the script reads it from its environment. A session opened without the launcher has no role and shows no badge.
+When many windows are open, the role says which chair each one is. The account launcher passes the role in `CLAUDE_ROLE` (`-Role orchestrator`, `analyst`, `lane` or `research`, see `ACCOUNTS.md`), and Claude Code starts the status line as a child process, so the script reads it from its environment. A session opened without the launcher has no role and shows none.
 
 If a project's orchestrator is launched with another role, `$RoleByFolder` near the top of the script relabels it by the folder its transcript is kept in, which Claude Code names after the launch folder and which a later `cd` does not move. It applies only to a session whose role is `lane` or empty; a session launched with any other role keeps it even in a mapped folder. Its value is the label shown:
 
