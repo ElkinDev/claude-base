@@ -23,7 +23,7 @@ claude/                     -> installs into ~/.claude
   statusline.ps1            model / effort / account / folder / git / context / quota status line
   claude-account.ps1        optional: switch between several Claude Code accounts (see docs/ACCOUNTS.md)
   merge-settings.py         helper the switcher uses to merge settings.json without dropping keys
-  skills/                   15 skills (TDD, quality gates, evidence, adversarial review, commit
+  skills/                   18 skills (TDD, quality gates, evidence, adversarial review, commit
                             and PR text, investigation, delegation, handover, ...); the other
                             five ship as plugins, see plugins/ below
   hooks/                    worklog, branch helpers, markitdown, read guard, big-result alarm, landings,
@@ -93,6 +93,11 @@ scripts/                    zero-token tooling: usage ledger and board, compacti
   sanitize-check.py         guard that blocks a push carrying a personal path, a real address, a
                             credential shape or a private name, and a commit once the optional
                             pre-commit hook is installed
+  video-digest.py           a recording to one Markdown file an agent reads: a timestamped
+                            transcript per audio track, keyframes kept against the last kept
+                            frame with a floor of one a minute, each frame indexed to its
+                            transcript line; ffmpeg plus a local Whisper engine, standard
+                            library only, and the video-digest skill says when to run it
 docs/                       status line, accounts, permissions, adoption, evidence, memory notes,
                             context economics
 install.ps1                 installer (user scope, and -Project to scaffold a project). It never
