@@ -26,7 +26,7 @@ TOOL = os.environ.get("VIDEO_DIGEST_TOOL") or os.path.join(ROOT, "scripts", "vid
 FFMPEG = shutil.which("ffmpeg")
 FFPROBE = shutil.which("ffprobe")
 TIMEOUT = 240
-SEAMS = ("VIDEO_DIGEST_FAKE_ENGINE", "VIDEO_DIGEST_COMPARE")
+SEAMS = ("VIDEO_DIGEST_FAKE_ENGINE", "VIDEO_DIGEST_COMPARE", "VIDEO_DIGEST_STEP_TIMEOUT")
 HEADING = re.compile(r"^### \[(\d+):(\d\d):(\d\d)\]$", re.MULTILINE)
 LINE = re.compile(r"^\[(\d+:\d\d:\d\d)\] ([^:]+): (.*)$")
 
@@ -226,7 +226,7 @@ class VideoDigestMarkdownTest(ClipTest):
         text = digest_of(clip)
         top = text.split("## Metadata", 1)[0]
         self.assertIn("Read the Transcript first. Open a frame only where the screen matters", top)
-        self.assertIn("1,196 tokens (1280x720)", top)
+        self.assertIn("24 tokens (160x90)", top)
         self.assertLess(text.index("## Metadata"), text.index("## Transcript"))
         self.assertLess(text.index("## Transcript"), text.index("## Keyframes"))
         for line in ("- Duration: 0:01:10", "- Resolution: 160x90", "- Audio streams: 1 (0: speaker)",
@@ -251,7 +251,7 @@ class VideoDigestMarkdownTest(ClipTest):
         size = subprocess.run([FFPROBE, "-v", "error", "-show_entries", "stream=width,height", "-of",
                                "csv=p=0", os.path.join(self.dir, "talk.frames", first)],
                               capture_output=True, text=True, timeout=TIMEOUT).stdout.strip()
-        self.assertEqual(size, "1280,720")
+        self.assertEqual(size, "160,90")  # a 160x90 source is not upscaled to --frame-edge
 
     def test_clamp_brings_every_time_inside_the_duration(self):
         tool = load_tool()
@@ -309,13 +309,14 @@ def load_model(name):
 """
 
 
-class VideoDigestEngineAdapterTest(ClipTest):
+class AdapterBase(ClipTest):
     def setUp(self):
         super().setUp()
         self.clip = make_clip(self.dir, "voice.mkv", "color=c=gray:s=160x90:r=1:d=5",
                               audio=("sine=frequency=440:sample_rate=16000",), seconds=5)
 
-    def test_whisper_cli_command_line_and_srt(self):
+    def fake_cli(self):
+        """(env, model, log): a fake whisper-cli first on PATH that records its argv."""
         bin_dir = os.path.join(self.dir, "bin")
         os.makedirs(bin_dir)
         script = os.path.join(bin_dir, "fake_cli.py")
@@ -334,6 +335,20 @@ class VideoDigestEngineAdapterTest(ClipTest):
             handle.write(b"lmgg")
         log = os.path.join(self.dir, "cli-args.json")
         env = {"PATH": bin_dir + os.pathsep + os.environ.get("PATH", ""), "FAKE_CLI_LOG": log}
+        return env, model, log
+
+    def python_engines(self):
+        fakes = os.path.join(self.dir, "fakes")
+        for package, body in (("faster_whisper", FAKE_FASTER), ("whisper", FAKE_OPENAI)):
+            os.makedirs(os.path.join(fakes, package))
+            with open(os.path.join(fakes, package, "__init__.py"), "w", encoding="utf-8") as handle:
+                handle.write(body)
+        return {"PYTHONPATH": fakes}
+
+
+class VideoDigestEngineAdapterTest(AdapterBase):
+    def test_whisper_cli_command_line_and_srt(self):
+        env, model, log = self.fake_cli()
         self.ok(run_tool(self.clip, "--engine", "whisper-cli", "--model", model, "--language", "es",
                          "--no-frames", env=env))
         text = digest_of(self.clip)
@@ -344,14 +359,6 @@ class VideoDigestEngineAdapterTest(ClipTest):
         self.assertEqual(args[args.index("-m") + 1], model)
         self.assertEqual(args[args.index("-l") + 1], "es")
         self.assertIn("-osrt", args)
-
-    def python_engines(self):
-        fakes = os.path.join(self.dir, "fakes")
-        for package, body in (("faster_whisper", FAKE_FASTER), ("whisper", FAKE_OPENAI)):
-            os.makedirs(os.path.join(fakes, package))
-            with open(os.path.join(fakes, package, "__init__.py"), "w", encoding="utf-8") as handle:
-                handle.write(body)
-        return {"PYTHONPATH": fakes}
 
     def test_python_engines_and_the_auto_order(self):
         env = self.python_engines()
@@ -364,6 +371,130 @@ class VideoDigestEngineAdapterTest(ClipTest):
             text = digest_of(self.clip)
             self.assertIn("\n- Engine: %s\n" % engine, text)
             self.assertEqual(transcript_lines(text), [("0:00:00", "speaker", said)])
+
+
+class WhisperCliArgsTest(AdapterBase):
+    def argv(self, *extra):
+        env, model, log = self.fake_cli()
+        self.ok(run_tool(self.clip, "--engine", "whisper-cli", "--model", model, "--no-frames",
+                         *extra, env=env))
+        with open(log, encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def test_default_threads_and_no_prompt_or_vad_unless_given(self):
+        tool = load_tool()
+        args = self.argv()
+        self.assertEqual(args[args.index("-t") + 1], str(tool.default_threads()))
+        for flag in ("--prompt", "--vad", "-vm"):
+            self.assertNotIn(flag, args)
+
+    def test_explicit_threads_prompt_and_vad_model(self):
+        vad = os.path.join(self.dir, "ggml-vad.bin")
+        with open(vad, "wb") as handle:
+            handle.write(b"lmgg")
+        prompt = "Hello, this is a meeting. Names: Ana, Bo."
+        args = self.argv("--threads", "16", "--prompt", prompt, "--vad-model", vad)
+        self.assertEqual(args[args.index("-t") + 1], "16")
+        self.assertEqual(args[args.index("--prompt") + 1], prompt)
+        at = args.index("--vad")
+        self.assertEqual(args[at + 1:at + 3], ["-vm", vad])
+
+    def test_default_threads_is_cores_minus_four_and_at_least_four(self):
+        tool = load_tool()
+        self.assertEqual(tool.default_threads(), max(4, (os.cpu_count() or 8) - 4))
+
+    def test_python_engines_get_threads_and_prompt_only_when_given(self):
+        # The fake modules take neither keyword: passing them by default would raise.
+        env = self.python_engines()
+        self.ok(run_tool(self.clip, "--no-frames", "--engine", "faster-whisper", "--model", "tiny",
+                         env=env))
+
+
+class VideoDigestQuietSpeechTest(ClipTest):
+    def test_a_short_quiet_tone_in_long_silence_is_transcribed_and_pure_silence_is_not(self):
+        # 2 s at -28 dB in 65 s: peak about -46 dB, mean about -64 dB (below the old mean floor).
+        quiet = "sine=frequency=440:sample_rate=16000:duration=2,volume=-28dB,apad=whole_dur=65"
+        clip = make_clip(self.dir, "quiet.mkv", "color=c=gray:s=160x90:r=1:d=65",
+                         audio=(quiet, "anullsrc=r=16000:cl=mono"), seconds=65)
+        rows = {"0": [[0.2, 1.8, "a quiet remark"]], "1": [[0.2, 1.8, "ghost"]]}
+        res = run_tool(clip, "--no-frames", env=fake_engine(self.dir, rows))
+        self.ok(res)
+        self.assertNotIn("audio track 0 is silent", res.stderr)
+        self.assertIn("audio track 1 is silent", res.stderr)
+        self.assertEqual(transcript_lines(digest_of(clip)), [("0:00:00", "track1", "a quiet remark")])
+
+
+class VideoDigestNoUpscaleTest(ClipTest):
+    def test_a_640x360_clip_keeps_640x360_frames_and_the_token_note_says_so(self):
+        clip = make_clip(self.dir, "small.mkv", "smptebars=s=640x360:r=1:d=4", seconds=4)
+        self.ok(run_tool(clip, "--no-transcript"))
+        self.assertIn("299 tokens (640x360)", digest_of(clip))
+        for name in os.listdir(os.path.join(self.dir, "small.frames")):
+            size = subprocess.run([FFPROBE, "-v", "error", "-show_entries", "stream=width,height",
+                                   "-of", "csv=p=0", os.path.join(self.dir, "small.frames", name)],
+                                  capture_output=True, text=True, timeout=TIMEOUT).stdout.strip()
+            self.assertEqual(size, "640,360")
+        self.ok(run_tool(clip, "--no-transcript", "--frame-edge", "320"))
+        self.assertIn("(320x180)", digest_of(clip))
+
+
+class VideoDigestModelBasenameTest(ClipTest):
+    def test_the_metadata_shows_the_model_file_name_and_no_folder(self):
+        clip = make_clip(self.dir, "voice.mkv", "color=c=gray:s=160x90:r=1:d=3",
+                         audio=("sine=frequency=440:sample_rate=16000",), seconds=3)
+        folder = os.path.join(self.dir, "privatefolder", "sub")
+        res = run_tool(clip, "--no-frames", "--model", os.path.join(folder, "ggml-x.bin"),
+                       "--vad-model", os.path.join(folder, "ggml-vad.bin"),
+                       env=fake_engine(self.dir, {"0": [[0.0, 1.0, "hi there"]]}))
+        self.ok(res)
+        text = digest_of(clip)
+        self.assertIn("\n- Model: ggml-x.bin\n", text)
+        self.assertIn("\n- VAD model: ggml-vad.bin\n", text)
+        self.assertNotIn("privatefolder", text)
+        self.assertNotIn(self.dir, text)
+
+
+class VideoDigestTimeoutExitTest(ClipTest):
+    def test_a_timed_out_step_exits_4_with_one_line_and_no_traceback(self):
+        clip = make_clip(self.dir, "voice.mkv", "color=c=gray:s=160x90:r=1:d=3",
+                         audio=("sine=frequency=440:sample_rate=16000",), seconds=3)
+        res = run_tool(clip, "--no-frames", env={"VIDEO_DIGEST_STEP_TIMEOUT": "audio=0.01"})
+        self.assertEqual(res.returncode, 4, res.stderr)
+        self.assertNotIn("Traceback", res.stderr)
+        self.assertEqual(res.stderr.strip().splitlines(),
+                         ["video-digest: step audio timed out after 0.01 s"])
+
+    def test_an_engine_python_that_cannot_start_is_exit_3_naming_the_engine(self):
+        tool = load_tool()
+        engine = tool.PythonWhisper("faster-whisper", os.path.join(self.dir, "no-python"), "tiny",
+                                    "auto", FFMPEG, None, None)
+        with self.assertRaises(tool.DigestError) as caught:
+            engine.transcribe(os.path.join(self.dir, "x.wav"), 0, self.dir)
+        self.assertEqual(caught.exception.code, 3)
+        self.assertIn("faster-whisper", str(caught.exception))
+
+
+class VideoDigestTrackChoiceTest(ClipTest):
+    def test_only_the_chosen_streams_are_transcribed_with_the_given_labels(self):
+        clip = make_clip(self.dir, "three.mkv", "color=c=gray:s=160x90:r=1:d=5",
+                         audio=("sine=frequency=330:sample_rate=16000",
+                                "sine=frequency=440:sample_rate=16000",
+                                "sine=frequency=660:sample_rate=16000"), seconds=5)
+        rows = {"0": [[0.5, 1.5, "mixed track words"]], "1": [[0.5, 1.5, "my own words"]],
+                "2": [[2.0, 3.0, "their words"]]}
+        env = fake_engine(self.dir, rows)
+        res = run_tool(clip, "--no-frames", "--tracks", "2,3", "--track-labels", "me,others", env=env)
+        self.ok(res)
+        text = digest_of(clip)
+        self.assertEqual(transcript_lines(text), [("0:00:00", "me", "my own words"),
+                                                  ("0:00:02", "others", "their words")])
+        self.assertNotIn("mixed track", text)
+        self.assertIn("\n- Audio streams: 3 (1: me, 2: others)\n", text)
+        res = run_tool(clip, "--no-frames", "--tracks", "4", env=env)
+        self.assertEqual(res.returncode, 2, res.stderr)
+        self.assertIn("--tracks 4", res.stderr)
+        res = run_tool(clip, "--no-frames", "--tracks", "0,x", env=env)
+        self.assertEqual(res.returncode, 2, res.stderr)
 
 
 FAKE_BROKEN = """class Segment:
