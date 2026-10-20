@@ -138,6 +138,34 @@ if ($isSeat) {
 }
 elseif ($roleGiven -and -not $named) { $Extra = @("--name", $Role) + @($Extra | Where-Object { $_ -ne $null }) }
 
+# A default model per role. /model inside a session also saves the model as the profile's default
+# for new sessions, so every role on one account would share one default; CLAUDE_MODEL_<ROLE>
+# (CLAUDE_MODEL_ORCHESTRATOR, _ANALYST, _LANE, _RESEARCH) gives a role its own. Precedence: a
+# --model on the command line, then the variable, then the profile default. The variable is put at
+# the front of the array on a fresh launch and on a resume alike, after the seat and the name, so
+# the start line stays the last token. Blank or unset adds nothing.
+$modelPlan = "profile default"
+$modelTokens = @($Extra | Where-Object { $_ -ne $null })
+$modelAt = -1
+for ($i = 0; $i -lt $modelTokens.Count; $i++) {
+    if (($modelTokens[$i] -eq "--model") -or ($modelTokens[$i] -like "--model=*")) { $modelAt = $i; break }
+}
+if ($modelAt -ge 0) {
+    $modelGiven = if ($modelTokens[$modelAt] -like "--model=*") { $modelTokens[$modelAt].Substring(8) }
+                  elseif ($modelAt + 1 -lt $modelTokens.Count) { $modelTokens[$modelAt + 1] }
+                  else { "(no value)" }
+    $modelPlan = "$modelGiven (command line)"
+}
+else {
+    $modelVar = "CLAUDE_MODEL_" + $Role.ToUpper()
+    $modelValue = [Environment]::GetEnvironmentVariable($modelVar)
+    if (-not [string]::IsNullOrWhiteSpace($modelValue)) {
+        $modelValue = $modelValue.Trim()
+        $Extra = @("--model", $modelValue) + $modelTokens
+        $modelPlan = "$modelValue ($modelVar)"
+    }
+}
+
 # Extra arguments travel inside a string when launching in a new tab or window, so
 # quote the ones carrying spaces.
 $extraStr = ""
@@ -213,6 +241,8 @@ if ($ShowEnv) {
     # The array above is what the in-window path passes; this is the string the tab and the
     # new-window paths run after the environment part, quoting included.
     Write-Output "COMMAND=claude$extraStr"
+    # The model the launch would carry: the variable of the role, the line's own, or none.
+    Write-Output "MODEL=$modelPlan"
     # The seat, whether this launch is fresh, the start line it would carry, and the two
     # variables a seated session reads. A role with no chair prints none and (unset).
     Write-Output "SEAT=$seatPlan"
@@ -395,6 +425,8 @@ function Show-Help {
     Write-Host "                           default (CLAUDE_CODE_AUTO_COMPACT_WINDOW=<n>). Larger means fewer"
     Write-Host "                           compactions and a larger floor on every turn; 0 keeps the default"
     Write-Host "  -ShowEnv                 print the variables the session would get, then exit"
+    Write-Host "  CLAUDE_MODEL_<ROLE>      environment variable: default model of a role (CLAUDE_MODEL_ORCHESTRATOR,"
+    Write-Host "                           _ANALYST, _LANE, _RESEARCH), used when the line has no --model"
     Write-Host "  -Workspace <n>   -x      with -Tab: Herdr workspace (number or id) for the new tab"
     Write-Host "  -Help            -h      this help"
     Write-Host ""
