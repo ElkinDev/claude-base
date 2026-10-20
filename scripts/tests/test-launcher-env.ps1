@@ -29,6 +29,8 @@ $launcher = Join-Path $script:RepoRoot 'claude\claude-account.ps1'
 # removes one it inherits, and a cap left over from the shell would prove nothing.
 Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
 Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT -ErrorAction SilentlyContinue
+# A model variable already in the shell would put a --model into every COMMAND asserted below.
+foreach ($roleName in @('ORCHESTRATOR', 'ANALYST', 'LANE', 'RESEARCH')) { Remove-Item ("Env:\CLAUDE_MODEL_" + $roleName) -ErrorAction SilentlyContinue }
 
 # The launcher reads its seats from CLAUDE_SEATS_DIR, so every phase runs against a temporary
 # directory and no assertion depends on the seats this machine happens to have installed. It
@@ -465,6 +467,68 @@ Assert-Regex $out '(?m)^START=none\r?$' 'so it carries no start line'
 Assert-True (-not ($out -match '--name')) 'and no second name'
 Assert-True (-not ($out -match 'Start line not added')) 'and nothing stands aside, since it is not a fresh launch'
 
+# /model saves the model as the profile default for every role on the account, so a role keeps
+# its own through CLAUDE_MODEL_<ROLE>. Precedence: --model on the line, the variable, the default.
+# The value has brackets, as a real one does (claude-fable-5-1[1m]), to prove it travels whole.
+Write-Host "`r`nphase 19, a role takes its own default model from CLAUDE_MODEL_<ROLE>"
+$testModel = 'test-model-5[1m]'
+$env:CLAUDE_MODEL_ORCHESTRATOR = $testModel
+function Test-RoleModel {
+    $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator
+    Assert-Exit 0 'RoleModelTest: the dry run exits clean'
+    Assert-Regex $out ('(?m)^MODEL=' + [regex]::Escape($testModel) + ' \(CLAUDE_MODEL_ORCHESTRATOR\)\r?$') 'RoleModelTest: the plan names the model and the variable it came from'
+    Assert-Regex $out ('(?m)^COMMAND=claude --model ' + [regex]::Escape($testModel) + ' ') 'RoleModelTest: the command begins with the model'
+    Assert-Regex $out ('(?m)^COMMAND=.* ' + [regex]::Escape("'" + $startLine + "'") + '\r?$') 'RoleModelTest: the start line is still the last token'
+    Assert-Regex $out ('(?m)^EXTRA=--model ' + [regex]::Escape($testModel) + ' ') 'RoleModelTest: the in-window array carries it first too'
+}
+function Test-RoleModelOtherRole {
+    $out = Get-LauncherLiteral demo -ShowEnv -Role lane
+    Assert-Exit 0 'RoleModelOtherRoleTest: the dry run exits clean'
+    Assert-True (-not ($out -match '--model')) 'RoleModelOtherRoleTest: a lane gets no --model from the orchestrator variable'
+    Assert-Regex $out '(?m)^MODEL=profile default\r?$' 'RoleModelOtherRoleTest: and keeps the profile default'
+}
+function Test-RoleModelExplicitWins {
+    $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator --model x
+    Assert-Exit 0 'RoleModelExplicitWinsTest: the dry run exits clean'
+    $commandLine = ([regex]::Match($out, '(?m)^COMMAND=.*$')).Value
+    Assert-True (([regex]::Matches($commandLine, '--model')).Count -eq 1) 'RoleModelExplicitWinsTest: --model appears once'
+    Assert-Match $commandLine '--model x' 'RoleModelExplicitWinsTest: and it is the one on the line'
+    Assert-True (-not ($out -match [regex]::Escape($testModel))) 'RoleModelExplicitWinsTest: the variable value goes nowhere'
+    Assert-Regex $out '(?m)^MODEL=x \(command line\)\r?$' 'RoleModelExplicitWinsTest: the plan says the line won'
+    $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator --model=y
+    Assert-Regex $out '(?m)^MODEL=y \(command line\)\r?$' 'RoleModelExplicitWinsTest: the equals spelling wins as well'
+    Assert-True (-not ($out -match [regex]::Escape($testModel))) 'RoleModelExplicitWinsTest: and the variable is not added beside it'
+}
+function Test-RoleModelResume {
+    $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator --resume abc
+    Assert-Exit 0 'RoleModelResumeTest: the dry run exits clean'
+    Assert-Regex $out '(?m)^FRESH=false\r?$' 'RoleModelResumeTest: it is a resume'
+    Assert-Regex $out ('(?m)^COMMAND=claude --model ' + [regex]::Escape($testModel) + ' .*--resume abc') 'RoleModelResumeTest: the model rides a resume'
+    Assert-Regex $out ('(?m)^MODEL=' + [regex]::Escape($testModel) + ' ') 'RoleModelResumeTest: and the plan says so'
+}
+function Test-RoleModelBlank {
+    $env:CLAUDE_MODEL_ORCHESTRATOR = '   '
+    $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator
+    Assert-True (-not ($out -match '--model')) 'RoleModelUnsetTest: a blank variable adds nothing'
+    Assert-Regex $out '(?m)^MODEL=profile default\r?$' 'RoleModelUnsetTest: and the plan says the profile default'
+    $env:CLAUDE_MODEL_ORCHESTRATOR = $testModel
+}
+function Test-RoleModelUnset {
+    Remove-Item Env:\CLAUDE_MODEL_ORCHESTRATOR -ErrorAction SilentlyContinue
+    $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator
+    Assert-Exit 0 'RoleModelUnsetTest: the dry run exits clean'
+    Assert-True (-not ($out -match '--model')) 'RoleModelUnsetTest: with no variable nothing is added'
+    Assert-Regex $out '(?m)^MODEL=profile default\r?$' 'RoleModelUnsetTest: the profile default applies'
+    Assert-Regex $out ('(?m)^COMMAND=claude --name orchestrator-\d{4}-\d{4} ') 'RoleModelUnsetTest: the command is what it was before'
+}
+Test-RoleModel
+Test-RoleModelOtherRole
+Test-RoleModelExplicitWins
+Test-RoleModelResume
+Test-RoleModelBlank
+Test-RoleModelUnset
+
+Remove-Item Env:\CLAUDE_MODEL_ORCHESTRATOR -ErrorAction SilentlyContinue
 Remove-Item Env:\CLAUDE_BRIEFS_DIR -ErrorAction SilentlyContinue
 Remove-Item Env:\CLAUDE_CLOSING_HOUR -ErrorAction SilentlyContinue
 Remove-Item Env:\CLAUDE_SEATS_DIR -ErrorAction SilentlyContinue
