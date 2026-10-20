@@ -366,6 +366,83 @@ class VideoDigestEngineAdapterTest(ClipTest):
             self.assertEqual(transcript_lines(text), [("0:00:00", "speaker", said)])
 
 
+FAKE_BROKEN = """class Segment:
+    def __init__(self):
+        self.start, self.end, self.text = "soon", 1.0, "unparsable start"
+class WhisperModel:
+    def __init__(self, name):
+        pass
+    def transcribe(self, wav, language=None):
+        return iter([Segment()]), None
+"""
+
+
+class VideoDigestEngineFailureTest(ClipTest):
+    def test_output_an_engine_wrote_that_cannot_be_parsed_exits_3(self):
+        clip = make_clip(self.dir, "voice.mkv", "color=c=gray:s=160x90:r=1:d=3",
+                         audio=("sine=frequency=440:sample_rate=16000",), seconds=3)
+        fakes = os.path.join(self.dir, "fakes", "faster_whisper")
+        os.makedirs(fakes)
+        with open(os.path.join(fakes, "__init__.py"), "w", encoding="utf-8") as handle:
+            handle.write(FAKE_BROKEN)
+        res = run_tool(clip, "--engine", "faster-whisper", "--model", "tiny", "--no-frames",
+                       env={"PYTHONPATH": os.path.dirname(fakes)})
+        self.assertEqual(res.returncode, 3, res.stderr)
+        self.assertIn("faster-whisper wrote output that cannot be parsed", res.stderr)
+
+
+class VideoDigestStreamsAndExitCodesTest(ClipTest):
+    def no_engine(self):
+        empty = os.path.join(self.dir, "empty-path")
+        os.makedirs(empty, exist_ok=True)
+        return (["--ffmpeg", os.path.dirname(FFMPEG), "--engine-python",
+                 os.path.join(self.dir, "no-python")], {"PATH": empty})
+
+    def test_audio_only_has_no_frames_and_a_transcript(self):
+        clip = os.path.join(self.dir, "voice.mka")
+        ffmpeg("-f", "lavfi", "-i", "sine=frequency=440:sample_rate=16000", "-t", "4",
+               "-c:a", "pcm_s16le", clip)
+        self.ok(run_tool(clip, env=fake_engine(self.dir, {"0": [[1.0, 2.0, "only a voice"]]})))
+        text = digest_of(clip)
+        self.assertIn("\n- Resolution: no video stream\n", text)
+        self.assertIn("\n- Frames: no video stream\n", text)
+        self.assertEqual(text.split("## Keyframes", 1)[1].strip(), "no video stream")
+        self.assertEqual(transcript_lines(text), [("0:00:01", "speaker", "only a voice")])
+
+    def test_no_engine_is_needed_when_nothing_is_to_be_transcribed(self):
+        extra, env = self.no_engine()
+        mute = make_clip(self.dir, "mute.mkv", "color=c=gray:s=160x90:r=1:d=3", seconds=3)
+        self.ok(run_tool(mute, *extra, env=env))
+        self.assertIn("## Transcript\n\nno audio stream\n", digest_of(mute))
+        silent = make_clip(self.dir, "silent.mkv", "color=c=gray:s=160x90:r=1:d=3",
+                           audio=("anullsrc=r=16000:cl=mono",), seconds=3)
+        res = run_tool(silent, *extra, env=env)
+        self.ok(res)
+        self.assertIn("audio track 0 is silent: check the recorder's track settings", res.stderr)
+        self.assertIn("## Transcript\n\nevery audio track is silent\n", digest_of(silent))
+
+    def test_exit_4_for_a_file_that_is_not_a_recording(self):
+        clip = os.path.join(self.dir, "notes.mp4")
+        with open(clip, "w", encoding="utf-8") as handle:
+            handle.write("not a video\n")
+        res = run_tool(clip, "--no-transcript")
+        self.assertEqual(res.returncode, 4, res.stderr)
+        self.assertIn("cannot read the recording", res.stderr)
+        res = run_tool(os.path.join(self.dir, "missing.mp4"), "--no-transcript")
+        self.assertEqual(res.returncode, 4, res.stderr)
+
+    def test_exit_2_for_missing_ffmpeg_or_a_bad_argument(self):
+        clip = make_clip(self.dir, "short.mkv", "color=c=gray:s=160x90:r=1:d=2", seconds=2)
+        empty = os.path.join(self.dir, "no-ffmpeg")
+        os.makedirs(empty)
+        res = run_tool(clip, "--ffmpeg", empty, "--no-transcript")
+        self.assertEqual(res.returncode, 2, res.stderr)
+        self.assertIn("ffmpeg and ffprobe are needed", res.stderr)
+        res = run_tool(clip, "--threshold", "1.5", "--no-transcript")
+        self.assertEqual(res.returncode, 2, res.stderr)
+        self.assertIn("--threshold must be above 0 and at most 1", res.stderr)
+
+
 class VideoDigestFilterEscapeTest(ClipTest):
     def test_a_path_with_a_drive_colon_and_graph_characters_survives_both_levels(self):
         folder = os.path.join(self.dir, "a'b,c [d];e")

@@ -28,10 +28,12 @@ a textured one is a change. Each kept second is then written once as a JPEG whos
 
 Audio. Each audio stream (-map 0:a:<n>, n from 0) is measured with volumedetect and extracted at
 16 kHz mono in the same ffmpeg pass. A stream whose mean volume is below SILENCE_FLOOR_DB is
-reported silent, in the Markdown and on stderr, and not transcribed. Digital silence reads -91 dB
-and speech usually -20 to -35 dB, so -60 dB leaves a quiet microphone transcribed and an empty
-track flagged. The label is `speaker` for a single stream; with two or more, the --track-labels
-values in stream order, then track<n+1> for any stream past the list.
+reported silent, in the Markdown and on stderr, and not transcribed. Digital silence (lavfi
+anullsrc) measures -91.0 dB and the default lavfi sine tone -21.1 dB (ffmpeg 8.1.1), so -60 dB
+sits well between them; where a quiet real microphone falls was not measured, and a track with
+speech flagged silent means the floor is too high. The label is `speaker` for a single stream;
+with two or more, the --track-labels values in stream order, then track<n+1> for any stream past
+the list.
 
 Engines, tried in this order by --engine auto, each a subprocess:
   ffmpeg-whisper  FFmpeg's whisper filter, when `ffmpeg -filters` lists it and --model is a file
@@ -336,7 +338,12 @@ def read_output(engine, path, res, parse):
     if res.returncode != 0 or not os.path.isfile(path):
         raise DigestError(3, "transcription engine %s failed: %s" % (engine, tail(res.stderr)))
     with open(path, encoding="utf-8", errors="replace") as handle:
-        return parse(handle.read())
+        text = handle.read()
+    try:
+        return parse(text)
+    except (ValueError, IndexError, TypeError) as error:
+        raise DigestError(3, "transcription engine %s wrote output that cannot be parsed: %s"
+                             % (engine, error))
 
 
 def parse_rows(text):
