@@ -25,12 +25,23 @@ reproduction, a walkthrough. Not for a still image or a GIF, which you can open 
    `--track-labels me,others` in stream order. `--no-transcript` gives the frames alone and needs no
    engine; `--no-frames` gives the transcript alone.
 
-   A recorder that keeps a mixed track beside the split ones (OBS with three audio tracks, say)
-   is run as `--tracks 2,3 --track-labels me,others`: stream numbers from 1, in file order, labels
-   in the order given. Headphones avoid the echo of the remote side in the microphone track. For
-   whisper-cli, `--threads N` (default: logical cores minus 4, at least 4) sets the CPU threads,
-   `--prompt "<text>"` primes punctuation and casing, and `--vad-model <ggml file>` turns on its
-   voice activity detection.
+   OBS with three audio tracks (1 the mix you heard, 2 your microphone, 3 the call) is run as
+   `--tracks 2,3 --track-labels me,others`: stream numbers from 1, in file order, labels in order.
+
+   With two or more streams the tool runs in region mode: it cuts each stream to its speech, joins
+   the pieces with short gaps of silence, runs the engine on that without VAD and maps every word
+   back by its start, so the turns of a stream that is silent half the time keep their order and
+   their times. The Metadata lists each stream's regions and the text dropped because it fell only
+   in a gap. One stream takes the plain path. Headphones avoid the echo of the remote side in the
+   microphone track.
+
+   `--threads N` (default: logical cores minus 4, at least 4) sets whisper-cli's CPU threads.
+   `--prompt "<text>"` primes punctuation and casing; with `--language en` and no `--prompt` a
+   short meeting greeting is sent, and `--prompt ""` sends none (the Metadata names the prompt). A transcript made before this
+   default with no `--prompt` can differ from a new one: compare runs with the same explicit `--prompt`.
+   `--vad-model <ggml file>` turns on voice activity detection for a single stream.
+   `--whisper-cli <path>` names the binary when it is not on PATH, and `--gpu-device N` picks the
+   GPU of FFmpeg's whisper filter and of whisper-cli (`-dev`).
 2. Read `<stem>.digest.md` beside the recording (or in `--out <dir>`): the Metadata block, then
    the whole Transcript.
 3. Open a frame only for a moment the screen matters: what was shown, a number on a slide, an
@@ -53,11 +64,12 @@ go to the model provider, so a recording that must not leave the machine is not 
 
 ## Engines and exit codes
 
-`--engine auto` tries, in order: FFmpeg's whisper filter and whisper.cpp's `whisper-cli` (both
-take `--model` as a ggml model file), then faster-whisper and openai-whisper in `--engine-python`
-(`--model` as a model name such as `large-v3`). The model is always the user's choice; a small
-model costs accuracy (Whisper tiny differed from large-v3 on about 15 percent of the words of one
-meeting).
+`--engine auto` tries, in order: whisper.cpp's `whisper-cli` (`--model` as a ggml model file),
+faster-whisper and openai-whisper in `--engine-python` (`--model` as a model name such as
+`large-v3`), then FFmpeg's whisper filter (a ggml model file; it ran at 0.3 to 0.5x real time per
+stream, its cues can start up to 20 s early, and it takes no prompt). The model is always the
+user's choice; a small model costs accuracy (Whisper tiny differed from large-v3 on about 15
+percent of the words of one meeting).
 
 - 0: done; the digest path is printed.
 - 2: bad arguments (a `--tracks` number past the last audio stream), or ffmpeg and ffprobe not
