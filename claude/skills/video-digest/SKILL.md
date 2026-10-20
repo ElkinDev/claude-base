@@ -68,4 +68,7 @@ meeting).
 
 Frames are kept when the picture differs from the last kept frame (`--threshold`, default 0.90),
 and at least every `--floor` seconds (default 60), so a document scrolled slowly for half an hour
-still yields a frame a minute.
+still yields a frame a minute. A change inside `--min-gap` seconds (default 5) of the last kept
+frame waits for the first frame after the gap that still differs, so a moving camera tile does not
+fill the folder; `--min-gap 0` keeps every change. Track numbers in the digest, on stderr and in
+`--tracks` all count from 1.

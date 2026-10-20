@@ -5,7 +5,7 @@
         [--engine auto|ffmpeg-whisper|whisper-cli|faster-whisper|openai-whisper]
         [--model <name or path>] [--vad-model <ggml vad file>] [--language <code or auto>]
         [--engine-python <python>] [--threshold 0.90] [--floor 60] [--frame-edge 1280]
-        [--tracks 1,2] [--track-labels me,others] [--threads N] [--prompt TEXT]
+        [--tracks 1,2] [--track-labels me,others] [--min-gap 5] [--threads N] [--prompt TEXT]
         [--ffmpeg <dir>] [--no-frames] [--no-transcript]
 
 It writes <out>/<stem>.digest.md and <out>/<stem>.frames/ (default <out>: the recording's
@@ -21,7 +21,11 @@ be read, or a step timed out (the message names the step).
 Frames. ffmpeg decodes one frame a second, scaled to GRAY_SIZE in grayscale, as raw bytes through
 a pipe, so no image per second is ever written. A frame is kept when its normalized
 cross-correlation with the LAST KEPT frame falls below --threshold, or when --floor seconds passed
-since the last kept frame; the first and the last are always kept. Comparing with the previous
+since the last kept frame; the first and the last are always kept. A change inside --min-gap
+seconds (default 5) of the last kept frame waits: the first frame after the gap that still differs
+from the last kept one is kept, so a moving camera tile does not fill the folder with a frame a
+second (the floor frame and the last frame may fall inside the gap; --min-gap 0 keeps every
+change). Comparing with the previous
 second instead misses slow change: a document scrolled a line at a time never differs much from
 the second before, but it drifts away from the frame last kept. Two flat frames (no variance) are
 the same when their means differ by at most FLAT_MEAN_TOLERANCE grey levels; a flat frame against
@@ -29,7 +33,7 @@ a textured one is a change. Each kept second is then written once as a JPEG whos
 the smaller of --frame-edge and the source's long edge, so a frame is never upscaled (fast seek,
 -q:v JPEG_QSCALE, legible for shared-document text).
 
-Audio. Each audio stream (-map 0:a:<n>, n from 0) is measured with volumedetect and extracted at
+Audio. Each audio stream (-map 0:a:<n-1>; every track number the tool prints or accepts counts from 1) is measured with volumedetect and extracted at
 16 kHz mono in the same ffmpeg pass. A stream whose max_volume is below SILENCE_FLOOR_DB is
 reported silent, in the Markdown and on stderr, and not transcribed. The peak decides, not the
 mean: a mean averages speech over the silence around it (2 s of tone in 65 s of silence read mean
@@ -37,7 +41,7 @@ mean: a mean averages speech over the silence around it (2 s of tone in 65 s of 
 above it and below any speech; a track with speech flagged silent means the floor is too high.
 --tracks 1,2 (1-based, file order) picks the streams to measure and transcribe, default all.
 The label is `speaker` for a single chosen stream; with two or more, the --track-labels values in
-the order given, then track<n+1> (the stream's own number) for any stream past the list.
+the order given, then track<n> (the stream's own number) for any stream past the list.
 
 Engines, tried in this order by --engine auto, each a subprocess:
   ffmpeg-whisper  FFmpeg's whisper filter, when `ffmpeg -filters` lists it and --model is a file
@@ -66,8 +70,16 @@ Test seams, read only from the environment: VIDEO_DIGEST_FAKE_ENGINE names a JSO
 model is loaded); VIDEO_DIGEST_COMPARE=previous compares each frame with the previous second
 instead of the last kept frame, for the test that shows why the tool does not;
 VIDEO_DIGEST_STEP_TIMEOUT=<step>=<seconds> replaces that step's timeout (steps: probe, filters,
-frame, image-size, audio, engine, engine-probe), so a test can make one step time out. Inert
-unless set.
+decode, frame, image-size, audio, engine, engine-probe), so a test can make one step time out.
+Inert unless set.
+
+Timeouts, from the recording's duration D in seconds (default_timeout): probes 60 s; audio 60 +
+D/2; decode (the gray-frame pass) 120 + 2D; one JPEG write 60 s; a transcription engine 600 + 6D.
+A step past its timeout is exit 4 naming the step.
+
+Decoding. The openai-whisper call passes beam_size=5 and best_of=5, the defaults of whisper's
+own command line (the library leaves both unset, which decodes greedy); faster-whisper gets
+beam_size=5 explicitly.
 """
 import argparse
 import difflib
@@ -79,6 +91,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from operator import mul
 
 GRAY_SIZE = (256, 144)
@@ -89,7 +102,8 @@ ECHO_MIN_WORDS = 4
 ECHO_MIN_RATIO = 0.8
 TURN_SPLIT_SECONDS = 60.0
 EXCERPT_WORDS = 12
-PROBE_TIMEOUT = 300
+PROBE_TIMEOUT = 60
+DEFAULT_MIN_GAP = 5.0
 FAKE_ENV = "VIDEO_DIGEST_FAKE_ENGINE"
 COMPARE_ENV = "VIDEO_DIGEST_COMPARE"
 STEP_TIMEOUT_ENV = "VIDEO_DIGEST_STEP_TIMEOUT"
@@ -114,7 +128,7 @@ PYTHON_SNIPPET = {
         "wav, model, language, out, threads, prompt = sys.argv[1:7]\n"
         "load = {'cpu_threads': int(threads)} if int(threads) > 0 else {}\n"
         "ask = {'initial_prompt': prompt} if prompt else {}\n"
-        "segments, _ = WhisperModel(model, **load).transcribe(wav, language=None if language == 'auto' else language, **ask)\n"
+        "segments, _ = WhisperModel(model, **load).transcribe(wav, language=None if language == 'auto' else language, beam_size=5, **ask)\n"
         "rows = [[s.start, s.end, s.text] for s in segments]\n"
         "with open(out, 'w', encoding='utf-8') as handle:\n"
         "    json.dump(rows, handle)\n"),
@@ -123,7 +137,7 @@ PYTHON_SNIPPET = {
         "import whisper\n"
         "wav, model, language, out, threads, prompt = sys.argv[1:7]\n"
         "ask = {'initial_prompt': prompt} if prompt else {}\n"
-        "result = whisper.load_model(model).transcribe(wav, language=None if language == 'auto' else language, **ask)\n"
+        "result = whisper.load_model(model).transcribe(wav, language=None if language == 'auto' else language, beam_size=5, best_of=5, **ask)\n"
         "rows = [[s['start'], s['end'], s['text']] for s in result['segments']]\n"
         "with open(out, 'w', encoding='utf-8') as handle:\n"
         "    json.dump(rows, handle)\n"),
@@ -153,6 +167,12 @@ def step_timeout(step, default):
     if name == step and number(seconds) is not None:
         return number(seconds)
     return default
+
+
+def default_timeout(step, duration):
+    """The default timeout in seconds of a step for a recording of `duration` seconds."""
+    return {"audio": 60 + duration / 2, "decode": 120 + 2 * duration,
+            "engine": 600 + 6 * duration}.get(step, PROBE_TIMEOUT)
 
 
 def run(cmd, step, timeout=None, env=None, engine=None):
@@ -243,7 +263,7 @@ def similarity(a, b):
     return cross / math.sqrt(var_a * var_b)
 
 
-def select_keyframes(frames, threshold, floor, compare="last"):
+def select_keyframes(frames, threshold, floor, compare="last", min_gap=0.0):
     """The seconds to keep from (second, pixels) pairs in time order."""
     kept = []
     reference = previous = None
@@ -255,7 +275,8 @@ def select_keyframes(frames, threshold, floor, compare="last"):
             reference = frame
         else:
             base = previous if compare == "previous" else reference
-            if when - kept[-1] >= floor or similarity(base, frame) < threshold:
+            since = when - kept[-1]
+            if since >= floor or (since >= min_gap and similarity(base, frame) < threshold):
                 kept.append(when)
                 reference = frame
         previous = frame
@@ -265,7 +286,7 @@ def select_keyframes(frames, threshold, floor, compare="last"):
     return kept
 
 
-def gray_frames(ffmpeg, path, video_index):
+def gray_frames(ffmpeg, path, video_index, timeout=None):
     """One raw grayscale frame a second, read from ffmpeg's stdout; nothing touches the disk."""
     width, height = GRAY_SIZE
     size = width * height
@@ -277,6 +298,16 @@ def gray_frames(ffmpeg, path, video_index):
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errors)
         except OSError as error:
             raise DigestError(2, "cannot start ffmpeg: %s" % error)
+        limit = step_timeout("decode", timeout)
+        expired = []
+
+        def expire():
+            expired.append(True)
+            proc.kill()
+
+        timer = threading.Timer(limit, expire) if limit else None
+        if timer:
+            timer.start()
         second = 0
         try:
             while True:
@@ -286,8 +317,12 @@ def gray_frames(ffmpeg, path, video_index):
                 yield second, chunk
                 second += 1
         finally:
+            if timer:
+                timer.cancel()
             proc.stdout.close()
             proc.wait()
+        if expired:
+            raise DigestError(4, "step decode timed out after %g s" % limit)
         if proc.returncode != 0:
             errors.seek(0)
             raise DigestError(4, "cannot decode the video: " + tail(errors.read()))
@@ -336,15 +371,15 @@ def image_size(ffprobe, image):
 MAX_VOLUME = re.compile(rb"max_volume:\s*(-?inf|-?[0-9.]+) dB")
 
 
-def audio_pass(ffmpeg, path, n, wav):
+def audio_pass(ffmpeg, path, n, wav, timeout=None):
     """The peak volume of audio stream n in dB; writes it as 16 kHz mono to wav when one is named."""
     cmd = [ffmpeg, "-nostdin", "-hide_banner", "-nostats", "-i", path, "-map", "0:a:%d" % n,
            "-vn", "-sn", "-af", "volumedetect"]
     cmd += ["-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", "-y", wav] if wav else ["-f", "null", "-"]
-    res = run(cmd, "audio")
+    res = run(cmd, "audio", timeout=timeout)
     found = MAX_VOLUME.search(res.stderr)
     if res.returncode != 0 or not found:
-        raise DigestError(4, "cannot read audio track %d: %s" % (n, tail(res.stderr)))
+        raise DigestError(4, "cannot read audio track %d: %s" % (n + 1, tail(res.stderr)))
     value = found.group(1)
     return float("-inf") if value.endswith(b"inf") else float(value)
 
@@ -397,6 +432,7 @@ def parse_rows(text):
 
 class FfmpegWhisper:
     name = "ffmpeg-whisper"
+    timeout = None
 
     def __init__(self, ffmpeg, model, language, vad_model):
         self.ffmpeg, self.model, self.language, self.vad_model = ffmpeg, model, language, vad_model
@@ -409,12 +445,13 @@ class FfmpegWhisper:
             options.append("vad_model=" + filter_escape(self.vad_model))
         res = run([self.ffmpeg, "-v", "error", "-nostdin", "-i", wav,
                    "-af", "whisper=" + ":".join(options), "-f", "null", "-"], "engine",
-                  engine=self.name)
+                  timeout=self.timeout, engine=self.name)
         return read_output(self.name, out, res, parse_srt)
 
 
 class WhisperCli:
     name = "whisper-cli"
+    timeout = None
 
     def __init__(self, binary, model, language, threads, prompt, vad_model):
         self.binary, self.model, self.language = binary, model, language
@@ -428,11 +465,13 @@ class WhisperCli:
             cmd += ["--prompt", self.prompt]
         if self.vad_model:
             cmd += ["--vad", "-vm", self.vad_model]
-        res = run(cmd, "engine", engine=self.name)
+        res = run(cmd, "engine", timeout=self.timeout, engine=self.name)
         return read_output(self.name, base + ".srt", res, parse_srt)
 
 
 class PythonWhisper:
+    timeout = None
+
     def __init__(self, name, python, model, language, ffmpeg, threads, prompt):
         self.name, self.python, self.model, self.language = name, python, model, language
         self.threads, self.prompt = threads or 0, prompt or ""
@@ -442,7 +481,8 @@ class PythonWhisper:
     def transcribe(self, wav, n, work):
         out = os.path.join(work, "segments-%d.json" % n)
         res = run([self.python, "-c", PYTHON_SNIPPET[self.name], wav, self.model, self.language, out,
-                   str(self.threads), self.prompt], "engine", env=self.env, engine=self.name)
+                   str(self.threads), self.prompt], "engine", timeout=self.timeout, env=self.env,
+                  engine=self.name)
         return read_output(self.name, out, res, parse_rows)
 
 
@@ -582,7 +622,7 @@ def turns(segments, labels):
 
 
 def track_labels(given, chosen):
-    """{stream n (from 0): label} for the chosen streams, the names in the order given."""
+    """{stream index (from 0): label} for the chosen streams, the names in the order given."""
     if len(chosen) == 1:
         return {chosen[0]: "speaker"}
     names = [part.strip() for part in (given or "").split(",") if part.strip()]
@@ -647,13 +687,13 @@ def markdown(recording, info, args, state):
         ("Duration", "%s (%.1f s)" % (clock(info["duration"]), info["duration"])),
         ("Resolution", "%sx%s" % size if size else "no video stream"),
         ("Audio streams", "%d (%s)" % (info["audio"], ", ".join(
-            "%d: %s" % (n, label) for n, label in labels.items())) if info["audio"] else "none"),
+            "%d: %s" % (n + 1, label) for n, label in labels.items())) if info["audio"] else "none"),
         ("Engine", state["engine"]),
         ("Model", state["model"]),
         ("VAD model", shown_model(args.vad_model)),
         ("Language", args.language),
         ("Frames", state["frames_note"]),
-        ("Silent tracks", ", ".join("audio track %d (%s)" % (n, labels[n]) for n in silent)
+        ("Silent tracks", ", ".join("audio track %d (%s)" % (n + 1, labels[n]) for n in silent)
          if silent else "none"),
         ("Echo segments dropped", str(state["dropped"])),
         ("Clamped segments", str(state["clamped"])),
@@ -692,6 +732,9 @@ def parse_args(argv):
                         help="the Python that runs faster-whisper or openai-whisper")
     parser.add_argument("--threshold", type=float, default=0.90)
     parser.add_argument("--floor", type=float, default=60.0, help="seconds between kept frames, at most")
+    parser.add_argument("--min-gap", type=float, default=DEFAULT_MIN_GAP,
+                        help="seconds between kept frames, at least, except the floor frame and the"
+                        " last (default 5; 0 keeps every change)")
     parser.add_argument("--frame-edge", type=int, default=1280, help="long edge of a kept frame in px")
     parser.add_argument("--tracks", help="1-based audio stream numbers to transcribe, comma"
                                          " separated (default: all)")
@@ -708,6 +751,8 @@ def parse_args(argv):
         parser.error("--threshold must be above 0 and at most 1")
     if args.floor <= 0:
         parser.error("--floor must be above 0")
+    if args.min_gap < 0:
+        parser.error("--min-gap must be 0 or more")
     if args.frame_edge < 16:
         parser.error("--frame-edge must be at least 16")
     if args.threads is not None and args.threads < 1:
@@ -740,15 +785,16 @@ def digest(args):
         wavs = {}
         for n in chosen:
             wav = os.path.join(work, "track-%d.wav" % n) if want_text else None
-            level = audio_pass(ffmpeg, recording, n, wav)
+            level = audio_pass(ffmpeg, recording, n, wav, default_timeout("audio", info["duration"]))
             if level < SILENCE_FLOOR_DB:
                 state["silent"].append(n)
-                print("audio track %d is silent: check the recorder's track settings" % n,
+                print("audio track %d is silent: check the recorder's track settings" % (n + 1),
                       file=sys.stderr)
             elif wav:
                 wavs[n] = wav
         if wavs:
             engine = resolve_engine(args, ffmpeg)
+            engine.timeout = default_timeout("engine", info["duration"])
             state["engine"] = engine.name
             state["model"] = shown_model(args.model)
             for n, wav in wavs.items():
@@ -764,8 +810,8 @@ def digest(args):
         segments, state["dropped"] = echo_rule(
             segments, [n for n in chosen if n in segments], chosen[0])
         state["lines"] = turns(segments, labels)
-    settings = "threshold %.2f, floor %g s, long edge %d px" % (args.threshold, args.floor,
-                                                               args.frame_edge)
+    settings = "threshold %.2f, floor %g s, min gap %g s, long edge %d px" % (
+        args.threshold, args.floor, args.min_gap, args.frame_edge)
     if args.no_frames:
         state["frames_note"] = "skipped (--no-frames)"
     elif info["video"] is None:
@@ -773,8 +819,9 @@ def digest(args):
     else:
         compare = "previous" if os.environ.get(COMPARE_ENV) == "previous" else "last"
         edge = frame_edge(args.frame_edge, info["size"])
-        kept = select_keyframes(gray_frames(ffmpeg, recording, info["video"]), args.threshold,
-                                args.floor, compare)
+        frames = gray_frames(ffmpeg, recording, info["video"],
+                             default_timeout("decode", info["duration"]))
+        kept = select_keyframes(frames, args.threshold, args.floor, compare, args.min_gap)
         if not kept:
             raise DigestError(4, "cannot read the recording: the video stream decoded no frame")
         names = write_frames(ffmpeg, recording, info["video"], kept, edge, state["folder"])

@@ -172,10 +172,10 @@ class VideoDigestSilentTrackTest(ClipTest):
                                      "1": [[0.5, 2.0, "ghost words from the silent side"]]})
         res = run_tool(clip, env=env)
         self.ok(res)
-        self.assertIn("audio track 1 is silent: check the recorder's track settings", res.stderr)
-        self.assertNotIn("audio track 0 is silent", res.stderr)
+        self.assertIn("audio track 2 is silent: check the recorder's track settings", res.stderr)
+        self.assertNotIn("audio track 1 is silent", res.stderr)
         text = digest_of(clip)
-        self.assertIn("- Silent tracks: audio track 1 (track2)\n", text)
+        self.assertIn("- Silent tracks: audio track 2 (track2)\n", text)
         self.assertEqual(transcript_lines(text), [("0:00:00", "track1", "words from the tone side")])
 
 
@@ -229,9 +229,9 @@ class VideoDigestMarkdownTest(ClipTest):
         self.assertIn("24 tokens (160x90)", top)
         self.assertLess(text.index("## Metadata"), text.index("## Transcript"))
         self.assertLess(text.index("## Transcript"), text.index("## Keyframes"))
-        for line in ("- Duration: 0:01:10", "- Resolution: 160x90", "- Audio streams: 1 (0: speaker)",
+        for line in ("- Duration: 0:01:10", "- Resolution: 160x90", "- Audio streams: 1 (1: speaker)",
                      "- Engine: fake", "- Model: none", "- Language: auto",
-                     "- Frames: 3 (threshold 0.90, floor 60 s, long edge 1280 px)",
+                     "- Frames: 3 (threshold 0.90, floor 60 s, min gap 5 s, long edge 1280 px)",
                      "- Silent tracks: none", "- Echo segments dropped: 0", "- Clamped segments: 1"):
             self.assertIn("\n" + line, text)
         lines = transcript_lines(text)
@@ -285,24 +285,35 @@ with open(os.environ["FAKE_CLI_LOG"], "w") as handle:
     json.dump(args, handle)
 """
 
-FAKE_FASTER = """import os
+FAKE_RECORD = """import json, os, time
+def record(kw):
+    if os.environ.get("FAKE_SLEEP"):
+        time.sleep(float(os.environ["FAKE_SLEEP"]))
+    if os.environ.get("FAKE_KW_LOG"):
+        with open(os.environ["FAKE_KW_LOG"], "w") as handle:
+            json.dump(kw, handle)
+"""
+
+FAKE_FASTER = FAKE_RECORD + """import os
 class Segment:
     def __init__(self, start, end, text):
         self.start, self.end, self.text = start, end, text
 class WhisperModel:
     def __init__(self, name):
         self.name = name
-    def transcribe(self, wav, language=None):
+    def transcribe(self, wav, language=None, **kw):
         assert os.path.getsize(wav) > 0, wav
+        record(kw)
         return iter([Segment(0.5, 1.5, " fast %s %s" % (self.name, language))]), None
 """
 
-FAKE_OPENAI = """import os
+FAKE_OPENAI = FAKE_RECORD + """import os
 class Model:
     def __init__(self, name):
         self.name = name
-    def transcribe(self, wav, language=None):
+    def transcribe(self, wav, language=None, **kw):
         assert os.path.getsize(wav) > 0, wav
+        record(kw)
         return {"segments": [{"start": 0.5, "end": 1.5, "text": " open %s %s" % (self.name, language)}]}
 def load_model(name):
     return Model(name)
@@ -373,6 +384,91 @@ class VideoDigestEngineAdapterTest(AdapterBase):
             self.assertEqual(transcript_lines(text), [("0:00:00", "speaker", said)])
 
 
+class OpenaiWhisperBeamTest(AdapterBase):
+    def test_openai_whisper_gets_the_command_line_decoding_defaults(self):
+        log = os.path.join(self.dir, "kw.json")
+        env = dict(self.python_engines(), FAKE_KW_LOG=log)
+        self.ok(run_tool(self.clip, "--no-frames", "--engine", "openai-whisper", "--model", "base",
+                         env=env))
+        with open(log, encoding="utf-8") as handle:
+            kw = json.load(handle)
+        self.assertEqual((kw.get("beam_size"), kw.get("best_of")), (5, 5), kw)
+
+
+class FasterWhisperBeamTest(AdapterBase):
+    def test_faster_whisper_gets_beam_size_5_explicitly(self):
+        log = os.path.join(self.dir, "kw.json")
+        env = dict(self.python_engines(), FAKE_KW_LOG=log)
+        self.ok(run_tool(self.clip, "--no-frames", "--engine", "faster-whisper", "--model", "tiny",
+                         env=env))
+        with open(log, encoding="utf-8") as handle:
+            kw = json.load(handle)
+        self.assertEqual(kw.get("beam_size"), 5, kw)
+
+
+class VideoDigestDefaultTimeoutTest(AdapterBase):
+    def test_the_default_timeouts_follow_the_duration(self):
+        tool = load_tool()
+        d = 100
+        self.assertEqual(
+            {step: tool.default_timeout(step, d) for step in
+             ("probe", "filters", "engine-probe", "image-size", "frame", "audio", "decode", "engine")},
+            {"probe": 60, "filters": 60, "engine-probe": 60, "image-size": 60, "frame": 60,
+             "audio": 110, "decode": 320, "engine": 1200})
+
+    def test_a_hung_engine_still_exits_4_naming_the_step(self):
+        env = dict(self.python_engines(), FAKE_SLEEP="30", VIDEO_DIGEST_STEP_TIMEOUT="engine=2")
+        res = run_tool(self.clip, "--no-frames", "--engine", "faster-whisper", "--model", "tiny",
+                       env=env)
+        self.assertEqual(res.returncode, 4, res.stderr)
+        self.assertEqual(res.stderr.strip().splitlines(),
+                         ["video-digest: step engine timed out after 2 s"])
+
+    def test_a_hung_gray_frame_decode_exits_4_naming_the_step(self):
+        res = run_tool(self.clip, "--no-transcript",
+                       env={"VIDEO_DIGEST_STEP_TIMEOUT": "decode=0.01"})
+        self.assertEqual(res.returncode, 4, res.stderr)
+        self.assertEqual(res.stderr.strip().splitlines(),
+                         ["video-digest: step decode timed out after 0.01 s"])
+
+
+class VideoDigestMinGapTest(ClipTest):
+    def test_changes_closer_than_the_gap_wait_and_zero_restores_every_change(self):
+        noise = "nullsrc=s=160x90:r=1:d=30,geq=lum='random(1)*255':cb=128:cr=128"
+        clip = make_clip(self.dir, "noise.mkv", noise, seconds=30)
+        self.ok(run_tool(clip, "--no-transcript"))
+        kept = kept_seconds(digest_of(clip))
+        self.assertEqual(kept[0], 0, kept)
+        self.assertGreaterEqual(kept[-1], 28, kept)
+        self.assertGreaterEqual(min(b - a for a, b in zip(kept[:-1], kept[1:-1])), 5, kept)
+        self.assertLessEqual(len(kept), 8, kept)
+        self.ok(run_tool(clip, "--no-transcript", "--min-gap", "0"))
+        self.assertGreater(len(kept_seconds(digest_of(clip))), 20)
+
+    def test_the_gap_defers_a_change_to_the_first_frame_after_it(self):
+        tool = load_tool()
+        size = tool.GRAY_SIZE[0] * tool.GRAY_SIZE[1]
+        a = bytes([10]) * size
+        b = bytes([200]) * size
+        frames = list(enumerate([a, b, b, b, b, b, b, b]))
+        self.assertEqual(tool.select_keyframes(frames, 0.9, 1000, min_gap=5), [0, 5, 7])
+        self.assertEqual(tool.select_keyframes(frames, 0.9, 1000, min_gap=0), [0, 1, 7])
+
+
+class VideoDigestOneBasedTracksTest(ClipTest):
+    def test_a_silent_second_stream_is_track_2_everywhere(self):
+        clip = make_clip(self.dir, "tracks.mkv", "color=c=gray:s=160x90:r=1:d=4",
+                         audio=("sine=frequency=440:sample_rate=16000", "anullsrc=r=16000:cl=mono"),
+                         seconds=4)
+        res = run_tool(clip, "--no-frames", env=fake_engine(self.dir, {"0": [[0.5, 2.0, "tone"]]}))
+        self.ok(res)
+        self.assertIn("audio track 2 is silent", res.stderr)
+        self.assertNotIn("audio track 1 is silent", res.stderr)
+        text = digest_of(clip)
+        self.assertIn("\n- Audio streams: 2 (1: track1, 2: track2)\n", text)
+        self.assertIn("\n- Silent tracks: audio track 2 (track2)\n", text)
+
+
 class WhisperCliArgsTest(AdapterBase):
     def argv(self, *extra):
         env, model, log = self.fake_cli()
@@ -419,8 +515,8 @@ class VideoDigestQuietSpeechTest(ClipTest):
         rows = {"0": [[0.2, 1.8, "a quiet remark"]], "1": [[0.2, 1.8, "ghost"]]}
         res = run_tool(clip, "--no-frames", env=fake_engine(self.dir, rows))
         self.ok(res)
-        self.assertNotIn("audio track 0 is silent", res.stderr)
-        self.assertIn("audio track 1 is silent", res.stderr)
+        self.assertNotIn("audio track 1 is silent", res.stderr)
+        self.assertIn("audio track 2 is silent", res.stderr)
         self.assertEqual(transcript_lines(digest_of(clip)), [("0:00:00", "track1", "a quiet remark")])
 
 
@@ -489,7 +585,7 @@ class VideoDigestTrackChoiceTest(ClipTest):
         self.assertEqual(transcript_lines(text), [("0:00:00", "me", "my own words"),
                                                   ("0:00:02", "others", "their words")])
         self.assertNotIn("mixed track", text)
-        self.assertIn("\n- Audio streams: 3 (1: me, 2: others)\n", text)
+        self.assertIn("\n- Audio streams: 3 (2: me, 3: others)\n", text)
         res = run_tool(clip, "--no-frames", "--tracks", "4", env=env)
         self.assertEqual(res.returncode, 2, res.stderr)
         self.assertIn("--tracks 4", res.stderr)
@@ -503,7 +599,7 @@ FAKE_BROKEN = """class Segment:
 class WhisperModel:
     def __init__(self, name):
         pass
-    def transcribe(self, wav, language=None):
+    def transcribe(self, wav, language=None, **kw):
         return iter([Segment()]), None
 """
 
@@ -549,7 +645,7 @@ class VideoDigestStreamsAndExitCodesTest(ClipTest):
                            audio=("anullsrc=r=16000:cl=mono",), seconds=3)
         res = run_tool(silent, *extra, env=env)
         self.ok(res)
-        self.assertIn("audio track 0 is silent: check the recorder's track settings", res.stderr)
+        self.assertIn("audio track 1 is silent: check the recorder's track settings", res.stderr)
         self.assertIn("## Transcript\n\nevery audio track is silent\n", digest_of(silent))
 
     def test_exit_4_for_a_file_that_is_not_a_recording(self):
