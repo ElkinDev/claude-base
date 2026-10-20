@@ -1,6 +1,6 @@
 # ============================================================
 #  Claude Code status line (Windows / PowerShell 5.1)
-#  model - effort - account - folder - git (branch + lines +/-) - context - weekly quota
+#  role - model - effort - account - folder - git (branch + lines +/-) - context - weekly quota
 #
 #  Drop this file in ~/.claude/ and wire it up in ~/.claude/settings.json.
 #  Claude Code needs a literal path there, so put your own in place of <YOUR-USER>:
@@ -96,6 +96,28 @@ function Get-AccountInfo {
   return @{ name = $name; icon = $icon; isLocal = ($target -eq 'local') }
 }
 
+# ---- role of this session ----
+# The account launcher passes the seat in CLAUDE_ROLE (orchestrator, analyst, lane, research), and the
+# variable reaches this script because Claude Code starts it as a child process. With many windows open,
+# the badge says which chair each one is. A session opened without the launcher has no role and no badge.
+# $RoleByFolder relabels a lane or role-less session by the folder its transcript is kept in, which is
+# named after the launch folder and does not move with a later cd. Use it when a project's orchestrator is
+# launched with another role. The value is the label shown; its first word picks the colour.
+$RoleByFolder = @{}   # e.g. @{ 'C--Repo-my-app' = 'orchestrator my-app' }
+function Get-RoleLabel {
+  $role = ([string]$env:CLAUDE_ROLE).Trim().ToLower()
+  $role = $role -replace '[^ -~]', ''             # printable ASCII only, so no escape code reaches the line
+  if (($role -eq '' -or $role -eq 'lane') -and $RoleByFolder.Count -gt 0) {
+    $tp = [string]$j.transcript_path
+    if ($tp) {
+      $leaf = Split-Path (Split-Path $tp -Parent) -Leaf
+      if ($RoleByFolder.ContainsKey($leaf)) { $role = [string]$RoleByFolder[$leaf] }
+    }
+  }
+  if ($role.Length -gt 32) { $role = $role.Substring(0, 32) }
+  return $role
+}
+
 # ---- ANSI colour helper ----
 function C([string]$code, [string]$text) { ([char]27) + '[' + $code + 'm' + $text + ([char]27) + '[0m' }
 
@@ -131,6 +153,17 @@ if ($cwd) {
 
 # ---- build the line ----
 $segs = @()
+$roleLabel = Get-RoleLabel
+if ($roleLabel) {                                       # role badge, first so it is seen first
+  $roleCol = switch (($roleLabel -split ' ')[0]) {
+    'orchestrator' { '1;97;45' }                        # white on magenta
+    'analyst'      { '1;97;44' }                        # white on blue
+    'research'     { '1;30;42' }                        # black on green
+    'lane'         { '30;47' }                          # black on grey
+    default        { '1;30;43' }                        # black on yellow
+  }
+  $segs += C $roleCol (' ' + $roleLabel.ToUpper() + ' ')
+}
 $segs += C '95;1' ("$(Get-ModelIcon $model) $model")    # model (magenta, bold)
 if ($effort) { $segs += C '96' $effort }                # effort (cyan): low/medium/high/xhigh/max
 
