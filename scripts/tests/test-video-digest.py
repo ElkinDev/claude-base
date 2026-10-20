@@ -413,7 +413,7 @@ class VideoDigestDefaultTimeoutTest(AdapterBase):
         self.assertEqual(
             {step: tool.default_timeout(step, d) for step in
              ("probe", "filters", "engine-probe", "image-size", "frame", "audio", "decode", "engine")},
-            {"probe": 60, "filters": 60, "engine-probe": 60, "image-size": 60, "frame": 60,
+            {"probe": 60, "filters": 60, "engine-probe": 180, "image-size": 60, "frame": 60,
              "audio": 110, "decode": 320, "engine": 1200})
 
     def test_a_hung_engine_still_exits_4_naming_the_step(self):
@@ -423,6 +423,14 @@ class VideoDigestDefaultTimeoutTest(AdapterBase):
         self.assertEqual(res.returncode, 4, res.stderr)
         self.assertEqual(res.stderr.strip().splitlines(),
                          ["video-digest: step engine timed out after 2 s"])
+
+    def test_a_slow_engine_import_is_reported_as_slow_not_missing(self):
+        env = dict(self.python_engines(), VIDEO_DIGEST_STEP_TIMEOUT="engine-probe=0.01")
+        res = run_tool(self.clip, "--no-frames", "--engine", "openai-whisper", "--model", "tiny",
+                       env=env)
+        self.assertEqual(res.returncode, 3, res.stderr)
+        self.assertIn("whisper did not import in", res.stderr)
+        self.assertIn("within 0.01 s", res.stderr)
 
     def test_a_hung_gray_frame_decode_exits_4_naming_the_step(self):
         res = run_tool(self.clip, "--no-transcript",

@@ -103,6 +103,7 @@ ECHO_MIN_RATIO = 0.8
 TURN_SPLIT_SECONDS = 60.0
 EXCERPT_WORDS = 12
 PROBE_TIMEOUT = 60
+ENGINE_PROBE_TIMEOUT = 180
 DEFAULT_MIN_GAP = 5.0
 FAKE_ENV = "VIDEO_DIGEST_FAKE_ENGINE"
 COMPARE_ENV = "VIDEO_DIGEST_COMPARE"
@@ -172,7 +173,7 @@ def step_timeout(step, default):
 def default_timeout(step, duration):
     """The default timeout in seconds of a step for a recording of `duration` seconds."""
     return {"audio": 60 + duration / 2, "decode": 120 + 2 * duration,
-            "engine": 600 + 6 * duration}.get(step, PROBE_TIMEOUT)
+            "engine": 600 + 6 * duration, "engine-probe": ENGINE_PROBE_TIMEOUT}.get(step, PROBE_TIMEOUT)
 
 
 def run(cmd, step, timeout=None, env=None, engine=None):
@@ -506,11 +507,17 @@ def ffmpeg_lists_whisper(ffmpeg):
 
 
 def python_imports(python, module):
+    """(imports, reason): a timeout is a reason of its own, since a cold import that loads torch can
+    take minutes and is not the same as a missing package."""
     try:
-        res = run([python, "-c", "import " + module], "engine-probe", timeout=PROBE_TIMEOUT)
-    except DigestError:
-        return False
-    return res.returncode == 0
+        res = run([python, "-c", "import " + module], "engine-probe", timeout=ENGINE_PROBE_TIMEOUT)
+    except DigestError as error:
+        if error.code == 4:
+            return False, ("%s did not import in %s within %g s (a cold start that loads torch can be"
+                           " slow): run again" % (module, python,
+                                                  step_timeout("engine-probe", ENGINE_PROBE_TIMEOUT)))
+        return False, None
+    return res.returncode == 0, None
 
 
 def default_threads():
@@ -535,8 +542,9 @@ def try_engine(name, args, ffmpeg):
             return None, "whisper-cli is on PATH, but --model is not a ggml model file"
         return WhisperCli(binary, model, args.language, args.threads or default_threads(),
                           args.prompt, args.vad_model), None
-    if not python_imports(args.engine_python, PYTHON_MODULE[name]):
-        return None, None
+    imports, reason = python_imports(args.engine_python, PYTHON_MODULE[name])
+    if not imports:
+        return None, reason
     if not model:
         return None, "%s imports in %s, but no --model names a model" % (name, args.engine_python)
     return PythonWhisper(name, args.engine_python, model, args.language, ffmpeg, args.threads,
