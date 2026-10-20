@@ -106,6 +106,7 @@ function Get-AccountInfo {
 $RoleByFolder = @{}   # e.g. @{ 'C--Repo-my-app' = 'orchestrator my-app' }
 function Get-RoleLabel {
   $role = ([string]$env:CLAUDE_ROLE).Trim().ToLower()
+  $role = $role -replace '[^ -~]', ''             # printable ASCII only, so no escape code reaches the line
   if (($role -eq '' -or $role -eq 'lane') -and $RoleByFolder.Count -gt 0) {
     $tp = [string]$j.transcript_path
     if ($tp) {
