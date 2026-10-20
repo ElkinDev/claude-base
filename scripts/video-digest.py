@@ -50,8 +50,8 @@ the order given, then track<n> (the stream's own number) for any stream past the
 Engines, tried in this order by --engine auto, each a subprocess:
   whisper-cli     whisper.cpp's whisper-cli, named by --whisper-cli <path> or found on PATH, when
                   --model is a file (a ggml model); -t threads (--threads, default logical cores
-                  minus 4, at least 4), --prompt, --vad -vm <file> when --vad-model is given;
-                  writes SRT.
+                  minus 4, at least 4), --prompt, -dev N when --gpu-device is given, --vad -vm
+                  <file> when --vad-model is given (not in region mode); writes SRT.
   faster-whisper  imported by --engine-python (default: this Python), --model a model name;
   openai-whisper  each writes a JSON list of [start, end, text] in seconds. --threads (faster-whisper
                   cpu_threads) is passed only when given, the prompt as initial_prompt.
@@ -511,9 +511,10 @@ class WhisperCli:
     name = "whisper-cli"
     timeout = None
 
-    def __init__(self, binary, model, language, threads, prompt, vad_model):
+    def __init__(self, binary, model, language, threads, prompt, vad_model, gpu_device=None):
         self.binary, self.model, self.language = binary, model, language
         self.threads, self.prompt, self.vad_model = threads, prompt, vad_model
+        self.gpu_device = gpu_device
 
     def region_units(self, wav, n, work):
         """Region mode: one SRT cue per word (-ml 1 -sow), without VAD."""
@@ -525,6 +526,8 @@ class WhisperCli:
                str(self.threads), "-osrt", "-of", base, "-np"]
         if self.prompt:
             cmd += ["--prompt", self.prompt]
+        if self.gpu_device is not None:
+            cmd += ["-dev", str(self.gpu_device)]  # whisper.cpp examples/cli/cli.cpp: -dev, the GPU device id
         if region:
             cmd += ["-ml", "1", "-sow"]
         elif self.vad_model:
@@ -621,7 +624,7 @@ def try_engine(name, args, ffmpeg):
             return None, "whisper-cli %s, but --model is not a ggml model file" % (
                 "is named by --whisper-cli" if args.whisper_cli else "is on PATH")
         return WhisperCli(binary, model, args.language, args.threads or default_threads(),
-                          engine_prompt(args), args.vad_model), None
+                          engine_prompt(args), args.vad_model, args.gpu_device), None
     imports, reason = python_imports(args.engine_python, PYTHON_MODULE[name])
     if not imports:
         return None, reason
@@ -922,6 +925,9 @@ def markdown(recording, info, args, state):
     ]
     if not args.vad_model:
         meta = [pair for pair in meta if pair[0] != "VAD model"]
+    elif state["regions"]:
+        meta = [(key, value + " (ignored in region mode)" if key == "VAD model" else value)
+                for key, value in meta]
     if state["regions"]:
         meta.append(("Region mode", "; ".join(
             "audio track %d (%s): %s, %d gap-dropped" % (n + 1, labels[n], plural(count, "region"), dropped)
@@ -958,8 +964,8 @@ def parse_args(argv):
                         help="the Python that runs faster-whisper or openai-whisper")
     parser.add_argument("--whisper-cli", help="the whisper-cli binary to run (default: whisper-cli on"
                                               " PATH)")
-    parser.add_argument("--gpu-device", type=int, help="the GPU the ffmpeg-whisper filter uses (its"
-                                                       " gpu_device option; not passed when absent)")
+    parser.add_argument("--gpu-device", type=int, help="the GPU whisper-cli (-dev) and the ffmpeg-whisper"
+                                                       " filter (gpu_device) use; not passed when absent")
     parser.add_argument("--threshold", type=float, default=0.90)
     parser.add_argument("--floor", type=float, default=60.0, help="seconds between kept frames, at most")
     parser.add_argument("--min-gap", type=float, default=DEFAULT_MIN_GAP,

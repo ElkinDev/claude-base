@@ -37,10 +37,11 @@ reproduction, a walkthrough. Not for a still image or a GIF, which you can open 
 
    `--threads N` (default: logical cores minus 4, at least 4) sets whisper-cli's CPU threads.
    `--prompt "<text>"` primes punctuation and casing; with `--language en` and no `--prompt` a
-   short meeting greeting is sent, and `--prompt ""` sends none (the Metadata names the prompt).
+   short meeting greeting is sent, and `--prompt ""` sends none (the Metadata names the prompt). A transcript made before this
+   default with no `--prompt` can differ from a new one: compare runs with the same explicit `--prompt`.
    `--vad-model <ggml file>` turns on voice activity detection for a single stream.
    `--whisper-cli <path>` names the binary when it is not on PATH, and `--gpu-device N` picks the
-   GPU of FFmpeg's whisper filter.
+   GPU of FFmpeg's whisper filter and of whisper-cli (`-dev`).
 2. Read `<stem>.digest.md` beside the recording (or in `--out <dir>`): the Metadata block, then
    the whole Transcript.
 3. Open a frame only for a moment the screen matters: what was shown, a number on a slide, an

@@ -1015,7 +1015,7 @@ class WhisperCliRegionArgsTest(RegionBase):
         env, _, log = self.word_cli(FAKE_CLI_CUES=json.dumps(cues))
         text, lines = self.digest(self.pair, "--engine", "whisper-cli", "--model", self.model,
                                   "--vad-model", self.vad, "--prompt", "Names: Ana.", "--threads", "6",
-                                  env=env)
+                                  "--gpu-device", "2", env=env)
         self.assertEqual(lines, [("0:00:00", "me", "alpha"), ("0:00:04", "others", "others"),
                                  ("0:00:07", "me", "gamma")])
         for stream, seconds in ((0, 6.0), (1, 5.0)):
@@ -1027,6 +1027,8 @@ class WhisperCliRegionArgsTest(RegionBase):
             self.assertNotIn("-vm", args)
             self.assertEqual(args[args.index("--prompt") + 1], "Names: Ana.")
             self.assertEqual(args[args.index("-t") + 1], "6")
+            self.assertEqual(args[args.index("-dev") + 1], "2")
+        self.assertIn("\n- VAD model: ggml-vad.bin (ignored in region mode)\n", text)
         self.assertIn("\n- Region mode: audio track 1 (me): 2 regions, 1 gap-dropped; audio track 2"
                       " (others): 2 regions, 0 gap-dropped\n", text)
 
@@ -1039,6 +1041,8 @@ class WhisperCliRegionArgsTest(RegionBase):
         self.assertAlmostEqual(got["seconds"], 12.0, places=3)
         self.assertNotIn("-ml", got["args"])
         self.assertNotIn("-sow", got["args"])
+        self.assertNotIn("-dev", got["args"])
+        self.assertIn("\n- VAD model: ggml-vad.bin\n", text)
         at = got["args"].index("--vad")
         self.assertEqual(got["args"][at + 1:at + 3], ["-vm", self.vad])
 
