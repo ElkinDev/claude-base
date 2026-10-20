@@ -154,15 +154,15 @@ if ($cwd) {
 # ---- build the line ----
 $segs = @()
 $roleLabel = Get-RoleLabel
-if ($roleLabel) {                                       # role badge, first so it is seen first
+if ($roleLabel) {                                       # role, first so it is seen first
   $roleCol = switch (($roleLabel -split ' ')[0]) {
-    'orchestrator' { '1;97;45' }                        # white on magenta
-    'analyst'      { '1;97;44' }                        # white on blue
-    'research'     { '1;30;42' }                        # black on green
-    'lane'         { '30;47' }                          # black on grey
-    default        { '1;30;43' }                        # black on yellow
+    'orchestrator' { '38;5;183' }                       # pastel lavender
+    'analyst'      { '38;5;153' }                       # pastel sky blue
+    'research'     { '38;5;151' }                       # pastel mint
+    'lane'         { '38;5;250' }                       # soft grey
+    default        { '38;5;223' }                       # pastel peach
   }
-  $segs += C $roleCol (' ' + $roleLabel.ToUpper() + ' ')
+  $segs += C $roleCol $roleLabel                        # plain text, no background, as the other segments
 }
 $segs += C '95;1' ("$(Get-ModelIcon $model) $model")    # model (magenta, bold)
 if ($effort) { $segs += C '96' $effort }                # effort (cyan): low/medium/high/xhigh/max

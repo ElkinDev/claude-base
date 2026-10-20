@@ -1,5 +1,5 @@
-"""Pins for the role badge of claude/statusline.ps1: the role the launcher passes in CLAUDE_ROLE is the first segment of
-the line, with one colour per role; a session with no role gets no badge; $RoleByFolder relabels a lane or role-less
+"""Pins for the role segment of claude/statusline.ps1: the role the launcher passes in CLAUDE_ROLE is the first segment of
+the line, as plain text in one pastel colour per role; a session with no role gets no role segment; $RoleByFolder relabels a lane or role-less
 session by the folder of its transcript, and never a session that has another role.
 
   python scripts/tests/test-statusline.py              the statusline.ps1 under claude/
@@ -53,29 +53,29 @@ class StatuslineRoleTest(unittest.TestCase):
         return path
 
     def test_each_role_is_the_first_segment_with_its_colour(self):
-        for role, colour in (("analyst", "1;97;44"), ("orchestrator", "1;97;45"), ("lane", "30;47"),
-                             ("research", "1;30;42"), ("reviewer", "1;30;43")):
+        for role, colour in (("analyst", "38;5;153"), ("orchestrator", "38;5;183"), ("lane", "38;5;250"),
+                             ("research", "38;5;151"), ("reviewer", "38;5;223")):
             line = self.render(role)
-            self.assertTrue(line.startswith(ESC + colour + "m " + role.upper() + " " + ESC + "0m"), (role, line[:40]))
+            self.assertTrue(line.startswith(ESC + colour + "m" + role + ESC + "0m"), (role, line[:40]))
 
     def test_role_is_read_trimmed_and_case_folded(self):
-        self.assertTrue(self.render("  Analyst ").startswith(ESC + "1;97;44m ANALYST "))
+        self.assertTrue(self.render("  Analyst ").startswith(ESC + "38;5;153manalyst" + ESC))
 
-    def test_no_role_no_badge(self):
+    def test_no_role_no_segment(self):
         for role in (None, ""):
             line = self.render(role)
             self.assertTrue(line.startswith(ESC + "95;1m"), line[:40])
-            self.assertNotIn(" LANE ", line)
+            self.assertNotIn(ESC + "38;5;", line)
 
     def test_folder_map_relabels_a_lane_by_its_transcript_folder(self):
         mapped = self.with_map("'C--work-my-app' = 'orchestrator my-app'")
-        self.assertTrue(self.render("lane", mapped).startswith(ESC + "1;97;45m ORCHESTRATOR MY-APP "))
-        self.assertTrue(self.render(None, mapped).startswith(ESC + "1;97;45m ORCHESTRATOR MY-APP "))
-        self.assertTrue(self.render("lane", mapped, folder="C--work-other").startswith(ESC + "30;47m LANE "))
+        self.assertTrue(self.render("lane", mapped).startswith(ESC + "38;5;183morchestrator my-app" + ESC))
+        self.assertTrue(self.render(None, mapped).startswith(ESC + "38;5;183morchestrator my-app" + ESC))
+        self.assertTrue(self.render("lane", mapped, folder="C--work-other").startswith(ESC + "38;5;250mlane" + ESC))
 
     def test_folder_map_never_relabels_another_role(self):
         mapped = self.with_map("'C--work-my-app' = 'orchestrator my-app'")
-        self.assertTrue(self.render("analyst", mapped).startswith(ESC + "1;97;44m ANALYST "))
+        self.assertTrue(self.render("analyst", mapped).startswith(ESC + "38;5;153manalyst" + ESC))
 
 
 if __name__ == "__main__":
