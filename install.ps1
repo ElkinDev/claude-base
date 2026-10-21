@@ -25,6 +25,7 @@ Examples:
   powershell -ExecutionPolicy Bypass -File .\install.ps1
   powershell -ExecutionPolicy Bypass -File .\install.ps1 -Project C:\Repo\my-app -LocalOnly
   powershell -ExecutionPolicy Bypass -File .\install.ps1 -Project C:\Repo\my-app -GradleHook
+  powershell -ExecutionPolicy Bypass -File .\install.ps1 -Permissions ask -AutoUpdate
 #>
 param(
     [string]$Project,
@@ -50,7 +51,13 @@ param(
     [switch]$NoHerdr,
     # User scope: when your settings.json is kept with a .new beside it, the kit's new hooks are added to
     # it (after a backup, nothing of yours removed; claude\merge-hooks.py). This switch leaves it as it is.
-    [switch]$NoHookMerge
+    [switch]$NoHookMerge,
+    # User scope, from a git clone: register a daily task of this user, no elevation, that pulls the clone and runs
+    # this installer with the options of this run, hidden and with no question (install\schedule.ps1). Its log is
+    # <kit home>\logs, and the next session start prints one line when it updated the kit or failed.
+    # -NoAutoUpdate removes the task.
+    [switch]$AutoUpdate,
+    [switch]$NoAutoUpdate
 )
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
@@ -58,7 +65,13 @@ $root = $PSScriptRoot
 . (Join-Path $root 'install\lib.ps1')
 . (Join-Path $root 'install\adopt.ps1')
 . (Join-Path $root 'install\herdr.ps1')
+. (Join-Path $root 'install\schedule.ps1')
 if ($Herdr -and $NoHerdr) { throw '-Herdr and -NoHerdr cannot both be given.' }
+if ($AutoUpdate -and $NoAutoUpdate) { throw '-AutoUpdate and -NoAutoUpdate cannot both be given.' }
+if (($AutoUpdate -or $NoAutoUpdate) -and $Project) {
+    Write-Output 'refused: -AutoUpdate and -NoAutoUpdate act on the user-scope install, so they take no -Project. Nothing was written.'
+    exit 1
+}
 if ($GradleHook -and -not $Project) {
     Write-Output 'refused: -GradleHook wires a hook into a project, so it needs -Project <path>. Nothing was written.'
     exit 1
@@ -477,8 +490,17 @@ if ($Permissions -eq 'bypass') {
     Write-Output "  PERMISSIONS: ask. Claude Code will prompt before acting."
     Write-Output "  Some skills in this base assume bypass and will stop on each step."
 }
-Install-KitHerdr -KitRoot $root -KitHome $kitHome -DryRun:$DryRun `
-    -Choice (Get-KitHerdrChoice -Yes $Herdr.IsPresent -No $NoHerdr.IsPresent -DryRun $DryRun.IsPresent)
+$herdrChoice = Get-KitHerdrChoice -Yes $Herdr.IsPresent -No $NoHerdr.IsPresent -DryRun $DryRun.IsPresent
+Install-KitHerdr -KitRoot $root -KitHome $kitHome -DryRun:$DryRun -Choice $herdrChoice
+# The daily update keeps this run's choices, the Herdr answer included, so a later run never asks or changes one.
+if ($AutoUpdate) {
+    Write-Output ""
+    Register-KitAutoUpdate $root $kitHome $Permissions $herdrChoice $NoHookMerge.IsPresent -DryRun:$DryRun
+} elseif ($NoAutoUpdate) {
+    Write-Output ""
+    Unregister-KitAutoUpdate -DryRun:$DryRun
+}
 Write-Output ""
 Write-Output "Done."
 Write-Output "Run: python scripts\doctor.py"
+if ($script:KitAutoUpdateFailed) { exit 1 }

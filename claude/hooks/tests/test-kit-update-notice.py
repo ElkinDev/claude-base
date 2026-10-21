@@ -1,0 +1,117 @@
+"""Tests for claude/hooks/kit-update-notice.py, the session-start line about the kit's daily update.
+
+    python claude/hooks/tests/test-kit-update-notice.py
+
+The hook runs the way the harness runs it, as a subprocess, with KIT_HOME pointed at a fresh temporary folder, so
+no real kit home is read or changed. The pending file is written the way install/auto-update.ps1 writes it under
+Windows PowerShell 5.1: UTF-8 with a byte order mark, one compact JSON object a line. No network.
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+HOOK = os.path.join(os.path.dirname(HERE), "kit-update-notice.py")
+
+UPDATED = {"result": "updated", "from": "1111111", "to": "2222222", "files": 12, "hooks": ["new-hook.py"],
+           "time": "2026-10-22 05:00", "log": "C:\\kit\\logs\\auto-update-2026-10-22.log"}
+FAILED = {"result": "failed", "line": "git pull --ff-only in C:\\kit failed: could not resolve host; nothing was installed",
+          "time": "2026-10-23 05:00", "log": "C:\\kit\\logs\\auto-update-2026-10-23.log"}
+
+
+class KitUpdateNotice(unittest.TestCase):
+    def setUp(self):
+        self.base = tempfile.mkdtemp(prefix="kit-update-notice-")
+        self.logs = os.path.join(self.base, "logs")
+        self.pending = os.path.join(self.logs, "auto-update-pending.jsonl")
+
+    def tearDown(self):
+        shutil.rmtree(self.base, ignore_errors=True)
+
+    def write(self, *runs, raw=None):
+        os.makedirs(self.logs, exist_ok=True)
+        text = raw if raw is not None else "".join(json.dumps(run) + "\r\n" for run in runs)
+        with open(self.pending, "w", encoding="utf-8-sig", newline="") as handle:
+            handle.write(text)
+
+    def run_hook(self):
+        env = dict(os.environ, KIT_HOME=self.base)
+        started = time.time()
+        done = subprocess.run([sys.executable, HOOK], env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                              text=True, timeout=20)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stderr, "")
+        self.assertLess(time.time() - started, 10)
+        return done.stdout
+
+    def line_of(self, out):
+        lines = out.splitlines()
+        self.assertEqual(len(lines), 1, out)
+        payload = json.loads(lines[0])
+        line = payload["systemMessage"]
+        self.assertEqual(payload["hookSpecificOutput"],
+                         {"hookEventName": "SessionStart", "additionalContext": line})
+        return line
+
+    def test_no_logs_folder_prints_nothing(self):
+        self.assertEqual(self.run_hook(), "")
+
+    def test_an_update_is_one_line_once(self):
+        self.write(UPDATED)
+        line = self.line_of(self.run_hook())
+        self.assertIn("now at 2222222 (was 1111111)", line)
+        self.assertIn("12 files changed", line)
+        self.assertIn("new hooks: new-hook.py", line)
+        self.assertIn("Log: " + UPDATED["log"], line)
+        self.assertFalse(os.path.exists(self.pending))
+        self.assertTrue(os.path.exists(os.path.join(self.logs, "auto-update-pending.seen.jsonl")))
+        self.assertEqual(self.run_hook(), "", "the second session start prints nothing")
+
+    def test_a_failure_names_its_line_and_log(self):
+        self.write(FAILED)
+        line = self.line_of(self.run_hook())
+        self.assertIn("failed: git pull --ff-only in C:\\kit failed: could not resolve host", line)
+        self.assertIn("Log: " + FAILED["log"], line)
+        self.assertNotIn("now at", line)
+
+    def test_several_runs_since_the_last_notice_make_one_line(self):
+        second = dict(UPDATED, **{"from": "2222222", "to": "3333333", "files": 3, "hooks": ["new-hook.py", "other.py"]})
+        self.write(UPDATED, second, FAILED)
+        line = self.line_of(self.run_hook())
+        self.assertIn("now at 3333333 (was 1111111), 15 files changed over 2 runs", line)
+        self.assertIn("new hooks: new-hook.py, other.py", line)
+        self.assertIn("the last run failed: git pull", line)
+        self.assertIn("Log: " + FAILED["log"], line)
+
+    def test_an_update_after_a_failure_reports_only_the_update(self):
+        self.write(FAILED, UPDATED)
+        line = self.line_of(self.run_hook())
+        self.assertIn("now at 2222222", line)
+        self.assertNotIn("failed", line)
+
+    def test_a_file_with_no_run_in_it_prints_nothing(self):
+        self.write(raw="not json\r\n{\"result\": \"other\"}\r\n[1, 2]\r\n\r\n")
+        self.assertEqual(self.run_hook(), "")
+
+    def test_a_bad_line_among_good_ones_is_skipped(self):
+        self.write(raw="garbage\r\n" + json.dumps(UPDATED) + "\r\n")
+        self.assertIn("now at 2222222", self.line_of(self.run_hook()))
+
+    def test_an_unreadable_pending_path_never_fails_the_session(self):
+        os.makedirs(self.pending)
+        self.assertEqual(self.run_hook(), "")
+
+    def test_a_pending_file_that_is_not_utf8_never_fails_the_session(self):
+        os.makedirs(self.logs)
+        with open(self.pending, "wb") as handle:
+            handle.write(b"\xff\xfe\x00bad")
+        self.assertEqual(self.run_hook(), "")
+
+
+if __name__ == "__main__":
+    unittest.main()

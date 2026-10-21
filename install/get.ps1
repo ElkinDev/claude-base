@@ -22,7 +22,9 @@
 #
 # Updating is the same line again: it pulls the clone and re-runs install.ps1, which adds the kit's new
 # hooks to a settings.json of yours that already runs the kit's hooks (backup first; -NoHookMerge
-# leaves it alone).
+# leaves it alone). -AutoUpdate at the end of the line makes that a daily task of this user that runs
+# hidden with the options of that run, logs to <kit home>\logs, and is reported at the next session
+# start; -NoAutoUpdate removes it. Both are passed to install.ps1.
 #
 # The tests replace the external commands through the environment: CLAUDE_BASE_WINGET (winget),
 # CLAUDE_BASE_CLAUDE_INSTALLER (a .ps1, a path or a URL, saved and run instead of the Claude Code installer), CLAUDE_BASE_MISSING
@@ -37,6 +39,9 @@ param(
     [switch]$Yes,
     [switch]$DryRun,
     [switch]$NoHookMerge,
+    # A daily task that runs this same update with these options, hidden; -NoAutoUpdate removes it (install.ps1).
+    [switch]$AutoUpdate,
+    [switch]$NoAutoUpdate,
     [ValidateSet('bypass', 'ask')]
     [string]$Permissions = 'bypass'
 )
@@ -251,6 +256,7 @@ function Invoke-GetMain {
     Write-Host "claude-base: one-command install into $Dir"
     if ($PSVersionTable.PSVersion.Major -lt 5) { Write-Host 'Windows PowerShell 5.1 or later is required.'; return 1 }
     if ($Herdr -and $NoHerdr) { Write-Host '-Herdr and -NoHerdr cannot both be given.'; return 1 }
+    if ($AutoUpdate -and $NoAutoUpdate) { Write-Host '-AutoUpdate and -NoAutoUpdate cannot both be given.'; return 1 }
 
     $tools = @(
         @{ Tool = 'git';    Name = 'Git for Windows (git, and the Git Bash the hooks run in)' },
@@ -294,6 +300,8 @@ function Invoke-GetMain {
 
         $installArgs = @('-Permissions', $Permissions)
         if ($NoHookMerge) { $installArgs += '-NoHookMerge' }
+        if ($AutoUpdate) { $installArgs += '-AutoUpdate' }
+        if ($NoAutoUpdate) { $installArgs += '-NoAutoUpdate' }
         if ($DryRun) { $installArgs += '-DryRun' }
         # The question is asked here, not by install.ps1: its output goes through this script, so it
         # sees no console and would skip the question.

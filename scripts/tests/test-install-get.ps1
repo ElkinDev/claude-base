@@ -30,6 +30,8 @@ $env:KIT_HERDR_EXE        = Join-Path $stubs 'herdr.cmd'
 $env:KIT_HERDR_HOTKEY     = Join-Path $stubs 'hotkey.ps1'
 $env:KIT_HERDR_CONFIG_DIR = Join-Path $base 'appdata\herdr'
 $env:KIT_HERDR_LNK_DIR    = Join-Path $base 'startmenu'
+# The Task Scheduler stand-in (install\schedule.ps1), so no phase reads or writes the real one.
+$env:KIT_SCHEDULER        = Join-Path $base 'scheduler.json'
 # Failing stand-ins stay set for the whole suite, so no phase can reach the real winget or the real
 # Claude Code installer, whatever this machine is missing.
 Set-Content -LiteralPath (Join-Path $stubs 'winget-fails.cmd') -Encoding ascii -Value @('@echo off', 'echo stub winget failing', 'exit /b 1')
@@ -132,6 +134,16 @@ try {
     try { $out = Invoke-Get @('-Dir', $dir, '-DryRun', '-NoHookMerge') } finally { [IO.File]::WriteAllBytes($settingsPath, $settingsBytes) }
     Assert-Exit 0 'a dry run with -NoHookMerge succeeds'
     Assert-Match $out 'not merged, -NoHookMerge' 'get.ps1 passes -NoHookMerge on to install.ps1'
+    # -AutoUpdate and -NoAutoUpdate reach install.ps1 too; a dry run only shows the task (test-install-auto-update.ps1).
+    $out = Invoke-Get @('-Dir', $dir, '-DryRun', '-AutoUpdate', '-Permissions', 'ask', '-NoHerdr')
+    Assert-Exit 0 'a dry run with -AutoUpdate succeeds'
+    Assert-Regex $out 'would register the daily task kit-auto-update' 'get.ps1 passes -AutoUpdate on to install.ps1'
+    Assert-Regex $out 'conhost\.exe --headless .* -Permissions ask -NoHerdr' 'with the options of that line'
+    $out = Invoke-Get @('-Dir', $dir, '-DryRun', '-NoAutoUpdate')
+    Assert-Regex $out 'auto-update  (would remove|no daily task)' 'get.ps1 passes -NoAutoUpdate on to install.ps1'
+    $out = Invoke-Get @('-Dir', $dir, '-AutoUpdate', '-NoAutoUpdate')
+    Assert-Exit 1 'both at once are refused'
+    Assert-Match $out '-AutoUpdate and -NoAutoUpdate cannot both be given.' 'with one line'
 
     Write-Host "`r`nphase 5, a folder that is not a clone, or a clone of another repository, is refused"
     $other = Join-Path $base 'not-a-clone'
@@ -417,7 +429,7 @@ try {
     Assert-True (@(Get-Content -LiteralPath $getScript) -contains ('#   ' + $line)) 'get.ps1 names the same line'
 } finally {
     Clear-GetEnv
-    foreach ($name in @('KIT_HERDR_EXE', 'KIT_HERDR_HOTKEY', 'KIT_HERDR_CONFIG_DIR', 'KIT_HERDR_LNK_DIR', 'CLAUDE_BASE_WINGET', 'CLAUDE_BASE_CLAUDE_INSTALLER', 'CLAUDE_BASE_NPM', 'CLAUDE_BASE_ENV_KEY')) { Set-Item -Path "Env:$name" -Value $null }
+    foreach ($name in @('KIT_SCHEDULER', 'KIT_HERDR_EXE', 'KIT_HERDR_HOTKEY', 'KIT_HERDR_CONFIG_DIR', 'KIT_HERDR_LNK_DIR', 'CLAUDE_BASE_WINGET', 'CLAUDE_BASE_CLAUDE_INSTALLER', 'CLAUDE_BASE_NPM', 'CLAUDE_BASE_ENV_KEY')) { Set-Item -Path "Env:$name" -Value $null }
     [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($envKeyRoot, $false)
     $env:Path = $realPath
     Close-KitSandbox $realProfile

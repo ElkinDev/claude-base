@@ -136,6 +136,14 @@ whose layout it cannot write back byte for byte left alone; `-NoHookMerge` at th
 A running session's file watcher normally picks the change up; if a new hook does not show in one, reopen it.
 From a clone the same update is `git pull` and then `install.ps1`. `INSTALL.md` has the details.
 
+To have it done for you every day, add `-AutoUpdate` at the end of the line once. It registers a scheduled task of
+your own user, with no elevation, that runs the same update at 05:00 (or as soon as you sign in after a day the
+machine was off) with exactly the options of that line, `-Permissions` and the Herdr answer included, hidden and
+with no question. Each run writes `<kit home>\logs\auto-update-<date>.log` (the last 30 are kept), and the next
+Claude Code session prints one line when a run updated the kit (the new commit, how many files changed, the hooks
+it added) or failed (a clone with changes of its own, no network), with the log path. A failed run changes nothing.
+`-NoAutoUpdate` on the same line removes the task.
+
 By hand, from a clone:
 ```
 # check the machine has what the kit needs (git, python, claude, Git Bash, optionally Herdr)
