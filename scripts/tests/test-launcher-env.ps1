@@ -531,7 +531,7 @@ Test-RoleModelBlank
 Test-RoleModelUnset
 
 # The effort works like the model: CLAUDE_EFFORT_<ROLE>, then --effort on the line wins, and a value
-# claude would refuse is not passed. The machine's effort variables were cleared at the top.
+# claude does not know is not passed. The machine's effort variables were cleared at the top.
 Write-Host "`r`nphase 20, a role takes its own effort from CLAUDE_EFFORT_<ROLE>"
 function Test-RoleEffort {
     $env:CLAUDE_EFFORT_ORCHESTRATOR = 'High '
@@ -561,7 +561,7 @@ function Test-RoleEffortExplicitWins {
 function Test-RoleEffortRefusedAndBlank {
     $env:CLAUDE_EFFORT_ORCHESTRATOR = 'turbo'
     $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator
-    Assert-Exit 0 'RoleEffortRefusedTest: a value claude would refuse does not stop the launch'
+    Assert-Exit 0 'RoleEffortRefusedTest: a value claude does not know does not stop the launch'
     Assert-True (-not (([regex]::Match($out, '(?m)^COMMAND=.*$')).Value -match '--effort')) 'RoleEffortRefusedTest: and nothing is passed'
     Assert-Match $out 'is not low, medium, high, xhigh or max; no --effort passed' 'RoleEffortRefusedTest: and one line says why'
     Assert-Regex $out "(?m)^EFFORT=session default \(CLAUDE_EFFORT_ORCHESTRATOR='turbo' refused\)\r?$" 'RoleEffortRefusedTest: the plan names the refused value'
@@ -573,8 +573,26 @@ function Test-RoleEffortRefusedAndBlank {
     $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator
     Assert-Regex $out ('(?m)^COMMAND=claude --name orchestrator-\d{4}-\d{4} ') 'RoleEffortUnsetTest: with no variable the command is what it was before'
 }
+function Test-RoleEffortWithModelAndOtherShapes {
+    $env:CLAUDE_EFFORT_ORCHESTRATOR = 'xhigh'
+    $env:CLAUDE_MODEL_ORCHESTRATOR = 'opus'
+    $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator
+    Assert-Regex $out '(?m)^COMMAND=claude --effort xhigh --model opus --name orchestrator-\d{4}-\d{4} ' 'RoleEffortShapesTest: with both variables the effort comes first, then the model, then the name'
+    Assert-Regex $out ('(?m)^COMMAND=.* ' + [regex]::Escape("'" + $startLine + "'") + '\r?$') 'RoleEffortShapesTest: and the start line is still the last token'
+    Remove-Item Env:\CLAUDE_MODEL_ORCHESTRATOR -ErrorAction SilentlyContinue
+    Remove-Item Env:\CLAUDE_EFFORT_ORCHESTRATOR -ErrorAction SilentlyContinue
+    $env:CLAUDE_EFFORT_LANE = 'max'
+    $out = Get-LauncherLiteral demo -ShowEnv -Role lane -c
+    Assert-Regex $out '(?m)^COMMAND=claude --effort max .*-c' 'RoleEffortShapesTest: a lane continued with -c carries it'
+    Remove-Item Env:\CLAUDE_EFFORT_LANE -ErrorAction SilentlyContinue
+    $env:CLAUDE_EFFORT_RESEARCH = 'low'
+    $out = Get-LauncherLiteral demo -ShowEnv -Role research
+    Assert-Regex $out '(?m)^COMMAND=claude --effort low --name research\r?$' 'RoleEffortShapesTest: research with nothing else on the line gets it too'
+    Remove-Item Env:\CLAUDE_EFFORT_RESEARCH -ErrorAction SilentlyContinue
+}
 Test-RoleEffort
 Test-RoleEffortExplicitWins
+Test-RoleEffortWithModelAndOtherShapes
 Test-RoleEffortRefusedAndBlank
 Remove-Item Env:\CLAUDE_EFFORT_ORCHESTRATOR -ErrorAction SilentlyContinue
 

@@ -170,7 +170,7 @@ else {
 # _RESEARCH) becomes --effort when the line carries none, so a long-lived orchestrator and its lanes can
 # run at different levels on one account. It is read from this process, like the model variable: a Herdr
 # pane started before the variable was set does not see it. Blank or unset adds nothing; a value claude
-# would refuse adds nothing and says so. It goes at the front on a fresh launch and on a resume alike, so
+# does not know (2.1.306 warns and ignores it) adds nothing and says so. It goes at the front on a fresh launch and on a resume alike, so
 # the start line stays the last token.
 $effortPlan = "session default"
 $effortTokens = @($Extra | Where-Object { $_ -ne $null })
