@@ -342,6 +342,21 @@ class MergeHooks(unittest.TestCase):
             self.assertIn(("startup|resume|clear|fork", recover + " --rulings"), self.handlers(self.read_user(), "SessionStart"))
             self.assertEqual(1, self.added(out))
 
+    def test_the_same_script_under_the_same_matcher_with_other_arguments_is_added(self):
+        recover = "python \"C:/kit/hooks/compact-recover.py\""
+        older = {"hooks": {"SessionStart": [{"matcher": "compact", "hooks": [{"type": "command", "command": recover}]}]}}
+        newer = {"hooks": {"SessionStart": [{"matcher": "compact", "hooks": [
+            {"type": "command", "command": recover}, {"type": "command", "command": recover + " --rulings"}]}]}}
+        for extra in (("--previous", self.write_kit(older, "previous.json")), ()):
+            if os.path.exists(self.record):
+                os.remove(self.record)
+            self.kit = self.write_kit(newer)
+            self.write_user(older)
+            code, out = self.run_tool(*extra)
+            self.assertEqual(0, code, out)
+            self.assertEqual([("compact", recover), ("compact", recover + " --rulings")],
+                             self.handlers(self.read_user(), "SessionStart"))
+
     def test_the_interpreter_and_the_kit_home_spelling_are_not_part_of_a_handler(self):
         self.kit = self.write_kit({"hooks": {"Stop": [{"hooks": [
             {"type": "command", "command": "python C:/Kit/hooks/x.py --log C:/Kit/logs"}]}]}})
