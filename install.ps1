@@ -154,8 +154,8 @@ function Invoke-KitHookMerge {
     kit has already offered is the merge's own record, .kit-hooks-merged.json in the kit home: it
     advances only when a merge writes or finds every offered hook there, so a -NoHookMerge run, a run
     with no Python, a refusal or a file left alone leaves it as it was and the next run offers the
-    same hooks again. The previous kit render, the .new as it was before this run, only seeds a
-    missing record. A dry probe runs first, so a run with nothing to write writes no backup line.
+    same hooks again. A missing record is seeded from the kit hooks your file already runs, never
+    from the .new. A dry probe runs first, so a run with nothing to write writes no backup line.
     Before a real write the file is backed up and recorded as `merged <path> <sha256 after the
     merge>` (kit-restore.py puts the copy back only while the file still has that hash; the manifest
     record of settings.json is left as it was), and the merge record is backed up as overwritten or
@@ -172,9 +172,6 @@ function Invoke-KitHookMerge {
     $b64 = [Convert]::ToBase64String($utf8.GetBytes($KitText))
     $exe = $python[0]
     $pre = @($python | Select-Object -Skip 1) + @('-I', $tool, '--kit-b64', $b64, '--record', $record, '--kit-home', $kitHome)
-    if ($null -ne $script:KitHookMergePrevious) {
-        $pre += @('--previous-b64', [Convert]::ToBase64String($utf8.GetBytes($script:KitHookMergePrevious)))
-    }
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     $savedIo = $env:PYTHONIOENCODING
@@ -460,12 +457,6 @@ if ($Permissions -eq 'ask') {
 }
 $pairs += New-KitPair $null (Join-Path $kitHome 'settings.json') $settingsText
 $script:KitHookMergeTarget = Join-Path $kitHome 'settings.json'
-# The previous kit render, read before the plan refreshes the .new: the hook merge seeds its record from it
-# once, on a machine that has no record yet.
-$script:KitHookMergePrevious = $null
-if (Test-Path -LiteralPath "$($script:KitHookMergeTarget).new" -PathType Leaf) {
-    $script:KitHookMergePrevious = [IO.File]::ReadAllText("$($script:KitHookMergeTarget).new", [Text.Encoding]::UTF8)
-}
 
 Write-Output "Kit home: $kitHome"
 Invoke-KitPlan $pairs 'user scope install'

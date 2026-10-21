@@ -20,10 +20,11 @@ Rules:
   3. The record advances only when this tool writes the file successfully, or finds every offered
      key already there. A dry run, a refusal, a file left alone or a failure never touches it, so a
      hook the user did not get is offered again on the next run.
-  4. With no record (the first run, or one that cannot be read), the record is seeded once: from
-     the previous kit render when one is given and readable (--previous: the settings.json.new as
-     it was before this run), else from the kit keys the user's file already runs. One line says
-     which. Its absence is never an error.
+  4. With no record (the first run, or one that cannot be read), the record is seeded from the kit
+     keys the user's file already runs, never from the settings.json.new, which may hold hooks
+     that were never merged. So a hook removed before the first merge is offered once, on a line
+     of its own; hook-merge-skip.txt keeps it out for good. One line says the record was seeded.
+     Its absence is never an error.
   5. Only additions, under the key's event and matcher, appended to the user's entry with that
      matcher or as a new entry. Nothing of the user's is removed, reordered or changed, and only
      a file that already runs at least one kit handler is merged into.
@@ -36,8 +37,8 @@ Rules:
      after it, through a temp file renamed over it.
 
 Usage:
-  python merge-hooks.py (--kit <file> | --kit-b64 <base64>) [--previous <file> | --previous-b64 <base64>]
-                        [--record <file>] [--kit-home <dir>] <user settings.json> [--dry-run]
+  python merge-hooks.py (--kit <file> | --kit-b64 <base64>) [--record <file>] [--kit-home <dir>]
+                        <user settings.json> [--dry-run]
 
 --record defaults to .kit-hooks-merged.json and --kit-home to the folder of the settings file. One
 line per handler added (`added`, or `would add` under --dry-run), or one line saying why nothing
@@ -233,9 +234,6 @@ def main(argv=None):
     kit_source = ap.add_mutually_exclusive_group(required=True)
     kit_source.add_argument("--kit", help="the kit's rendered settings.json")
     kit_source.add_argument("--kit-b64", help="the same text, UTF-8, base64")
-    previous_source = ap.add_mutually_exclusive_group()
-    previous_source.add_argument("--previous", help="the previous kit render, used only to seed a missing record")
-    previous_source.add_argument("--previous-b64", help="the same text, UTF-8, base64")
     ap.add_argument("--record", help="the merge record (default: %s beside the settings file)" % RECORD_FILE)
     ap.add_argument("--kit-home", help="the kit home the commands point into (default: the settings file's folder)")
     ap.add_argument("settings", help="the user's settings.json")
@@ -285,20 +283,8 @@ def main(argv=None):
     baseline = read_record(record_path)
     seeded = baseline is None
     if seeded:
-        previous_keys = None
-        if args.previous is not None or args.previous_b64 is not None:
-            try:
-                previous = json.loads(read_source(args.previous, args.previous_b64))
-                if isinstance(previous, dict) and not shape_error(previous.get("hooks", {})):
-                    previous_keys = set(key for key, _, _ in handlers(previous.get("hooks", {}), kit_home))
-            except Exception:
-                previous_keys = None
-        if previous_keys is not None:
-            baseline = previous_keys
-            out.write("baseline     %s seeded from the previous kit render (%s.new)\n" % (record_path, path))
-        else:
-            baseline = user_keys & kit_keys
-            out.write("baseline     %s seeded from the kit hooks %s already runs\n" % (record_path, path))
+        baseline = user_keys & kit_keys
+        out.write("baseline     %s seeded from the kit hooks %s already runs\n" % (record_path, path))
 
     skips = skip_names(path)
     offered, adds, seen = set(), [], set()

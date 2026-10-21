@@ -97,8 +97,9 @@ path for a bare one, is the same hook, and the same script with other arguments 
 already offered is kept in `.kit-hooks-merged.json` in the kit home, and only hooks outside it are added, so a hook
 you take out after it was merged stays out. That record moves only when a merge writes your file or finds every new
 hook already there: a run with `-NoHookMerge`, or one that leaves your file alone, offers the same hooks next time.
-On the first run it is seeded once, from the `settings.json.new` the last run left, or from the kit hooks your file
-already runs, and the plan says which.
+On the first run it is seeded from the kit hooks your file already runs, never from the `settings.json.new`, so a
+kit hook you took out before that run is offered once, on a line of its own; name its script in
+`hook-merge-skip.txt` to keep it out for good.
 
 It only adds: your keys, your hooks and their order stay as they are. The file is written only when its layout is
 the one the tool writes back byte for byte (an indent of spaces, the layout Claude Code itself writes) and no key

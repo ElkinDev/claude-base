@@ -399,7 +399,7 @@ try {
     $mergeRecord = Join-Path $kitHome '.kit-hooks-merged.json'
     $editor = Join-Path $base 'make-mine.py'
     # older-kit: my settings.json with the kit's hooks but turn-budget.py (a hook a later kit adds), plus a key of
-    # mine; older-record: a merge record written before the kit had turn-budget.py; no-kit-hooks: hooks of my own only.
+    # mine; no-kit-hooks: hooks of my own only.
     [IO.File]::WriteAllText($editor, @'
 import json, sys
 path, mode = sys.argv[1], sys.argv[2]
@@ -411,8 +411,6 @@ if mode == "older-kit":
             entry["hooks"] = [h for h in entry["hooks"] if "turn-budget.py" not in h.get("command", "")]
         data["hooks"][event] = [e for e in data["hooks"][event] if e["hooks"]]
     data["model"] = "mine-for-test"
-elif mode == "older-record":
-    data["keys"] = [key for key in data["keys"] if key[2] != "turn-budget.py"]
 else:
     data = {"model": "mine-for-test", "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "company-guard.exe"}]}]}}
 with open(path, "w", encoding="utf-8", newline="\n") as handle:
@@ -458,24 +456,18 @@ with open(path, "w", encoding="utf-8", newline="\n") as handle:
     Assert-Exit 0 'kit-restore.py rolls the merge back without --force'
     Assert-True ((Get-TestHash $settingsPath) -eq $mineBytes) 'my settings.json is byte for byte what it was'
     Assert-True (-not (Test-Path -LiteralPath $mergeRecord)) 'and the merge record is gone with it'
-    # No record again, but a .new from the last run: the record is seeded from it, once, and turn-budget.py,
-    # which that render already had, counts as a hook I took out.
-    $out = Invoke-Install
-    Assert-Exit 0 'a plain run after the rollback succeeds'
-    Assert-Match $out 'seeded from the previous kit render' 'it seeds the record from the .new this time'
-    Assert-Match $out 'up to date' 'and offers nothing that render already had'
-    Assert-True ((Get-TestHash $settingsPath) -eq $mineBytes) 'so my settings.json stays as it is'
-    # A record written before the kit had turn-budget.py: the hook is new to it, so it is offered.
-    & $script:Python $editor $mergeRecord 'older-record'
-    $recordBytes = Get-TestHash $mergeRecord
+    # No record again, and the .new beside my file holds turn-budget.py, never merged into it since the rollback:
+    # a -NoHookMerge run leaves both as they are, and the next normal run adds the hook.
+    Assert-True ((Get-Content -LiteralPath "$settingsPath.new" -Raw).Contains('turn-budget.py')) 'the .new beside it holds the hook my file lacks'
     $out = Invoke-Install @('-NoHookMerge')
     Assert-Exit 0 'a run with -NoHookMerge succeeds'
     Assert-Match $out '-NoHookMerge' 'and says it left the hooks to me'
     Assert-True ((Get-TestHash $settingsPath) -eq $mineBytes) 'and leaves my settings.json as it was'
-    Assert-True ((Get-TestHash $mergeRecord) -eq $recordBytes) 'and the merge record too'
+    Assert-True (-not (Test-Path -LiteralPath $mergeRecord)) 'and writes no merge record'
     $out = Invoke-Install
     Assert-Exit 0 'the normal run after it succeeds'
-    Assert-True ((Get-Content -LiteralPath $settingsPath -Raw).Contains('turn-budget.py')) 'and adds the hook the -NoHookMerge run skipped'
+    Assert-Match $out 'seeded from the kit hooks' 'it seeds the record from my file, never from the .new'
+    Assert-True ((Get-Content -LiteralPath $settingsPath -Raw).Contains('turn-budget.py')) 'and adds the hook the .new held and the -NoHookMerge run skipped'
     # I take the hook out again: the record has it, so it stays out.
     & $script:Python $editor $settingsPath 'older-kit'
     $mineBytes = Get-TestHash $settingsPath

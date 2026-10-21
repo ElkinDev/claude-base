@@ -209,38 +209,39 @@ class MergeHooks(unittest.TestCase):
         self.assertIn("up to date", out)
         self.assertEqual(before, self.raw())
 
-    def test_with_the_previous_render_a_hook_the_user_deleted_or_moved_stays_as_they_left_it(self):
-        previous = copy.deepcopy(KIT)
-        previous["hooks"]["PreToolUse"] = previous["hooks"]["PreToolUse"][:1]  # turn-budget is new since
-        previous_path = self.write_kit(previous, "previous.json")
+    def test_a_hook_moved_before_the_first_merge_is_offered_once_then_stays_as_left(self):
         mine = user_settings()
         mine["hooks"]["PreToolUse"][0]["matcher"] = "Grep"  # guard-read moved from Read to Grep
-        self.write_user(mine)  # and inflight, in the previous render, was never taken: deleted
-        code, out = self.run_tool("--previous", previous_path)
+        self.write_user(mine)
+        code, out = self.run_tool()
         self.assertEqual(0, code, out)
+        self.assertIn("added        PreToolUse[Read] python \"C:/kit/hooks/guard-read.py\"", out.splitlines())
         data = self.read_user()
-        self.assertIn(("*", "python \"C:/kit/hooks/turn-budget.py\""), self.handlers(data, "PreToolUse"))
-        self.assertNotIn("SubagentStop", data["hooks"])
-        self.assertNotIn("Read", [m for m, _ in self.handlers(data, "PreToolUse")])
-        self.assertEqual(1, self.added(out))
+        data["hooks"]["PreToolUse"] = [e for e in data["hooks"]["PreToolUse"] if e.get("matcher") != "Read"]
+        data["hooks"].pop("SubagentStop")  # and inflight, merged above, deleted
+        self.write_user(data)
+        before = self.raw()
+        code, out = self.run_tool()
+        self.assertEqual(0, code, out)
+        self.assertIn("up to date", out)
+        self.assertEqual(before, self.raw())
 
     def test_a_handler_the_kit_adds_under_a_new_matcher_is_added_where_the_script_already_runs(self):
-        previous_path = self.write_kit(KIT, "previous.json")
+        self.write_user(user_settings())
+        self.run_tool()
         kit = copy.deepcopy(KIT)
         kit["hooks"]["PreToolUse"].append({"matcher": "Grep", "hooks": [{"type": "command", "command": "python \"C:/kit/hooks/guard-read.py\""}]})
         self.kit = self.write_kit(kit)
-        self.write_user(user_settings())
-        code, out = self.run_tool("--previous", previous_path)
+        code, out = self.run_tool()
         self.assertEqual(0, code, out)
         self.assertEqual(["added        PreToolUse[Grep] python \"C:/kit/hooks/guard-read.py\""],
                          [line for line in out.splitlines() if line.startswith("added")])
 
-    def test_an_unreadable_previous_render_falls_back_to_scripts_run_nowhere(self):
-        broken = os.path.join(self.base, "previous.json")
-        with open(broken, "w", encoding="utf-8") as handle:
+    def test_a_record_that_does_not_parse_is_seeded_again_from_the_file(self):
+        with open(self.record, "w", encoding="utf-8") as handle:
             handle.write("{ not json")
         self.write_user(user_settings())
-        code, out = self.run_tool("--previous", broken)
+        code, out = self.run_tool()
         self.assertEqual(0, code, out)
         self.assertIn("seeded from the kit hooks", out)
         self.assertEqual(2, self.added(out))
@@ -332,30 +333,24 @@ class MergeHooks(unittest.TestCase):
         newer = {"hooks": {"SessionStart": [
             {"matcher": "startup|resume|clear|fork", "hooks": [{"type": "command", "command": recover + " --rulings"}]},
             {"matcher": "compact", "hooks": [{"type": "command", "command": recover}]}]}}
-        for extra in (("--previous", self.write_kit(older, "previous.json")), ()):
-            if os.path.exists(self.record):
-                os.remove(self.record)
-            self.kit = self.write_kit(newer)
-            self.write_user(older)
-            code, out = self.run_tool(*extra)
-            self.assertEqual(0, code, out)
-            self.assertIn(("startup|resume|clear|fork", recover + " --rulings"), self.handlers(self.read_user(), "SessionStart"))
-            self.assertEqual(1, self.added(out))
+        self.kit = self.write_kit(newer)
+        self.write_user(older)
+        code, out = self.run_tool()
+        self.assertEqual(0, code, out)
+        self.assertIn(("startup|resume|clear|fork", recover + " --rulings"), self.handlers(self.read_user(), "SessionStart"))
+        self.assertEqual(1, self.added(out))
 
     def test_the_same_script_under_the_same_matcher_with_other_arguments_is_added(self):
         recover = "python \"C:/kit/hooks/compact-recover.py\""
         older = {"hooks": {"SessionStart": [{"matcher": "compact", "hooks": [{"type": "command", "command": recover}]}]}}
         newer = {"hooks": {"SessionStart": [{"matcher": "compact", "hooks": [
             {"type": "command", "command": recover}, {"type": "command", "command": recover + " --rulings"}]}]}}
-        for extra in (("--previous", self.write_kit(older, "previous.json")), ()):
-            if os.path.exists(self.record):
-                os.remove(self.record)
-            self.kit = self.write_kit(newer)
-            self.write_user(older)
-            code, out = self.run_tool(*extra)
-            self.assertEqual(0, code, out)
-            self.assertEqual([("compact", recover), ("compact", recover + " --rulings")],
-                             self.handlers(self.read_user(), "SessionStart"))
+        self.kit = self.write_kit(newer)
+        self.write_user(older)
+        code, out = self.run_tool()
+        self.assertEqual(0, code, out)
+        self.assertEqual([("compact", recover), ("compact", recover + " --rulings")],
+                         self.handlers(self.read_user(), "SessionStart"))
 
     def test_the_interpreter_and_the_kit_home_spelling_are_not_part_of_a_handler(self):
         self.kit = self.write_kit({"hooks": {"Stop": [{"hooks": [
@@ -369,17 +364,34 @@ class MergeHooks(unittest.TestCase):
         self.assertEqual(before, self.raw())
 
     def test_a_hook_skipped_once_is_offered_again_on_the_next_run(self):
-        """A -NoHookMerge run, a refusal or a failure leaves the record as it was: the hooks a newer kit
-        brought are offered on the next run, whatever the .new beside the file says by then."""
+        """A dry run, a -NoHookMerge run, a refusal or a failure leaves the record as it was: the hooks a
+        newer kit brought are offered on the next run, whatever the .new beside the file says by then."""
         self.write_user(user_settings())
         self.run_tool()  # the record now holds every key of KIT
         newer = copy.deepcopy(KIT)
         newer["hooks"]["Stop"][0]["hooks"].append({"type": "command", "command": "python \"C:/kit/hooks/new-one.py\""})
         self.kit = self.write_kit(newer)
-        refreshed_new = self.write_kit(newer, "previous.json")  # the .new a skipped run refreshed
-        code, out = self.run_tool("--previous", refreshed_new)
+        self.write_kit(newer, "settings.json.new")  # the .new a skipped run refreshed
+        with open(self.record, "rb") as handle:
+            record = handle.read()
+        code, out = self.run_tool("--dry-run")
+        self.assertIn("would add", out)
+        self.assertEqual(record, self.raw(self.record))
+        code, out = self.run_tool()
         self.assertEqual(0, code, out)
         self.assertIn((None, "python \"C:/kit/hooks/new-one.py\""), self.handlers(self.read_user(), "Stop"))
+
+    def test_a_settings_new_holding_hooks_never_merged_does_not_hide_them(self):
+        """A machine that installed before the merge existed has the kit render in settings.json.new and no
+        record: the hooks in that .new that the file lacks are added, and the next run finds nothing to add."""
+        self.write_kit(KIT, "settings.json.new")
+        self.write_user(user_settings())
+        code, out = self.run_tool()
+        self.assertEqual(0, code, out)
+        self.assertIn("seeded from the kit hooks", out)
+        self.assertEqual(2, self.added(out))
+        code, out = self.run_tool()
+        self.assertIn("up to date", out)
 
     def test_a_hook_the_user_removed_after_a_merge_is_not_offered_again(self):
         self.write_user(user_settings())
@@ -393,20 +405,7 @@ class MergeHooks(unittest.TestCase):
         self.assertIn("up to date", out)
         self.assertEqual(before, self.raw())
 
-    def test_the_first_run_seeds_the_record_from_the_previous_render_once(self):
-        previous = copy.deepcopy(KIT)
-        previous["hooks"]["PreToolUse"] = previous["hooks"]["PreToolUse"][:1]
-        previous_path = self.write_kit(previous, "previous.json")
-        self.write_user(user_settings())
-        code, out = self.run_tool("--previous", previous_path)
-        self.assertEqual(0, code, out)
-        self.assertIn("seeded from the previous kit render", out)
-        self.assertEqual(1, self.added(out))  # turn-budget; inflight was in the previous render
-        code, out = self.run_tool("--previous", previous_path)
-        self.assertNotIn("seeded", out)
-        self.assertIn("up to date", out)
-
-    def test_the_first_run_seeds_from_the_file_when_there_is_no_previous_render(self):
+    def test_the_first_run_seeds_the_record_from_the_kit_hooks_the_file_runs(self):
         mine = user_settings()
         mine["hooks"]["PreToolUse"].append({"matcher": "*", "hooks": [{"type": "command", "command": "python \"C:/kit/hooks/turn-budget.py\""}]})
         mine["hooks"]["SubagentStop"] = [{"matcher": "*", "hooks": [{"type": "command", "command": "python \"C:/kit/hooks/inflight.py\""}]}]
