@@ -4,7 +4,9 @@ last notice. Nothing otherwise.
 The daily run (install/auto-update.ps1, registered by install.ps1 -AutoUpdate) appends one JSON line to
 <kit home>/logs/auto-update-pending.jsonl for each run that updated the kit or failed. This hook reads that file,
 prints one line naming the new kit commit, how many files changed and the hooks added, or the failure, and the log
-path, then moves the file aside to auto-update-pending.seen.jsonl so the next session prints nothing.
+path. The file is first claimed by renaming it to a name of this process's own: only the session whose rename wins
+prints, so two sessions that start together print the line once, and the next session prints nothing. The claimed
+file ends as auto-update-pending.seen.jsonl.
 
 The line goes out as JSON: systemMessage shows it to the user, additionalContext hands it to the session. The kit
 home is KIT_HOME when set, else the folder above this hook's own. It never blocks and never fails the session: it
@@ -63,10 +65,15 @@ def main():
     pending = os.path.join(logs, "auto-update-pending.jsonl")
     if not os.path.isfile(pending):
         return
-    runs = entries(pending)
-    # Moved aside before the line is printed: a notice that cannot be moved is shown again next time, never lost.
+    claimed = "%s.%d" % (pending, os.getpid())
     try:
-        os.replace(pending, os.path.join(logs, "auto-update-pending.seen.jsonl"))
+        os.rename(pending, claimed)
+    except OSError:
+        # another session claimed it first, or it cannot be moved: that session prints, this one does not
+        return
+    runs = entries(claimed)
+    try:
+        os.replace(claimed, os.path.join(logs, "auto-update-pending.seen.jsonl"))
     except OSError:
         pass
     if not runs:

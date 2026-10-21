@@ -52,10 +52,10 @@ param(
     # User scope: when your settings.json is kept with a .new beside it, the kit's new hooks are added to
     # it (after a backup, nothing of yours removed; claude\merge-hooks.py). This switch leaves it as it is.
     [switch]$NoHookMerge,
-    # User scope, from a git clone: register a daily task of this user, no elevation, that pulls the clone and runs
-    # this installer with the options of this run, hidden and with no question (install\schedule.ps1). Its log is
-    # <kit home>\logs, and the next session start prints one line when it updated the kit or failed.
-    # -NoAutoUpdate removes the task.
+    # User scope, from a git clone: register a daily task of this user, no elevation, that pulls the clone and, when
+    # it moved, runs this installer hidden and with no question, in the permission mode settings.json has then,
+    # never touching Herdr (install\schedule.ps1). Its log is <kit home>\logs, and the next session start prints
+    # one line when it updated the kit or failed. -NoAutoUpdate removes this kit home's task and does nothing else.
     [switch]$AutoUpdate,
     [switch]$NoAutoUpdate
 )
@@ -78,6 +78,12 @@ if ($GradleHook -and -not $Project) {
 }
 
 $kitHome      = Get-KitHome
+if ($NoAutoUpdate) {
+    # A removal and nothing else: no plan and no install, so no option of this run (the default -Permissions
+    # bypass included) can change the kit home.
+    Unregister-KitAutoUpdate $kitHome -DryRun:$DryRun
+    exit 0
+}
 $stamp        = Get-KitStamp $kitHome
 $manifestPath = Join-Path $kitHome '.kit-manifest.json'
 $manifest     = Read-KitManifest $manifestPath
@@ -451,6 +457,9 @@ if (Test-Path -LiteralPath $pluginRoot) {
 foreach ($file in @('statusline.ps1', 'claude-account.ps1', 'cc-launch.ps1', 'merge-settings.py', 'CLAUDE.md', 'bin\cc.cmd')) {
     $pairs += New-KitPair (Join-Path $root "claude\$file") (Join-Path $kitHome $file)
 }
+# The daily update's runner, which its task runs from here, not from the clone, so a moved clone is still reported
+# (install\schedule.ps1). Every install refreshes it, -AutoUpdate or not.
+$pairs += New-KitPair (Join-Path $root 'install\auto-update.ps1') (Join-Path $kitHome 'kit-auto-update.ps1')
 
 # Rendered from the kit home, not from the profile: KIT_HOME moves where the files land, so it has
 # to move what the hook commands inside settings.json point at, or they point at an empty tree.
@@ -490,15 +499,11 @@ if ($Permissions -eq 'bypass') {
     Write-Output "  PERMISSIONS: ask. Claude Code will prompt before acting."
     Write-Output "  Some skills in this base assume bypass and will stop on each step."
 }
-$herdrChoice = Get-KitHerdrChoice -Yes $Herdr.IsPresent -No $NoHerdr.IsPresent -DryRun $DryRun.IsPresent
-Install-KitHerdr -KitRoot $root -KitHome $kitHome -DryRun:$DryRun -Choice $herdrChoice
-# The daily update keeps this run's choices, the Herdr answer included, so a later run never asks or changes one.
+Install-KitHerdr -KitRoot $root -KitHome $kitHome -DryRun:$DryRun `
+    -Choice (Get-KitHerdrChoice -Yes $Herdr.IsPresent -No $NoHerdr.IsPresent -DryRun $DryRun.IsPresent)
 if ($AutoUpdate) {
     Write-Output ""
-    Register-KitAutoUpdate $root $kitHome $Permissions $herdrChoice $NoHookMerge.IsPresent -DryRun:$DryRun
-} elseif ($NoAutoUpdate) {
-    Write-Output ""
-    Unregister-KitAutoUpdate -DryRun:$DryRun
+    Register-KitAutoUpdate $root $kitHome $NoHookMerge.IsPresent -DryRun:$DryRun
 }
 Write-Output ""
 Write-Output "Done."

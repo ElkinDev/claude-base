@@ -1,23 +1,26 @@
 #requires -Version 5.1
 <#
-auto-update.ps1 - the daily kit update, run by the scheduled task that install.ps1 -AutoUpdate registers
-(install\schedule.ps1). Not meant to be run by hand, though nothing breaks if it is.
+auto-update.ps1 - the daily kit update. Every install copies it to <kit home>\kit-auto-update.ps1, and the scheduled
+task that install.ps1 -AutoUpdate registers (install\schedule.ps1) runs that copy, so a clone that was moved or
+deleted is logged and reported rather than stopping the updates in silence. Not meant to be run by hand, though
+nothing breaks if it is.
 
 It does what the get.ps1 line does on a machine that already has the clone, with no question: git pull --ff-only in
-the clone, then install.ps1 with the options of the run that enabled it. Everything goes to
-<kit home>\logs\auto-update-<yyyy-MM-dd>.log, and the last 30 of those are kept. A clone with changes of its own,
-or a pull that fails (no network, a branch that went its own way), is logged and nothing is installed.
+the clone, then install.ps1, but only when the clone's commit differs from the one the last good run installed
+(logs\auto-update-installed.txt, written after install.ps1 exits 0, so an install that failed after a pull is tried
+again the next day). Nothing it passes was frozen when it was enabled except -NoHookMerge, an opt-out the user
+chose: the permission mode is read from the live settings.json at each run (bypassPermissions is bypass, anything
+else, a missing or unreadable file included, is ask), and Herdr is left as it is (-NoHerdr, which only prints a
+line).
 
-A run that moved the kit, or failed, appends one JSON line to logs\auto-update-pending.jsonl; the session-start hook
-kit-update-notice.py prints it once. logs\auto-update-installed.txt holds the commit the last good run installed,
-so a run that pulled and then failed to install is reported as an update by the next run that succeeds.
+Everything goes to <kit home>\logs\auto-update-<yyyy-MM-dd>.log, and the last 30 of those are kept. A missing clone,
+a clone with changes of its own, or a pull that fails (no network, a branch that went its own way) is logged and
+nothing is installed. A run that moved the kit, or failed, appends one JSON line to logs\auto-update-pending.jsonl;
+the session-start hook kit-update-notice.py prints it once.
 #>
 param(
     [Parameter(Mandatory = $true)][string]$Dir,
     [Parameter(Mandatory = $true)][string]$KitHome,
-    [Parameter(Mandatory = $true)][ValidateSet('bypass', 'ask')][string]$Permissions,
-    [switch]$Herdr,
-    [switch]$NoHerdr,
     [switch]$NoHookMerge
 )
 $ErrorActionPreference = 'Continue'
@@ -68,15 +71,23 @@ function Get-KitHookScripts {
         ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
 }
 
-$flags = @('-Permissions', $Permissions)
-if ($Herdr) { $flags += '-Herdr' }
-if ($NoHerdr) { $flags += '-NoHerdr' }
-if ($NoHookMerge) { $flags += '-NoHookMerge' }
-Write-UpdateLog "start: clone $Dir, kit home $KitHome, install.ps1 $($flags -join ' ')"
+function Get-LivePermissions {
+    # The mode the user has now, read from the settings.json in use: an automatic run never changes it.
+    try {
+        $mode = (Get-Content -LiteralPath (Join-Path $KitHome 'settings.json') -Raw -ErrorAction Stop |
+            ConvertFrom-Json).permissions.defaultMode
+    } catch { $mode = $null }
+    if ($mode -eq 'bypassPermissions') { return 'bypass' }
+    return 'ask'
+}
+
+Write-UpdateLog "start: clone $Dir, kit home $KitHome$(if ($NoHookMerge) { ', -NoHookMerge' })"
 Get-ChildItem -LiteralPath $logs -File | Where-Object { $_.Name -match '^auto-update-\d{4}-\d{2}-\d{2}\.log$' } |
     Sort-Object Name -Descending | Select-Object -Skip 30 | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
 
-if (-not (Test-Path -LiteralPath (Join-Path $Dir '.git'))) { Stop-Update "$Dir is not a git clone; nothing was pulled or installed" }
+if (-not (Test-Path -LiteralPath (Join-Path $Dir '.git'))) {
+    Stop-Update "the clone at $Dir is gone or is not a git clone; nothing was pulled or installed. Run the get.ps1 line with -AutoUpdate to point the task at a clone"
+}
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Stop-Update 'git is not on PATH; nothing was pulled or installed' }
 $before = ((Invoke-UpdateGit @('rev-parse', 'HEAD')) | Select-Object -Last 1)
 if ($LASTEXITCODE -ne 0) { Stop-Update "git could not read the clone at $Dir; nothing was pulled or installed" }
@@ -90,21 +101,34 @@ if ($LASTEXITCODE -ne 0) {
     Stop-Update "git pull --ff-only in $Dir failed: $(if ($last) { $last[0].Trim() } else { "exit $LASTEXITCODE" }); nothing was installed"
 }
 $after = ((Invoke-UpdateGit @('rev-parse', 'HEAD')) | Select-Object -Last 1)
-# The commit the last good run installed, so a run that pulled but failed to install is not lost.
-$from = $before
+
+# The commit the last good run installed. Equal to the clone's: there is nothing to install. None yet (the first
+# run): install once, and report from the commit the clone had before the pull.
+$from = $null
 if (Test-Path -LiteralPath $installed) {
     $kept = (Get-Content -LiteralPath $installed -TotalCount 1)
     if ($kept -match '^[0-9a-f]{40}$') { $from = $kept }
 }
-Write-UpdateLog "kit at $after (was $from)"
+if ($from -eq $after) {
+    Write-UpdateLog "done: the kit is already installed at $($after.Substring(0, 7)); nothing to install"
+    exit 0
+}
+if (-not $from) { $from = $before }
+Write-UpdateLog "kit at $after (installed $from)"
 
+$permissions = Get-LivePermissions
+$flags = @('-Permissions', $permissions, '-NoHerdr')
+if ($NoHookMerge) { $flags += '-NoHookMerge' }
+Write-UpdateLog "install.ps1 $($flags -join ' ') (the mode read from settings.json; Herdr left as it is)"
 $env:KIT_HOME = $KitHome
 $ps = if ($env:SystemRoot) { Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe' } else { 'powershell' }
 $output = @(& $ps -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $Dir 'install.ps1') @flags 2>&1 |
     ForEach-Object { "$_" })
 $code = $LASTEXITCODE
 foreach ($line in $output) { Write-UpdateLog "  install: $line" }
-if ($code -ne 0) { Stop-Update "install.ps1 exited $code after the pull to $($after.Substring(0, 7)); the kit home is as that run left it" }
+if ($code -ne 0) {
+    Stop-Update "install.ps1 exited $code after the pull to $($after.Substring(0, 7)); the clone is at that commit, the kit home as that run left it (its output is above in the log), and the next run tries the install again"
+}
 Set-Content -LiteralPath $installed -Value $after -Encoding ASCII
 
 if ($after -ne $from) {
@@ -116,6 +140,6 @@ if ($after -ne $from) {
         files = $files; hooks = $hooks })
     Write-UpdateLog "done: updated to $($after.Substring(0, 7)), $files files changed$(if ($hooks.Count) { ', new hooks: ' + ($hooks -join ', ') })"
 } else {
-    Write-UpdateLog "done: the kit was already up to date at $($after.Substring(0, 7))"
+    Write-UpdateLog "done: installed $($after.Substring(0, 7)), the commit the clone already had"
 }
 exit 0

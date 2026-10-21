@@ -112,6 +112,18 @@ class KitUpdateNotice(unittest.TestCase):
             handle.write(b"\xff\xfe\x00bad")
         self.assertEqual(self.run_hook(), "")
 
+    def test_sessions_that_start_together_print_the_line_once(self):
+        env = dict(os.environ, KIT_HOME=self.base)
+        for _ in range(5):
+            self.write(UPDATED)
+            started = [subprocess.Popen([sys.executable, HOOK], env=env, stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(4)]
+            outs = [process.communicate(timeout=20) for process in started]
+            self.assertEqual([process.returncode for process in started], [0, 0, 0, 0])
+            self.assertEqual([err for _, err in outs], ["", "", "", ""])
+            self.assertEqual(sum(1 for out, _ in outs if out.strip()), 1, outs)
+            self.assertEqual(sorted(os.listdir(self.logs)), ["auto-update-pending.seen.jsonl"])
+
 
 if __name__ == "__main__":
     unittest.main()
