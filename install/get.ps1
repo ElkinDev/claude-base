@@ -18,7 +18,11 @@
 #   4. Runs scripts\doctor.py and says what is left to do by hand (signing in to Claude Code).
 #
 # -Yes answers yes to every question (Herdr too, unless -NoHerdr). -DryRun installs nothing and runs
-# install.ps1 -DryRun when a clone is already there. -Permissions is passed to install.ps1.
+# install.ps1 -DryRun when a clone is already there. -Permissions and -NoHookMerge are passed to install.ps1.
+#
+# Updating is the same line again: it pulls the clone and re-runs install.ps1, which adds the kit's new
+# hooks to a settings.json of yours that already carries the kit's hooks (backup first; -NoHookMerge
+# leaves it alone).
 #
 # The tests replace the external commands through the environment: CLAUDE_BASE_WINGET (winget),
 # CLAUDE_BASE_CLAUDE_INSTALLER (a .ps1, a path or a URL, saved and run instead of the Claude Code installer), CLAUDE_BASE_MISSING
@@ -32,6 +36,7 @@ param(
     [switch]$NoHerdr,
     [switch]$Yes,
     [switch]$DryRun,
+    [switch]$NoHookMerge,
     [ValidateSet('bypass', 'ask')]
     [string]$Permissions = 'bypass'
 )
@@ -288,6 +293,7 @@ function Invoke-GetMain {
         }
 
         $installArgs = @('-Permissions', $Permissions)
+        if ($NoHookMerge) { $installArgs += '-NoHookMerge' }
         if ($DryRun) { $installArgs += '-DryRun' }
         # The question is asked here, not by install.ps1: its output goes through this script, so it
         # sees no console and would skip the question.

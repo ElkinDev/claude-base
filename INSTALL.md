@@ -56,8 +56,9 @@ the new clone: updates, `-Project` and the Herdr hotkey run from it.
 
 The hooks and the status line start Windows PowerShell by its full path, so they work on a machine whose PATH lost
 the PowerShell folder. An install that finds a `settings.json` you edited keeps yours and writes the kit version
-beside it as `settings.json.new`; on such a machine, merge the `.new` into yours, or its hooks keep starting
-PowerShell by name and fail.
+beside it as `settings.json.new`; on such a machine, take the hook commands from the `.new` into yours, or its
+hooks keep starting PowerShell by name and fail. The automatic merge under Updating adds hooks the file lacks, it
+does not rewrite the ones already there.
 
 ## 0. Check the machine first
 ```
@@ -81,7 +82,27 @@ backed up, kept exactly as it is, and the kit version lands beside it as `<name>
 merge by hand. If you already had a `settings.json`, that means `settings.json.new`: keep your own
 keys and add the `statusLine` block and the `worklog` SessionStart / PreCompact / SessionEnd / Stop
 hooks, and the compaction hooks (PreCompact checkpoint with summary steering, PostCompact summary
-persistence, SessionStart recovery; see `docs/CONTEXT-ECONOMICS.md`).
+persistence, SessionStart recovery; see `docs/CONTEXT-ECONOMICS.md`). That hand merge is needed once:
+see Updating below for what later runs do on their own.
+
+### Updating
+Run the same one line you installed with (the line at the top of this file, with the options you used, if any). It runs `git pull --ff-only` in the clone and then `install.ps1`; from a clone by hand it is `git pull` and
+then `install.ps1`. The run refreshes every file nobody edited and keeps the ones you did, as on the first install.
+
+Your `settings.json` gets one more step. When the installer keeps it (you or Claude Code changed it, so it differs
+from what the kit wrote), and it already carries at least one of the kit's hook commands, `claude\merge-hooks.py`
+adds every kit hook whose command your file lacks, under the same event and matcher. It only adds: your keys, your
+hooks and their order stay as they are, a file with none of the kit's hooks is left alone, and a file that does
+not parse is not touched. The file is copied into the run's backup folder first and recorded there as
+overwritten, so `python scripts\kit-restore.py --stamp <stamp>` (the run prints it) puts it back. The plan
+shows each added hook on a `hooks+` line, and `-DryRun` shows them without writing.
+
+- `-NoHookMerge` (on `install.ps1` or at the end of the `get.ps1` line) skips the step and leaves the new hooks in
+  `settings.json.new` for you.
+- A kit hook you removed on purpose would come back on the next update. Put its script name on a line of
+  `hook-merge-skip.txt` beside `settings.json` (for example `turn-budget.py`), and the merge leaves it out.
+- The file is written in place, which is what lets Claude Code sessions already open pick up the new hooks. If a
+  new hook does not show in an open session, close it and open it again.
 
 It also makes `cc`, the account switcher, a command: `cc.cmd` lands in `<kit home>\bin` and that folder is
 added to your user PATH once, keeping the other entries as they were. A terminal opened after the run finds `cc`

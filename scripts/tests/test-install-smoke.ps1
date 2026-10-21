@@ -393,6 +393,62 @@ try {
     $env:KIT_ENV_KEY = $null; $env:CLAUDE_BASE_ENV_KEY = 'Software\claude-base-kit-test-stand-in\Environment'
     try { $name = Get-KitEnvKeyName } finally { $env:KIT_ENV_KEY = $savedKey; $env:CLAUDE_BASE_ENV_KEY = $savedBase }
     Assert-True ($name -eq 'Software\claude-base-kit-test-stand-in\Environment') ("CLAUDE_BASE_ENV_KEY stands in for HKCU\Environment too ($name)")
+    # ------------------------------------------------------ the kit's new hooks --
+    Write-Host "`r`nphase 16, an update adds the kit's new hooks to a settings.json of mine, and nothing else"
+    $settingsPath = Join-Path $kitHome 'settings.json'
+    $editor = Join-Path $base 'make-mine.py'
+    # A settings.json of mine: the kit's hooks without turn-budget.py (a hook a later kit adds), plus a key of mine.
+    [IO.File]::WriteAllText($editor, @'
+import json, sys
+path, mode = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as handle:
+    data = json.load(handle)
+if mode == "older-kit":
+    for event in list(data["hooks"]):
+        for entry in data["hooks"][event]:
+            entry["hooks"] = [h for h in entry["hooks"] if "turn-budget.py" not in h.get("command", "")]
+        data["hooks"][event] = [e for e in data["hooks"][event] if e["hooks"]]
+    data["model"] = "mine-for-test"
+else:
+    data = {"model": "mine-for-test", "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "company-guard.exe"}]}]}}
+with open(path, "w", encoding="utf-8", newline="\n") as handle:
+    json.dump(data, handle, indent=2)
+    handle.write("\n")
+'@)
+    & $script:Python $editor $settingsPath 'older-kit'
+    $mineBytes = Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256
+    Assert-True (-not (Get-Content -LiteralPath $settingsPath -Raw).Contains('turn-budget.py')) 'my settings.json lacks the newer kit hook'
+    $out = Invoke-Install @('-DryRun')
+    Assert-Exit 0 'a dry run over it succeeds'
+    Assert-Regex $out 'hooks\+\s+.*settings\.json PreToolUse\[\*\] .*turn-budget\.py' 'the dry run names the hook it would add'
+    Assert-True ((Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256).Hash -eq $mineBytes.Hash) 'and writes nothing'
+    $out = Invoke-Install
+    Assert-Exit 0 'the update run succeeds'
+    $merged = Get-Content -LiteralPath $settingsPath -Raw
+    Assert-True ($merged.Contains('turn-budget.py')) 'the newer kit hook is now in my settings.json'
+    Assert-True ($merged.Contains('mine-for-test')) 'my own key is still there'
+    Assert-True (Test-Path -LiteralPath "$settingsPath.new") 'the kit version is still beside it as .new'
+    $stamp16 = Get-LastStamp
+    Assert-ManifestLine $stamp16 'overwritten' $settingsPath 'the record calls the merge an overwrite, so a rollback can undo it'
+    Assert-True (-not (Get-Content -LiteralPath (Get-BackupCopy $stamp16 $settingsPath) -Raw).Contains('turn-budget.py')) `
+        'the backup holds my file as it was before the merge'
+    $out = Invoke-Install
+    Assert-Exit 0 'the run after it succeeds'
+    Assert-Match $out 'up to date' 'and finds nothing more to add'
+    Assert-Match $out 'Nothing changed, so there is nothing to roll back.' 'and writes nothing'
+    $text = Invoke-Restore @('--stamp', $stamp16)
+    Assert-Exit 0 'kit-restore.py rolls the merge back without --force'
+    Assert-True ((Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256).Hash -eq $mineBytes.Hash) 'my settings.json is byte for byte what it was'
+    $out = Invoke-Install @('-NoHookMerge')
+    Assert-Exit 0 'a run with -NoHookMerge succeeds'
+    Assert-Match $out '-NoHookMerge' 'and says it left the hooks to me'
+    Assert-True ((Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256).Hash -eq $mineBytes.Hash) 'and leaves my settings.json as it was'
+    & $script:Python $editor $settingsPath 'no-kit-hooks'
+    $mineBytes = Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256
+    $out = Invoke-Install
+    Assert-Exit 0 'a run over a settings.json with none of the kit hooks succeeds'
+    Assert-Match $out 'left alone' 'and says the hooks there are mine'
+    Assert-True ((Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256).Hash -eq $mineBytes.Hash) 'and writes nothing into it'
 } finally {
     Close-KitSandbox $realProfile
 }

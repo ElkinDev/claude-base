@@ -47,7 +47,10 @@ param(
     # User scope: add Herdr, set up the way this kit uses it (install\herdr.ps1), without asking.
     # With neither switch the installer asks, and Enter is yes; a run with no console asks nothing.
     [switch]$Herdr,
-    [switch]$NoHerdr
+    [switch]$NoHerdr,
+    # User scope: when your settings.json is kept with a .new beside it, the kit's new hooks are added to
+    # it (after a backup, nothing of yours removed; claude\merge-hooks.py). This switch leaves it as it is.
+    [switch]$NoHookMerge
 )
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
@@ -106,6 +109,12 @@ function Invoke-KitPlan {
             $line = Set-KitFile -Target $pair.Target -SourcePath $pair.Source -SourceText $pair.Text `
                 -Manifest $manifest -Force:$Force -DryRun:$DryRun
             if ($line) { $lines += $line }
+            # Your settings.json was kept: the kit's new hooks go into it here, inside the plan, so the
+            # backup line comes before the write and the closing block names the rollback.
+            if ($line -and $script:KitHookMergeTarget -and $pair.Target -eq $script:KitHookMergeTarget -and
+                (@($line)[0] -match '^(backup\+new|kept) ')) {
+                $lines += @(Invoke-KitHookMerge $pair.Target ([string]$pair.Text))
+            }
         }
         $finished = $true
     } finally {
@@ -120,6 +129,67 @@ function Invoke-KitPlan {
         Write-KitSummary $lines $finished
         Write-KitClosing
     }
+}
+
+function Get-KitPython {
+    # The first python that runs and prints, as an argument list: the WindowsApps python.exe is a
+    # Store shortcut that prints nothing, so being on PATH is not enough.
+    foreach ($candidate in @(@('python'), @('py', '-3'))) {
+        if (-not (Get-Command $candidate[0] -ErrorAction SilentlyContinue)) { continue }
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $rest = @($candidate | Select-Object -Skip 1)
+            $said = (& $candidate[0] @rest -c 'print(42)' 2>$null | Out-String).Trim()
+        } catch { $said = '' } finally { $ErrorActionPreference = $previous }
+        if ($said -eq '42') { return ,$candidate }
+    }
+    return $null
+}
+
+function Invoke-KitHookMerge {
+    <#
+    The kit's new hooks into a settings.json of yours, through claude\merge-hooks.py: additions only,
+    and only into a file that already carries the kit's hooks. A dry probe runs first, so a run with
+    nothing to add writes no backup line. Before a real write the file is backed up and recorded as
+    overwritten, and its stale record leaves the manifest: the file is yours either way (a record that
+    differs from it and no record both keep it), and without the stale record kit-restore.py puts it
+    back without --force. Returns plan lines.
+    #>
+    param([string]$Target, [string]$KitText)
+    $byHand = "take new hooks from $Target.new by hand"
+    if ($NoHookMerge) { return "hooks        $Target (not merged, -NoHookMerge; $byHand)" }
+    $python = Get-KitPython
+    if (-not $python) { return "hooks        $Target (not merged, no Python that runs; $byHand)" }
+    $tool = Join-Path $root 'claude\merge-hooks.py'
+    $b64 = [Convert]::ToBase64String((New-Object System.Text.UTF8Encoding($false)).GetBytes($KitText))
+    $exe = $python[0]
+    $pre = @($python | Select-Object -Skip 1) + @('-I', $tool, '--kit-b64', $b64)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $savedIo = $env:PYTHONIOENCODING
+    $env:PYTHONIOENCODING = 'utf-8'
+    try {
+        $probe = @(& $exe @pre $Target '--dry-run' 2>&1 | ForEach-Object { "$_" })
+        $code = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previous; $env:PYTHONIOENCODING = $savedIo }
+    if ($code -ne 0) { return "hooks        $Target (not merged: $((@($probe) + '')[0]); $byHand)" }
+    $adds = @($probe | Where-Object { $_.StartsWith('would add') })
+    $notes = @($probe | Where-Object { -not $_.StartsWith('would add') } | ForEach-Object { "hooks        $_" })
+    if ($adds.Count -eq 0) { return $notes }
+    $added = @($adds | ForEach-Object { "hooks+       $Target " + $_.Substring('would add'.Length).Trim() })
+    if ($DryRun) { return @($notes + $added) }
+    Backup-KitFile $Target
+    Add-KitBackupLine "overwritten $Target"
+    $ErrorActionPreference = 'Continue'
+    $env:PYTHONIOENCODING = 'utf-8'
+    try {
+        $done = @(& $exe @pre $Target 2>&1 | ForEach-Object { "$_" })
+        $code = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previous; $env:PYTHONIOENCODING = $savedIo }
+    if ($code -ne 0) { return "hooks        $Target (not merged: $((@($done) + '')[0]); $byHand)" }
+    if ($manifest.ContainsKey($Target)) { $manifest.Remove($Target) }
+    return @($notes + $added)
 }
 
 function Get-KitGradleHookNote {
@@ -364,6 +434,7 @@ if ($Permissions -eq 'ask') {
     $settingsText = $settingsText -replace '"skipDangerousModePermissionPrompt"\s*:\s*true', '"skipDangerousModePermissionPrompt": false'
 }
 $pairs += New-KitPair $null (Join-Path $kitHome 'settings.json') $settingsText
+$script:KitHookMergeTarget = Join-Path $kitHome 'settings.json'
 
 Write-Output "Kit home: $kitHome"
 Invoke-KitPlan $pairs 'user scope install'
