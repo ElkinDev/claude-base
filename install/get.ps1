@@ -22,7 +22,11 @@
 #
 # Updating is the same line again: it pulls the clone and re-runs install.ps1, which adds the kit's new
 # hooks to a settings.json of yours that already runs the kit's hooks (backup first; -NoHookMerge
-# leaves it alone).
+# leaves it alone). -AutoUpdate at the end of the line makes that a daily task of this user that runs
+# hidden, installs only when the clone moved past the last install, replays that install's options with
+# the permission mode settings.json has, changes nothing outside the kit home, logs to <kit home>\logs,
+# and is reported at the next session start (install.ps1). -NoAutoUpdate removes it and does nothing
+# else: no check, no clone needed, no pull, no install.
 #
 # The tests replace the external commands through the environment: CLAUDE_BASE_WINGET (winget),
 # CLAUDE_BASE_CLAUDE_INSTALLER (a .ps1, a path or a URL, saved and run instead of the Claude Code installer), CLAUDE_BASE_MISSING
@@ -37,6 +41,9 @@ param(
     [switch]$Yes,
     [switch]$DryRun,
     [switch]$NoHookMerge,
+    # A daily task that runs this same update hidden; -NoAutoUpdate removes it and does nothing else (install.ps1).
+    [switch]$AutoUpdate,
+    [switch]$NoAutoUpdate,
     [ValidateSet('bypass', 'ask')]
     [string]$Permissions = 'bypass'
 )
@@ -247,10 +254,43 @@ function Install-GetTool {
     return $false
 }
 
+function Get-GetAutoUpdateName {
+    # The daily task of a kit home, named as install\schedule.ps1 names it (Get-KitAutoUpdateName): the same hash of
+    # the kit home in one spelling, so a removal needs no clone. test-install-auto-update.ps1 holds the two together.
+    param([string]$KitHome)
+    $key   = [IO.Path]::GetFullPath($KitHome.Replace('/', '\')).TrimEnd('\').ToLowerInvariant()
+    $hash  = [Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($key))
+    return 'kit-auto-update-' + ([BitConverter]::ToString($hash).Replace('-', '').Substring(0, 8).ToLowerInvariant())
+}
+
+function Remove-GetAutoUpdate {
+    # -NoAutoUpdate: remove this kit home's daily task and nothing else, with or without a clone. The kit home is the
+    # installer's: KIT_HOME, else %USERPROFILE%\.claude. KIT_SCHEDULER is the tests' stand-in, as in schedule.ps1.
+    $kitHome = if ($env:KIT_HOME) { $env:KIT_HOME } else { Join-Path $env:USERPROFILE '.claude' }
+    $name = Get-GetAutoUpdateName $kitHome
+    if ($env:KIT_SCHEDULER) {
+        $tasks = [ordered]@{}
+        if (Test-Path -LiteralPath $env:KIT_SCHEDULER) {
+            $read = Get-Content -LiteralPath $env:KIT_SCHEDULER -Raw | ConvertFrom-Json
+            if ($read) { foreach ($member in $read.PSObject.Properties) { $tasks[$member.Name] = $member.Value } }
+        }
+        $found = $tasks.Contains($name)
+    } else { $found = [bool](Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) }
+    if (-not $found) { return "auto-update  no daily task $name for $kitHome to remove" }
+    if ($DryRun) { return "auto-update  would remove the daily task $name" }
+    if ($env:KIT_SCHEDULER) {
+        $tasks.Remove($name)
+        $tasks | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $env:KIT_SCHEDULER -Encoding UTF8
+    } else { Unregister-ScheduledTask -TaskName $name -Confirm:$false }
+    return "auto-update  removed the daily task $name; nothing else was changed"
+}
+
 function Invoke-GetMain {
     Write-Host "claude-base: one-command install into $Dir"
     if ($PSVersionTable.PSVersion.Major -lt 5) { Write-Host 'Windows PowerShell 5.1 or later is required.'; return 1 }
     if ($Herdr -and $NoHerdr) { Write-Host '-Herdr and -NoHerdr cannot both be given.'; return 1 }
+    if ($AutoUpdate -and $NoAutoUpdate) { Write-Host '-AutoUpdate and -NoAutoUpdate cannot both be given.'; return 1 }
+    if ($NoAutoUpdate) { Write-Host (Remove-GetAutoUpdate); return 0 }
 
     $tools = @(
         @{ Tool = 'git';    Name = 'Git for Windows (git, and the Git Bash the hooks run in)' },
@@ -294,6 +334,7 @@ function Invoke-GetMain {
 
         $installArgs = @('-Permissions', $Permissions)
         if ($NoHookMerge) { $installArgs += '-NoHookMerge' }
+        if ($AutoUpdate) { $installArgs += '-AutoUpdate' }
         if ($DryRun) { $installArgs += '-DryRun' }
         # The question is asked here, not by install.ps1: its output goes through this script, so it
         # sees no console and would skip the question.

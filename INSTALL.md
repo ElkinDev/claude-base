@@ -117,6 +117,58 @@ them without writing.
 - A running Claude Code session's file watcher normally picks the change up. If a new hook does not show in an open
   session, close it and open it again.
 
+#### Updating every day on its own
+`-AutoUpdate` (at the end of the `get.ps1` line, or on `install.ps1` run from a clone) registers a scheduled task of
+your own user, with no elevation and no stored password, named `kit-auto-update-` and a short hash of the kit home's
+full path (case and slash direction do not matter), so each kit home has exactly one. Every day at 05:00, or as soon
+as you sign in after a day the machine was off (the task's "run as soon as possible after a missed start"), it runs
+`<kit home>\kit-auto-update.ps1`, a copy of `install\auto-update.ps1` that every install refreshes. The task itself
+carries no option: it names the clone and the kit home, nothing else.
+
+Every install that finishes, by hand or by the task, writes `<kit home>\.kit-install.json`: the commit it installed
+and the options it ran with. The daily run pulls the clone with `git pull --ff-only` and runs `install.ps1` only
+when the clone's commit differs from that record's. It follows your last choices, never the ones of the day you
+enabled it:
+
+- `-NoHookMerge` is taken from the record, so the last install you ran by hand decides it.
+- The permission mode is read from the `settings.json` in use at that moment (`bypassPermissions` is bypass,
+  anything else is ask).
+- It installs with `-Unattended`: the kit home and nothing outside it. These steps of a hand install are skipped,
+  each with a line in the log: the user PATH entry for `cc` (a folder you took off your PATH stays off), Herdr (its
+  installer, its `config.toml`, its integration and the Ctrl+Alt+N shortcut), and the scheduled task. Nothing is
+  asked.
+- A hand update writes the record too, so the next daily run finds nothing to install and reports nothing.
+- An install from another clone than the task's (a second checkout) is your latest choice: the daily run installs
+  nothing and waits, said once in the notice, until an install comes from the task's clone again, and then resumes
+  by itself.
+- With the record missing or unreadable, the run passes `-NoHookMerge`, since a choice nobody can read never
+  touches your `settings.json`, and its install writes the record again.
+
+It never waits on a question: git runs with prompts off and, unless you have an ssh of your own (`GIT_SSH_COMMAND`,
+`GIT_SSH` such as plink with pageant, or `core.sshCommand`, which are left as they are), ssh in batch mode, so a key
+with a passphrase fails the pull instead of waiting. One run at a time per clone: a run holds a lock inside the clone's `.git` folder, and a run
+that cannot take it within ten minutes logs a skip line and leaves no notice.
+
+It shows no window. The task starts `conhost.exe --headless`, which runs PowerShell on a console with no window;
+a task that starts `powershell.exe -WindowStyle Hidden` still opens a Windows Terminal window on Windows 11.
+
+- The log of each run is `<kit home>\logs\auto-update-<yyyy-MM-dd>.log`; the last 30 are kept. Each run starts with
+  a `start` line and ends with a `done`, `failed` or `skipped` line. The task's last run result in Task Scheduler
+  always reads 0; the log is where the outcome is.
+- A failed pull changes nothing: a clone with changes of its own, no network, a branch that went its own way, or a
+  clone that was moved or deleted (the copy in the kit home still runs, logs it and reports it).
+- A pull that worked followed by an install that failed leaves the clone at the new commit and the kit home as that
+  install left it (its output is in the log). The record moves only after an install that succeeds, so the next run
+  tries the install again.
+- A run the task stopped at its 30-minute limit has a `start` line and no end line; once that is older than the
+  limit, the next session reports it as a failure and writes the end line, so it is reported once.
+- The next Claude Code session (start or resume) prints one line when a run moved the kit or failed since the
+  last notice, through the `kit-update-notice.py` session-start hook: the new commit and the one installed before,
+  how many files changed, the hooks the update added, or the failure line, and the log path. A run that found
+  nothing new, or skipped, prints nothing, and two sessions that start together print it once.
+- `-NoAutoUpdate` removes this kit home's task and does nothing else: no clone is needed, nothing is pulled or
+  installed, so it changes no setting, whatever other options the line carries. The logs stay.
+
 It also makes `cc`, the account switcher, a command: `cc.cmd` lands in `<kit home>\bin` and that folder is
 added to your user PATH once, keeping the other entries as they were. A terminal opened after the run finds `cc`
 with no PowerShell profile line and under any local execution policy; one set by Group Policy still applies

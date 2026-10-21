@@ -25,6 +25,7 @@ Examples:
   powershell -ExecutionPolicy Bypass -File .\install.ps1
   powershell -ExecutionPolicy Bypass -File .\install.ps1 -Project C:\Repo\my-app -LocalOnly
   powershell -ExecutionPolicy Bypass -File .\install.ps1 -Project C:\Repo\my-app -GradleHook
+  powershell -ExecutionPolicy Bypass -File .\install.ps1 -Permissions ask -AutoUpdate
 #>
 param(
     [string]$Project,
@@ -50,7 +51,17 @@ param(
     [switch]$NoHerdr,
     # User scope: when your settings.json is kept with a .new beside it, the kit's new hooks are added to
     # it (after a backup, nothing of yours removed; claude\merge-hooks.py). This switch leaves it as it is.
-    [switch]$NoHookMerge
+    [switch]$NoHookMerge,
+    # User scope, from a git clone: register a daily task of this user, no elevation, that pulls the clone and, when
+    # it moved, runs this installer hidden and with no question, in the permission mode settings.json has then,
+    # never touching Herdr (install\schedule.ps1). Its log is <kit home>\logs, and the next session start prints
+    # one line when it updated the kit or failed. -NoAutoUpdate removes this kit home's task and does nothing else.
+    [switch]$AutoUpdate,
+    [switch]$NoAutoUpdate,
+    # User scope, the daily run's install (install\auto-update.ps1): the kit home and nothing outside it. The steps
+    # that reach outside it are skipped, each with a line: the user PATH (cc's folder), Herdr (its installer, its
+    # config, its integration, the hotkey shortcut) and the scheduled task; and nothing is asked.
+    [switch]$Unattended
 )
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
@@ -58,13 +69,29 @@ $root = $PSScriptRoot
 . (Join-Path $root 'install\lib.ps1')
 . (Join-Path $root 'install\adopt.ps1')
 . (Join-Path $root 'install\herdr.ps1')
+. (Join-Path $root 'install\schedule.ps1')
 if ($Herdr -and $NoHerdr) { throw '-Herdr and -NoHerdr cannot both be given.' }
+if ($AutoUpdate -and $NoAutoUpdate) { throw '-AutoUpdate and -NoAutoUpdate cannot both be given.' }
+if ($Unattended -and ($Project -or $AutoUpdate -or $NoAutoUpdate -or $Herdr)) {
+    Write-Output 'refused: -Unattended is the daily run''s kit-home-only install, so it takes no -Project, -AutoUpdate, -NoAutoUpdate or -Herdr. Nothing was written.'
+    exit 1
+}
+if (($AutoUpdate -or $NoAutoUpdate) -and $Project) {
+    Write-Output 'refused: -AutoUpdate and -NoAutoUpdate act on the user-scope install, so they take no -Project. Nothing was written.'
+    exit 1
+}
 if ($GradleHook -and -not $Project) {
     Write-Output 'refused: -GradleHook wires a hook into a project, so it needs -Project <path>. Nothing was written.'
     exit 1
 }
 
 $kitHome      = Get-KitHome
+if ($NoAutoUpdate) {
+    # A removal and nothing else: no plan and no install, so no option of this run (the default -Permissions
+    # bypass included) can change the kit home.
+    Unregister-KitAutoUpdate $kitHome -DryRun:$DryRun
+    exit 0
+}
 $stamp        = Get-KitStamp $kitHome
 $manifestPath = Join-Path $kitHome '.kit-manifest.json'
 $manifest     = Read-KitManifest $manifestPath
@@ -438,6 +465,9 @@ if (Test-Path -LiteralPath $pluginRoot) {
 foreach ($file in @('statusline.ps1', 'claude-account.ps1', 'cc-launch.ps1', 'merge-settings.py', 'CLAUDE.md', 'bin\cc.cmd')) {
     $pairs += New-KitPair (Join-Path $root "claude\$file") (Join-Path $kitHome $file)
 }
+# The daily update's runner, which its task runs from here, not from the clone, so a moved clone is still reported
+# (install\schedule.ps1). Every install refreshes it, -AutoUpdate or not.
+$pairs += New-KitPair (Join-Path $root 'install\auto-update.ps1') (Join-Path $kitHome 'kit-auto-update.ps1')
 
 # Rendered from the kit home, not from the profile: KIT_HOME moves where the files land, so it has
 # to move what the hook commands inside settings.json point at, or they point at an empty tree.
@@ -460,8 +490,15 @@ $script:KitHookMergeTarget = Join-Path $kitHome 'settings.json'
 
 Write-Output "Kit home: $kitHome"
 Invoke-KitPlan $pairs 'user scope install'
-# The folder of cc.cmd goes on the user PATH once; a terminal opened after this run finds cc.
-$ccPath = Add-KitUserPath (Join-Path $kitHome 'bin') -DryRun:$DryRun
+# The folder of cc.cmd goes on the user PATH once; a terminal opened after this run finds cc. Not on an unattended
+# run: a user who took it off the PATH keeps it off.
+if ($Unattended) {
+    Write-Output ""
+    Write-Output "  user PATH    left as it is (-Unattended)"
+    $ccPath = $null
+} else {
+    $ccPath = Add-KitUserPath (Join-Path $kitHome 'bin') -DryRun:$DryRun
+}
 if ($ccPath) {
     Write-Output ""
     Write-Output "  $ccPath"
@@ -477,8 +514,22 @@ if ($Permissions -eq 'bypass') {
     Write-Output "  PERMISSIONS: ask. Claude Code will prompt before acting."
     Write-Output "  Some skills in this base assume bypass and will stop on each step."
 }
-Install-KitHerdr -KitRoot $root -KitHome $kitHome -DryRun:$DryRun `
-    -Choice (Get-KitHerdrChoice -Yes $Herdr.IsPresent -No $NoHerdr.IsPresent -DryRun $DryRun.IsPresent)
+if ($Unattended) {
+    Write-Output ""
+    Write-Output "herdr        left as it is (-Unattended)"
+} else {
+    Install-KitHerdr -KitRoot $root -KitHome $kitHome -DryRun:$DryRun `
+        -Choice (Get-KitHerdrChoice -Yes $Herdr.IsPresent -No $NoHerdr.IsPresent -DryRun $DryRun.IsPresent)
+}
+if ($AutoUpdate) {
+    Write-Output ""
+    Register-KitAutoUpdate $root $kitHome -DryRun:$DryRun
+}
+# Last, so only an install that finished leaves its record: what the daily run replays (install\schedule.ps1).
+if (-not $DryRun -and -not $script:KitAutoUpdateFailed) {
+    Save-KitInstallRecord $root $kitHome $Permissions $NoHookMerge.IsPresent
+}
 Write-Output ""
 Write-Output "Done."
 Write-Output "Run: python scripts\doctor.py"
+if ($script:KitAutoUpdateFailed) { exit 1 }
