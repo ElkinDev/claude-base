@@ -57,7 +57,11 @@ param(
     # never touching Herdr (install\schedule.ps1). Its log is <kit home>\logs, and the next session start prints
     # one line when it updated the kit or failed. -NoAutoUpdate removes this kit home's task and does nothing else.
     [switch]$AutoUpdate,
-    [switch]$NoAutoUpdate
+    [switch]$NoAutoUpdate,
+    # User scope, the daily run's install (install\auto-update.ps1): the kit home and nothing outside it. The steps
+    # that reach outside it are skipped, each with a line: the user PATH (cc's folder), Herdr (its installer, its
+    # config, its integration, the hotkey shortcut) and the scheduled task; and nothing is asked.
+    [switch]$Unattended
 )
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
@@ -68,6 +72,10 @@ $root = $PSScriptRoot
 . (Join-Path $root 'install\schedule.ps1')
 if ($Herdr -and $NoHerdr) { throw '-Herdr and -NoHerdr cannot both be given.' }
 if ($AutoUpdate -and $NoAutoUpdate) { throw '-AutoUpdate and -NoAutoUpdate cannot both be given.' }
+if ($Unattended -and ($Project -or $AutoUpdate -or $NoAutoUpdate -or $Herdr)) {
+    Write-Output 'refused: -Unattended is the daily run''s kit-home-only install, so it takes no -Project, -AutoUpdate, -NoAutoUpdate or -Herdr. Nothing was written.'
+    exit 1
+}
 if (($AutoUpdate -or $NoAutoUpdate) -and $Project) {
     Write-Output 'refused: -AutoUpdate and -NoAutoUpdate act on the user-scope install, so they take no -Project. Nothing was written.'
     exit 1
@@ -482,8 +490,15 @@ $script:KitHookMergeTarget = Join-Path $kitHome 'settings.json'
 
 Write-Output "Kit home: $kitHome"
 Invoke-KitPlan $pairs 'user scope install'
-# The folder of cc.cmd goes on the user PATH once; a terminal opened after this run finds cc.
-$ccPath = Add-KitUserPath (Join-Path $kitHome 'bin') -DryRun:$DryRun
+# The folder of cc.cmd goes on the user PATH once; a terminal opened after this run finds cc. Not on an unattended
+# run: a user who took it off the PATH keeps it off.
+if ($Unattended) {
+    Write-Output ""
+    Write-Output "  user PATH    left as it is (-Unattended)"
+    $ccPath = $null
+} else {
+    $ccPath = Add-KitUserPath (Join-Path $kitHome 'bin') -DryRun:$DryRun
+}
 if ($ccPath) {
     Write-Output ""
     Write-Output "  $ccPath"
@@ -499,11 +514,20 @@ if ($Permissions -eq 'bypass') {
     Write-Output "  PERMISSIONS: ask. Claude Code will prompt before acting."
     Write-Output "  Some skills in this base assume bypass and will stop on each step."
 }
-Install-KitHerdr -KitRoot $root -KitHome $kitHome -DryRun:$DryRun `
-    -Choice (Get-KitHerdrChoice -Yes $Herdr.IsPresent -No $NoHerdr.IsPresent -DryRun $DryRun.IsPresent)
+if ($Unattended) {
+    Write-Output ""
+    Write-Output "herdr        left as it is (-Unattended)"
+} else {
+    Install-KitHerdr -KitRoot $root -KitHome $kitHome -DryRun:$DryRun `
+        -Choice (Get-KitHerdrChoice -Yes $Herdr.IsPresent -No $NoHerdr.IsPresent -DryRun $DryRun.IsPresent)
+}
 if ($AutoUpdate) {
     Write-Output ""
-    Register-KitAutoUpdate $root $kitHome $NoHookMerge.IsPresent -DryRun:$DryRun
+    Register-KitAutoUpdate $root $kitHome -DryRun:$DryRun
+}
+# Last, so only an install that finished leaves its record: what the daily run replays (install\schedule.ps1).
+if (-not $DryRun -and -not $script:KitAutoUpdateFailed) {
+    Save-KitInstallRecord $root $kitHome $Permissions $NoHookMerge.IsPresent
 }
 Write-Output ""
 Write-Output "Done."

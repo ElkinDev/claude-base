@@ -6,6 +6,7 @@ The hook runs the way the harness runs it, as a subprocess, with KIT_HOME pointe
 no real kit home is read or changed. The pending file is written the way install/auto-update.ps1 writes it under
 Windows PowerShell 5.1: UTF-8 with a byte order mark, one compact JSON object a line. No network.
 """
+import datetime
 import json
 import os
 import shutil
@@ -89,7 +90,8 @@ class KitUpdateNotice(unittest.TestCase):
         self.assertIn("Log: " + FAILED["log"], line)
 
     def test_an_update_after_a_failure_reports_only_the_update(self):
-        self.write(FAILED, UPDATED)
+        # the pending file is in time order, as the daily run appends it
+        self.write(dict(FAILED, time="2026-10-21 05:00"), UPDATED)
         line = self.line_of(self.run_hook())
         self.assertIn("now at 2222222", line)
         self.assertNotIn("failed", line)
@@ -123,6 +125,57 @@ class KitUpdateNotice(unittest.TestCase):
             self.assertEqual([err for _, err in outs], ["", "", "", ""])
             self.assertEqual(sum(1 for out, _ in outs if out.strip()), 1, outs)
             self.assertEqual(sorted(os.listdir(self.logs)), ["auto-update-pending.seen.jsonl"])
+
+    def day_log(self, when, lines):
+        """A day's log of the daily run, its lines stamped with when's clock time."""
+        os.makedirs(self.logs, exist_ok=True)
+        path = os.path.join(self.logs, "auto-update-%s.log" % when.strftime("%Y-%m-%d"))
+        with open(path, "a", encoding="utf-8-sig") as handle:
+            for text in lines:
+                handle.write("%s %s\n" % (when.strftime("%H:%M:%S"), text))
+        return path
+
+    def test_a_run_stopped_at_the_time_limit_is_a_failure_once(self):
+        when = datetime.datetime.now() - datetime.timedelta(hours=3)
+        path = self.day_log(when, ["start: clone C:/kit, kit home C:/home", "  git: Enter passphrase for key:"])
+        line = self.line_of(self.run_hook())
+        self.assertIn("failed: the run that started at %s never finished" % when.strftime("%Y-%m-%d %H:%M:%S"), line)
+        self.assertIn("Log: " + path, line)
+        with open(path, encoding="utf-8-sig") as handle:
+            self.assertIn("(reported at a session start)", handle.read())
+        self.assertEqual(self.run_hook(), "", "the next session start prints nothing")
+        self.assertFalse(os.path.exists(path + ".claim"))
+
+    def test_a_run_still_inside_the_time_limit_is_not_reported(self):
+        self.day_log(datetime.datetime.now() - datetime.timedelta(minutes=5), ["start: clone C:/kit, kit home C:/home"])
+        self.assertEqual(self.run_hook(), "")
+
+    def test_a_stopped_run_with_a_later_run_after_it_is_reported_once(self):
+        first = datetime.datetime.now() - datetime.timedelta(hours=3)
+        self.day_log(first, ["start: clone C:/kit, kit home C:/home"])
+        self.day_log(first + datetime.timedelta(minutes=40), [
+            "start: clone C:/kit, kit home C:/home", "done: the kit is already installed at 1234567; nothing to install"])
+        self.assertIn("the run that started at %s never finished" % first.strftime("%Y-%m-%d %H:%M:%S"),
+                      self.line_of(self.run_hook()))
+        self.assertEqual(self.run_hook(), "", "the next session start prints nothing")
+
+    def test_a_stopped_run_before_an_update_makes_one_line_ending_on_the_update(self):
+        self.day_log(datetime.datetime(2026, 10, 21, 5, 0, 1), ["start: clone C:/kit, kit home C:/home"])
+        self.write(UPDATED)
+        line = self.line_of(self.run_hook())
+        self.assertIn("now at 2222222 (was 1111111)", line)
+        self.assertNotIn("never finished", line, "an update after the stopped run is the news")
+        self.assertIn("Log: " + UPDATED["log"], line)
+
+    def test_sessions_that_start_together_report_a_stopped_run_once(self):
+        env = dict(os.environ, KIT_HOME=self.base)
+        for days in range(2, 7):
+            self.day_log(datetime.datetime.now() - datetime.timedelta(days=days), ["start: clone C:/kit, kit home C:/home"])
+            started = [subprocess.Popen([sys.executable, HOOK], env=env, stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(4)]
+            outs = [process.communicate(timeout=20) for process in started]
+            self.assertEqual([err for _, err in outs], ["", "", "", ""])
+            self.assertEqual(sum(1 for out, _ in outs if out.strip()), 1, outs)
 
 
 if __name__ == "__main__":
