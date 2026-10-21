@@ -9,6 +9,13 @@ the offender is visible in the session while it happens. A herdr desktop notific
 well only when BIG_RESULT_NOTIFY=1 and herdr is on PATH. By default it is off: on a busy machine
 it fired over a thousand desktop toasts a day, mostly for Read, and nobody acted on them.
 
+An image is counted by what it costs the window, not by its text. A Read of a picture returns the
+file as base64, 378,936 characters for one 1080x1920 frame, so a frame reader raised the alarm on
+every frame it opened and the ledger ranked those reads above any log. The model is billed for a
+picture by its pixels, about width x height / 750 tokens by the vision documentation, so the count
+takes that estimate at four characters a token, the rate the ledger converts with. An image result
+without its dimensions is counted without its base64.
+
 The agent column was added after the four-column file already existed on every machine, so a
 file that has a header keeps it: rows written from here carry five fields whatever the header
 says, and every reader of this file reads both shapes.
@@ -30,6 +37,8 @@ NOTIFY_ENV = "BIG_RESULT_NOTIFY"
 SUBAGENTS_SEGMENT = "/subagents/"
 AGENT_PREFIX = "agent-"
 TRANSCRIPT_SUFFIX = ".jsonl"
+IMAGE_PIXELS_PER_TOKEN = 750
+CHARS_PER_TOKEN = 4
 
 
 def ledger_path():
@@ -61,9 +70,38 @@ def agent_column(transcript_path):
     return name
 
 
+def without_base64(value):
+    """A copy with every string under a `base64` key emptied, so an embedded file is not counted."""
+    if isinstance(value, dict):
+        return {key: ("" if key == "base64" and isinstance(item, str) else without_base64(item))
+                for key, item in value.items()}
+    if isinstance(value, list):
+        return [without_base64(item) for item in value]
+    return value
+
+
+def image_size(response):
+    """The characters an image result counts as, or None when the result is not an image."""
+    if not isinstance(response, dict) or response.get("type") != "image":
+        return None
+    dims = (response.get("file") or {}).get("dimensions") or {}
+    try:
+        width = int(dims.get("displayWidth") or dims.get("originalWidth") or 0)
+        height = int(dims.get("displayHeight") or dims.get("originalHeight") or 0)
+    except (TypeError, ValueError):
+        width = height = 0
+    if width <= 0 or height <= 0:
+        return None
+    return width * height * CHARS_PER_TOKEN // IMAGE_PIXELS_PER_TOKEN
+
+
 def response_size(response):
     if response is None:
         return 0
+    image = image_size(response)
+    if image is not None:
+        return image
+    response = without_base64(response)
     if isinstance(response, str):
         return len(response)
     try:

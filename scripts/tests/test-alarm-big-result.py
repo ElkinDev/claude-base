@@ -130,6 +130,37 @@ class AlarmTest(unittest.TestCase):
         self.assertIn(str(len(response)), message)
         self.assertEqual(self.rows()[1][2:], ["Bash", str(len(response)), "main"])
 
+    # ------------------------------------------------------------- images
+    def image(self, width=1080, height=1920, base64_len=378936):
+        dims = {"originalWidth": width, "originalHeight": height,
+                "displayWidth": width, "displayHeight": height}
+        return {"type": "image",
+                "file": {"base64": "A" * base64_len, "type": "image/jpeg",
+                         "originalSize": 284200, "dimensions": dims}}
+
+    def test_an_image_read_counts_its_pixels_not_its_base64(self):
+        out = self.fire(response=self.image(), tool="Read",
+                        transcript="/home/you/.claude/projects/repo/sess/subagents/agent-a451.jsonl")
+        self.assertEqual(out, "", "a full-size frame is not a flood")
+        self.assertEqual(self.rows()[1][2:], ["Read", str(1080 * 1920 * 4 // 750), "a451"])
+
+    def test_an_image_without_dimensions_is_counted_without_its_base64(self):
+        response = self.image()
+        del response["file"]["dimensions"]
+        out = self.fire(response=response, tool="Read")
+        self.assertEqual(out, "")
+        self.assertLess(int(self.rows()[1][3]), 200)
+
+    def test_base64_inside_any_result_is_left_out(self):
+        response = {"content": [{"kind": "png", "base64": "B" * 90000}], "note": "ok"}
+        out = self.fire(response=response, tool="mcp__shot")
+        self.assertEqual(out, "")
+        self.assertLess(int(self.rows()[1][3]), 200)
+
+    def test_a_huge_image_still_alarms(self):
+        out = self.fire(response=self.image(width=8000, height=6000), tool="Read")
+        self.assertIn("Read", json.loads(out)["systemMessage"])
+
 
 if __name__ == "__main__":
     sys.dont_write_bytecode = True
