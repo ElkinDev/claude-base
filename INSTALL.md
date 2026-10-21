@@ -118,26 +118,36 @@ them without writing.
   session, close it and open it again.
 
 #### Updating every day on its own
-`-AutoUpdate` (at the end of the `get.ps1` line, or on `install.ps1` run from a clone) registers `kit-auto-update`,
-a scheduled task of your own user, with no elevation and no stored password. Every day at 05:00, or as soon as you
-sign in after a day the machine was off (the task's "run as soon as possible after a missed start"), it runs
-`install\auto-update.ps1` from the clone: `git pull --ff-only`, then `install.ps1` with exactly the options of the
-run that enabled it (`-Permissions`, the clone, the kit home, the Herdr answer as `-Herdr` or `-NoHerdr`, and
-`-NoHookMerge` if you gave it). An automatic run never asks anything and never changes a choice you made: an `ask`
-install stays `ask`. Run the line again with `-AutoUpdate` to change those options.
+`-AutoUpdate` (at the end of the `get.ps1` line, or on `install.ps1` run from a clone) registers a scheduled task of
+your own user, with no elevation and no stored password, named `kit-auto-update-` and a short hash of the kit home,
+so each kit home has its own. Every day at 05:00, or as soon as you sign in after a day the machine was off (the
+task's "run as soon as possible after a missed start"), it runs `<kit home>\kit-auto-update.ps1`, a copy of
+`install\auto-update.ps1` that every install refreshes: `git pull --ff-only` in the clone, then `install.ps1`, but
+only when the clone's commit differs from the one the last good run installed.
+
+An automatic run never asks anything and never changes a choice you made:
+
+- The permission mode is read from the `settings.json` in use at that moment (`bypassPermissions` is bypass,
+  anything else is ask), so a mode you changed by hand after enabling the task is the one it keeps.
+- Herdr is left as it is: the run passes `-NoHerdr`, which installs, configures and removes nothing.
+- `-NoHookMerge` is kept if the enabling run had it; run the line again with `-AutoUpdate` to drop it.
 
 It shows no window. The task starts `conhost.exe --headless`, which runs PowerShell on a console with no window;
 a task that starts `powershell.exe -WindowStyle Hidden` still opens a Windows Terminal window on Windows 11.
 
-- The log of each run is `<kit home>\logs\auto-update-<yyyy-MM-dd>.log`; the last 30 are kept.
-- A clone with changes of its own, or a pull that fails (no network, a branch that went its own way), is logged
-  and nothing is pulled or installed. The task's last run result in Task Scheduler always reads 0; the log is
-  where the outcome is.
+- The log of each run is `<kit home>\logs\auto-update-<yyyy-MM-dd>.log`; the last 30 are kept. The task's last run
+  result in Task Scheduler always reads 0; the log is where the outcome is.
+- A failed pull changes nothing: a clone with changes of its own, no network, a branch that went its own way, or a
+  clone that was moved or deleted (the copy in the kit home still runs, logs it and reports it).
+- A pull that worked followed by an install that failed leaves the clone at the new commit and the kit home as that
+  install left it (its output is in the log). The commit installed is recorded only after an install that
+  succeeds, so the next run tries the install again.
 - The next Claude Code session (start or resume) prints one line when a run moved the kit or failed since the
-  last notice, through the `kit-update-notice.py` session-start hook: the new commit and the one before, how many
-  files changed, the hooks the update added, or the failure line, and the log path. A run that found nothing new
-  prints nothing.
-- `-NoAutoUpdate` removes the task; the logs stay.
+  last notice, through the `kit-update-notice.py` session-start hook: the new commit and the one installed before,
+  how many files changed, the hooks the update added, or the failure line, and the log path. A run that found
+  nothing new prints nothing, and two sessions that start together print it once.
+- `-NoAutoUpdate` removes this kit home's task and does nothing else: no pull and no install, so it changes no
+  setting, whatever other options the line carries. The logs stay.
 
 It also makes `cc`, the account switcher, a command: `cc.cmd` lands in `<kit home>\bin` and that folder is
 added to your user PATH once, keeping the other entries as they were. A terminal opened after the run finds `cc`

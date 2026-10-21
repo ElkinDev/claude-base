@@ -134,13 +134,20 @@ try {
     try { $out = Invoke-Get @('-Dir', $dir, '-DryRun', '-NoHookMerge') } finally { [IO.File]::WriteAllBytes($settingsPath, $settingsBytes) }
     Assert-Exit 0 'a dry run with -NoHookMerge succeeds'
     Assert-Match $out 'not merged, -NoHookMerge' 'get.ps1 passes -NoHookMerge on to install.ps1'
-    # -AutoUpdate and -NoAutoUpdate reach install.ps1 too; a dry run only shows the task (test-install-auto-update.ps1).
+    # -AutoUpdate reaches install.ps1 too; a dry run only shows the task (test-install-auto-update.ps1). The task
+    # carries no mode and no Herdr answer: the daily run reads the one and leaves the other alone.
     $out = Invoke-Get @('-Dir', $dir, '-DryRun', '-AutoUpdate', '-Permissions', 'ask', '-NoHerdr')
     Assert-Exit 0 'a dry run with -AutoUpdate succeeds'
-    Assert-Regex $out 'would register the daily task kit-auto-update' 'get.ps1 passes -AutoUpdate on to install.ps1'
-    Assert-Regex $out 'conhost\.exe --headless .* -Permissions ask -NoHerdr' 'with the options of that line'
-    $out = Invoke-Get @('-Dir', $dir, '-DryRun', '-NoAutoUpdate')
-    Assert-Regex $out 'auto-update  (would remove|no daily task)' 'get.ps1 passes -NoAutoUpdate on to install.ps1'
+    Assert-Regex $out 'would register the daily task kit-auto-update-[0-9a-f]{8}' 'get.ps1 passes -AutoUpdate on to install.ps1'
+    $shown = [regex]::Match($out, 'conhost\.exe --headless[^\r\n]*').Value
+    Assert-True ($shown -and $shown -notmatch '-Permissions' -and $shown -notmatch 'Herdr') 'with no mode and no Herdr answer frozen in it'
+    # -NoAutoUpdate removes the task and nothing else: no pull, no install.
+    foreach ($removal in @(@('-DryRun', '-NoAutoUpdate'), @('-NoAutoUpdate'))) {
+        $out = Invoke-Get (@('-Dir', $dir) + $removal)
+        Assert-Exit 0 "get.ps1 $($removal -join ' ') succeeds"
+        Assert-Regex $out 'auto-update  (would remove|no daily task)' "get.ps1 $($removal -join ' ') runs install.ps1 -NoAutoUpdate"
+        Assert-True ($out -notmatch "updating |plan \(dry run|Kit home:") "get.ps1 $($removal -join ' ') pulls and installs nothing"
+    }
     $out = Invoke-Get @('-Dir', $dir, '-AutoUpdate', '-NoAutoUpdate')
     Assert-Exit 1 'both at once are refused'
     Assert-Match $out '-AutoUpdate and -NoAutoUpdate cannot both be given.' 'with one line'

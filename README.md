@@ -137,12 +137,15 @@ A running session's file watcher normally picks the change up; if a new hook doe
 From a clone the same update is `git pull` and then `install.ps1`. `INSTALL.md` has the details.
 
 To have it done for you every day, add `-AutoUpdate` at the end of the line once. It registers a scheduled task of
-your own user, with no elevation, that runs the same update at 05:00 (or as soon as you sign in after a day the
-machine was off) with exactly the options of that line, `-Permissions` and the Herdr answer included, hidden and
-with no question. Each run writes `<kit home>\logs\auto-update-<date>.log` (the last 30 are kept), and the next
-Claude Code session prints one line when a run updated the kit (the new commit, how many files changed, the hooks
-it added) or failed (a clone with changes of its own, no network), with the log path. A failed run changes nothing.
-`-NoAutoUpdate` on the same line removes the task.
+your own user, with no elevation, that pulls the clone at 05:00 (or as soon as you sign in after a day the machine
+was off), hidden and with no question, and runs the installer only when the clone moved. It never changes a choice
+of yours: the permission mode is the one your `settings.json` has at that moment, Herdr is left as it is, and
+`-NoHookMerge`, if you gave it, is kept. Each run writes `<kit home>\logs\auto-update-<date>.log` (the last 30 are
+kept), and the next Claude Code session prints one line when a run updated the kit (the new commit, how many files
+changed, the hooks it added) or failed, with the log path. A failed pull (a clone with changes of its own, no
+network, a moved clone) changes nothing. A pull that worked followed by an install that failed leaves the clone at
+the new commit and the kit home as that install left it, and the next day's run tries the install again.
+`-NoAutoUpdate` on the same line removes the task and does nothing else.
 
 By hand, from a clone:
 ```
