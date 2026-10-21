@@ -20,6 +20,13 @@ Office document leaves with its core properties cleared. It covers every kind th
         tag it would show turned, so rotate it first.
   .webp  the EXIF, XMP and C2PA chunks, with the VP8X flags that announced them, and any data after
         the picture. No dependency, no re-encode.
+  .avif  a still image (ftyp, one meta box, mdat): a handler name other than the generic ones, blanked
+        in place so every offset holds. An Exif or XMP item, another item kind, an item name, a box
+        outside the ones a still image uses (at the top level, in meta and among the item
+        properties), a padding box that is not all zero bytes, an external data reference, or an
+        encoder name in the bytes (Lavc, Lavf, x264, x265, libavif, libheif, libaom, c2pa) is named
+        and refused, since dropping it would move every offset: encode it again without metadata. An
+        image sequence (a moov box) is refused. No dependency.
   .ply  the comment and obj_info lines of the header (Gaussian splat and mesh files alike); the data is
         copied byte for byte. No dependency.
   .sog  a splat zip: asset.generator, asset.copyright and any extras in meta.json, the EXIF, XMP and
@@ -49,7 +56,7 @@ Office document leaves with its core properties cleared. It covers every kind th
         reach (ffmpeg's own AAC encoder writes one unless the encode took -flags +bitexact, x265
         writes one unless it took -x265-params info=0): such a file is refused and left as it is.
 
-Other media, document and model kinds (.webm, .mkv, .gif, .heic, .svg, .mp3, .doc, .gltf, .obj, .fbx and
+Other media, document and model kinds (.gif, .heic, .heif, .tif, .mp3, .doc, .gltf, .obj, .fbx and
 the like) are not read: each one is named as not read and the run exits 2, so a check never passes a file
 it did not open.
 
@@ -78,10 +85,10 @@ import zlib
 
 OFFICE = {".docx", ".xlsx", ".pptx", ".docm", ".xlsm", ".pptm"}
 VIDEO = {".mp4", ".mov", ".m4a", ".m4v", ".webm", ".mkv"}
-KINDS = OFFICE | VIDEO | {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".glb", ".ktx2", ".hdr", ".ply", ".sog", ".spz",
-                          ".svg"}
+KINDS = OFFICE | VIDEO | {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".avif", ".glb", ".ktx2", ".hdr", ".ply", ".sog",
+                          ".spz", ".svg"}
 # kinds that can carry a name too, which this tool does not clear: named, never passed in silence
-NOT_READ = {".avi", ".wmv", ".flv", ".gif", ".heic", ".heif", ".avif", ".tif",
+NOT_READ = {".avi", ".wmv", ".flv", ".gif", ".heic", ".heif", ".tif",
             ".tiff", ".bmp", ".psd", ".mp3", ".wav", ".flac", ".ogg", ".opus", ".aac", ".odt",
             ".ods", ".odp", ".doc", ".xls", ".ppt", ".rtf", ".epub", ".gltf", ".obj", ".mtl", ".fbx",
             ".blend", ".usd", ".usda", ".usdc", ".usdz", ".dae", ".stl", ".3mf"}
@@ -415,6 +422,343 @@ def webp_clean(data):
             kept.append(chunk)
     body = b"WEBP" + b"".join(kept)
     return b"RIFF" + len(body).to_bytes(4, "little") + body
+
+
+# A still AVIF is read box by box, each box to its exact end, and its picture item unit by unit, each AV1
+# unit to its exact end. A structure a still image may use but this reader does not parse (an item
+# reference, an entity group, item data kept in meta, an auxiliary image such as alpha, a layered image, an
+# ICC profile, configuration units in av1C) is refused as not read. What can name something is named: a
+# brand outside the known ones, a handler name other than the generic ones, an item name, an Exif, XMP or
+# other non-picture item, a box of any other type, padding that is not all zero bytes, bytes after the last
+# field of a box, picture bytes outside the extents of the listed items, an AV1 metadata unit, an external
+# data reference, and an encoder name in the bytes, matched whole so the picture's random bytes do not read
+# as one. The compressed picture inside a sequence header or frame unit is searched only for those names,
+# as a video stream is: text coded into it by hand would pass.
+AVIF_PLAIN_HANDLERS = {"", "PictureHandler"}
+AVIF_PLAIN_ITEM_NAMES = {"", "Color", "Image"}
+AVIF_PADDING = {b"free", b"skip"}
+AVIF_BRANDS = {b"avif", b"avis"}
+AVIF_KNOWN_BRANDS = AVIF_BRANDS | {b"avio", b"mif1", b"mif2", b"msf1", b"miaf", b"MA1A", b"MA1B", b"iso8",
+                                   b"tmap"}
+AVIF_SINGLE_META = {b"hdlr", b"pitm", b"iloc", b"iinf", b"iprp", b"dinf"}
+# AV1 units a still picture is made of: sequence header, temporal delimiter, frame header, tile group, frame
+AV1_PICTURE_UNITS = {1, 2, 3, 4, 6}
+AV1_METADATA, AV1_PADDING = 5, 15
+AVIF_PICTURE_ITEMS = {"av01"}
+AVIF_UNPARSED_META = {b"iref", b"grpl", b"idat"}
+# the item properties of a still colour image, with the length of each body (None: read below)
+AVIF_PROPERTIES = {b"ispe": 12, b"pixi": None, b"av1C": None, b"colr": None, b"irot": 1, b"imir": 1,
+                   b"pasp": 8, b"clap": 32, b"clli": 4, b"mdcv": 24}
+AVIF_UNPARSED_PROPERTIES = {b"auxC", b"a1op", b"lsel", b"a1lx", b"amve"}
+AVIF_NOTES = dict(VIDEO_NOTES, libavif=re.compile(rb"libavif"), libheif=re.compile(rb"libheif"),
+                  libaom=re.compile(rb"libaom"))
+
+
+def isobmff_boxes(data, start, end, where):
+    """(type, start, header length, end) of each box from start to end; a box that does not fit is refused."""
+    boxes, i = [], start
+    while i < end:
+        if i + 8 > end:
+            raise Refused("damaged %s: a box header cut at byte %d" % (where, i))
+        size, box_type, header = int.from_bytes(data[i:i + 4], "big"), data[i + 4:i + 8], 8
+        if size == 1:
+            if i + 16 > end:
+                raise Refused("damaged %s: a box header cut at byte %d" % (where, i))
+            size, header = int.from_bytes(data[i + 8:i + 16], "big"), 16
+        elif size == 0:
+            size = end - i
+        if size < header or i + size > end:
+            raise Refused("damaged %s: box %r at byte %d" % (where, box_type.decode("latin-1"), i))
+        boxes.append((box_type, i, header, i + size))
+        i += size
+    return boxes
+
+
+def zero_terminated(data, start, end):
+    """(the text up to the next zero byte, the offset after it), within end."""
+    stop = data.find(b"\x00", start, end)
+    stop = end if stop < 0 else stop
+    return data[start:stop].decode("utf-8", "replace"), min(stop + 1, end)
+
+
+def avif_uint(data, at, size, end, what):
+    """(the big-endian number of size bytes at at, the offset after it); a field past end is refused."""
+    if at + size > end:
+        raise Refused("damaged AVIF: %s cut short" % what)
+    return int.from_bytes(data[at:at + size], "big"), at + size
+
+
+def avif_tail(data, at, end, what, found):
+    """The bytes after the last field of a box may only be zero; anything else is named."""
+    if at > end:
+        raise Refused("damaged AVIF: %s longer than its box" % what)
+    if data[at:end].strip(b"\x00"):
+        found.add("bytes after the fields of " + what)
+
+
+def avif_brands(data):
+    """True when the file type box names AVIF as its major brand, or as a compatible one of a mif1 or msf1 file."""
+    if len(data) < 16 or data[4:8] != b"ftyp":
+        return False
+    end = min(int.from_bytes(data[0:4], "big"), len(data))
+    compatible = {data[i:i + 4] for i in range(16, end - 3, 4)}
+    return data[8:12] in AVIF_BRANDS or (data[8:12] in (b"mif1", b"msf1") and bool(compatible & AVIF_BRANDS))
+
+
+def avif_locations(data, body, end, found):
+    """The file ranges of every item extent; an item kept anywhere but in this file's own bytes is not read."""
+    version = data[body]
+    if version > 2:
+        raise Refused("an AVIF item location box of version %d, not read" % version)
+    sizes, at = avif_uint(data, body + 4, 2, end, "iloc")
+    offset_size, length_size, base_size = sizes >> 12, (sizes >> 8) & 15, (sizes >> 4) & 15
+    index_size = sizes & 15 if version else 0
+    if {offset_size, length_size, base_size, index_size} - {0, 4, 8}:
+        raise Refused("damaged AVIF: an item location field that is not 0, 4 or 8 bytes long")
+    count, at = avif_uint(data, at, 2 if version < 2 else 4, end, "iloc")
+    ranges = []
+    for _ in range(count):
+        item, at = avif_uint(data, at, 2 if version < 2 else 4, end, "iloc item id")
+        if version:
+            method, at = avif_uint(data, at, 2, end, "iloc construction method")
+            if method & 15:
+                raise Refused("an AVIF item kept in item data or built from other items, not read")
+        reference, at = avif_uint(data, at, 2, end, "iloc data reference")
+        if reference:
+            raise Refused("an AVIF item kept in another file, not read")
+        base, at = avif_uint(data, at, base_size, end, "iloc base offset")
+        extents, at = avif_uint(data, at, 2, end, "iloc extent count")
+        for _ in range(extents):
+            _, at = avif_uint(data, at, index_size, end, "iloc extent index")
+            offset, at = avif_uint(data, at, offset_size, end, "iloc extent offset")
+            length, at = avif_uint(data, at, length_size, end, "iloc extent length")
+            if not length:
+                raise Refused("an AVIF item extent that runs to the end of the file, not read")
+            ranges.append((item, base + offset, base + offset + length))
+    avif_tail(data, at, end, "iloc", found)
+    return ranges
+
+
+def avif_items(data, body, end, found):
+    """The items as (id, type, name, content type); iinf holds its item entries and nothing else."""
+    count, at = avif_uint(data, body + 4, 2 if data[body] == 0 else 4, end, "iinf")
+    entries = isobmff_boxes(data, at, end, "AVIF iinf")
+    if len(entries) != count or any(entry[0] != b"infe" for entry in entries):
+        raise Refused("an AVIF item list that holds more than its %d item entries, not read" % count)
+    items = []
+    for _, start, header, entry_end in entries:
+        at = start + header
+        version = data[at]
+        if version not in (2, 3):
+            raise Refused("an AVIF item entry of version %d, not read" % version)
+        item, at = avif_uint(data, at + 4, 2 if version == 2 else 4, entry_end, "item entry")
+        at += 2  # the protection index
+        item_type = data[at:at + 4].decode("latin-1")
+        name, at = zero_terminated(data, at + 4, entry_end)
+        content = ""
+        if item_type in ("mime", "uri "):
+            content, at = zero_terminated(data, at, entry_end)
+            if item_type == "mime" and at < entry_end:
+                at = zero_terminated(data, at, entry_end)[1]  # the content encoding
+        avif_tail(data, at, entry_end, "an item entry", found)
+        items.append((item, item_type, name, content))
+    return items
+
+
+def avif_properties(data, body, end, found):
+    """iprp holds one ipco, whose properties are read to their ends, then its ipma boxes, read to theirs."""
+    boxes = isobmff_boxes(data, body, end, "AVIF iprp")
+    if not boxes or boxes[0][0] != b"ipco" or any(box[0] != b"ipma" for box in boxes[1:]):
+        raise Refused("an AVIF property box that holds more than ipco and ipma, not read")
+    _, start, header, ipco_end = boxes[0]
+    for prop, prop_start, prop_header, prop_end in isobmff_boxes(data, start + header, ipco_end, "AVIF ipco"):
+        prop_body, name = prop_start + prop_header, prop.decode("latin-1")
+        if prop in AVIF_PADDING:
+            avif_tail(data, prop_body, prop_end, "a padding box", found)
+        elif prop in AVIF_UNPARSED_PROPERTIES:
+            raise Refused("an AVIF image with the property %s (an auxiliary or layered image), not read" % name)
+        elif prop not in AVIF_PROPERTIES:
+            found.add("property box " + name)
+        elif AVIF_PROPERTIES[prop] is not None:
+            avif_tail(data, prop_body + AVIF_PROPERTIES[prop], prop_end, "property " + name, found)
+        elif prop == b"av1C":
+            if prop_end - prop_body != 4:
+                raise Refused("an AVIF av1C box that holds configuration units, not read")
+        elif prop == b"pixi":
+            channels, at = avif_uint(data, prop_body + 4, 1, prop_end, "pixi")
+            avif_tail(data, at + channels, prop_end, "property pixi", found)
+        elif prop == b"colr":
+            colour = data[prop_body:prop_body + 4]
+            if colour != b"nclx":
+                raise Refused("an AVIF colour box of type %r (an ICC profile), not read" % colour.decode("latin-1"))
+            avif_tail(data, prop_body + 11, prop_end, "property colr", found)
+    for _, ipma_start, ipma_header, ipma_end in boxes[1:]:
+        at = ipma_start + ipma_header
+        version, flags = data[at], int.from_bytes(data[at + 1:at + 4], "big")
+        count, at = avif_uint(data, at + 4, 4, ipma_end, "ipma")
+        for _ in range(count):
+            _, at = avif_uint(data, at, 2 if version < 1 else 4, ipma_end, "ipma item id")
+            links, at = avif_uint(data, at, 1, ipma_end, "ipma")
+            at += links * (2 if flags & 1 else 1)
+        avif_tail(data, at, ipma_end, "ipma", found)
+
+
+def avif_references(data, body, end, found):
+    """dinf holds one dref, whose entries may only point at this file itself."""
+    boxes = isobmff_boxes(data, body, end, "AVIF dinf")
+    if len(boxes) != 1 or boxes[0][0] != b"dref":
+        raise Refused("an AVIF data information box that holds more than one dref, not read")
+    _, start, header, dref_end = boxes[0]
+    count, at = avif_uint(data, start + header + 4, 4, dref_end, "dref")
+    entries = isobmff_boxes(data, at, dref_end, "AVIF dref")
+    if len(entries) != count:
+        raise Refused("damaged AVIF: a dref that holds %d entries and counts %d" % (len(entries), count))
+    for entry_type, entry_start, entry_header, entry_end in entries:
+        flags = int.from_bytes(data[entry_start + entry_header + 1:entry_start + entry_header + 4], "big")
+        if entry_type != b"url " or not flags & 1 or entry_end != entry_start + entry_header + 4:
+            found.add("data reference " + entry_type.decode("latin-1").strip())
+
+
+def av1_units(data, found):
+    """Walks the AV1 units of a picture item to its last byte; a unit that names something is named."""
+    at = 0
+    while at < len(data):
+        header = data[at]
+        unit, extension, sized = (header >> 3) & 15, (header >> 2) & 1, (header >> 1) & 1
+        if header & 128 or not sized:
+            raise Refused("an AVIF picture with an AV1 unit this reader cannot size, not read")
+        at += 1 + extension
+        size, shift = 0, 0
+        while True:
+            if at >= len(data) or shift > 49:
+                raise Refused("damaged AVIF: an AV1 unit cut short")
+            size |= (data[at] & 127) << shift
+            at, shift = at + 1, shift + 7
+            if not data[at - 1] & 128:
+                break
+        if at + size > len(data):
+            raise Refused("damaged AVIF: an AV1 unit cut short")
+        if unit == AV1_METADATA:
+            found.add("AV1 metadata unit")
+        elif unit == AV1_PADDING:
+            if data[at:at + size].strip(b"\x00"):
+                found.add("AV1 padding unit with content")
+        elif unit not in AV1_PICTURE_UNITS:
+            raise Refused("an AVIF picture with an AV1 unit of type %d, not read" % unit)
+        at += size
+
+
+def avif_parts(data):
+    """(the span from the handler name to the end of its box, the items as (type, name, content type), what
+    the boxes themselves name)."""
+    if not avif_brands(data):
+        raise Refused("not an AVIF file")
+    found = set()
+    top = isobmff_boxes(data, 0, len(data), "AVIF")
+    ftyp_end = top[0][3]
+    if (ftyp_end - 16) % 4:
+        raise Refused("damaged AVIF: a file type box that is not a list of brands")
+    if data[12:16].strip(b"\x00"):
+        found.add("file type minor version")
+    for at in [8] + list(range(16, ftyp_end, 4)):
+        if data[at:at + 4] not in AVIF_KNOWN_BRANDS:
+            found.add("file type brand " + data[at:at + 4].decode("latin-1"))
+    metas = [box for box in top if box[0] == b"meta"]
+    if b"moov" in [box[0] for box in top]:
+        raise Refused("an AVIF image sequence (a moov box), not read")
+    if len(metas) != 1:
+        raise Refused("an AVIF with %d meta boxes, not read" % len(metas))
+    for box_type, start, header, end in top[1:]:
+        if box_type in AVIF_PADDING:
+            avif_tail(data, start + header, end, "a padding box", found)
+        elif box_type not in (b"meta", b"mdat"):
+            found.add("top-level box " + box_type.decode("latin-1"))
+    _, start, header, end = metas[0]
+    name_span, items, ranges, seen = None, [], [], set()
+    for box_type, box_start, box_header, box_end in isobmff_boxes(data, start + header + 4, end, "AVIF meta"):
+        body = box_start + box_header
+        if box_type in seen and box_type in AVIF_SINGLE_META:
+            raise Refused("an AVIF meta box with two %s boxes, not read" % box_type.decode("latin-1"))
+        seen.add(box_type)
+        if box_type == b"hdlr":
+            # version and flags, pre_defined, handler_type and three reserved words come before the name
+            if body + 24 > box_end:
+                raise Refused("damaged AVIF: a handler box shorter than its fields")
+            name_span = (body + 24, box_end)
+        elif box_type == b"pitm":
+            avif_tail(data, body + 4 + (2 if data[body] == 0 else 4), box_end, "pitm", found)
+        elif box_type == b"iloc":
+            ranges = avif_locations(data, body, box_end, found)
+        elif box_type == b"iinf":
+            items = avif_items(data, body, box_end, found)
+        elif box_type == b"iprp":
+            avif_properties(data, body, box_end, found)
+        elif box_type == b"dinf":
+            avif_references(data, body, box_end, found)
+        elif box_type in AVIF_PADDING:
+            avif_tail(data, body, box_end, "a padding box", found)
+        elif box_type in AVIF_UNPARSED_META:
+            raise Refused("an AVIF image with a %s box (item references, groups or item data), not read"
+                          % box_type.decode("latin-1"))
+        else:
+            found.add("meta box " + box_type.decode("latin-1"))
+    missing = {b"hdlr", b"pitm", b"iloc", b"iinf", b"iprp"} - seen
+    if missing:
+        raise Refused("an AVIF meta box without %s, not read" % ", ".join(sorted(m.decode() for m in missing)))
+    # every byte of the picture data belongs to an item extent; the extents lie inside the mdat boxes
+    mdats = [(start + header, end) for box_type, start, header, end in top if box_type == b"mdat"]
+    listed = {item for item, _, _, _ in items}
+    for item, low, high in ranges:
+        if not any(m_low <= low and high <= m_high for m_low, m_high in mdats):
+            raise Refused("an AVIF item extent outside the picture data box, not read")
+        if item not in listed:
+            found.add("picture data of an item the item list does not name")
+    for item, item_type, _, _ in items:
+        if item_type in AVIF_PICTURE_ITEMS:
+            av1_units(b"".join(data[low:high] for each, low, high in ranges if each == item), found)
+    for m_low, m_high in mdats:
+        at = m_low
+        for low, high in sorted(r[1:] for r in ranges if m_low <= r[1] < m_high):
+            if data[at:low].strip(b"\x00"):
+                found.add("picture data bytes outside every item")
+            at = max(at, high)
+        if data[at:m_high].strip(b"\x00"):
+            found.add("picture data bytes outside every item")
+    return name_span, items, found
+
+
+def avif_names(data):
+    name_span, items, found = avif_parts(data)
+    rest = data
+    if name_span:
+        name, after = zero_terminated(data, name_span[0], name_span[1])
+        if name not in AVIF_PLAIN_HANDLERS:
+            found.add("handler name " + name)
+        if data[after:name_span[1]].strip(b"\x00"):
+            found.add("handler name, bytes after it")
+        # the handler name is cleared in place, so it is left out of the byte search
+        rest = data[:name_span[0]] + bytes(name_span[1] - name_span[0]) + data[name_span[1]:]
+    for _, item_type, name, content in items:
+        if item_type == "Exif":
+            found.add("Exif item")
+        elif item_type == "mime":
+            found.add("XMP item" if "xml" in content.lower() or "xmp" in content.lower() else "item " + content)
+        elif item_type not in AVIF_PICTURE_ITEMS:
+            found.add("item of type " + item_type.strip())
+        if name not in AVIF_PLAIN_ITEM_NAMES:
+            found.add("item name " + name)
+    found.update(note for note, pattern in AVIF_NOTES.items() if pattern.search(rest))
+    return sorted(found)
+
+
+def avif_clean(data):
+    left = [name for name in avif_names(data) if not name.startswith("handler name")]
+    if left:
+        raise Refused("%s: dropping it would move every offset; encode it again without metadata (ffmpeg "
+                      "-map_metadata -1 -fflags +bitexact -flags +bitexact, avifenc --ignore-exif --ignore-xmp)"
+                      % ", ".join(left))
+    start, end = avif_parts(data)[0]
+    return data[:start] + bytes(end - start) + data[end:]
 
 
 KTX2_ID = b"\xabKTX 20\xbb\r\n\x1a\n"
@@ -976,7 +1320,8 @@ def video_scrub(path, tmp):
 HANDLERS = {".pdf": (pdf_check, pdf_scrub)}
 HANDLERS.update({ext: (bytes_check(names), bytes_scrub(clean)) for ext, names, clean in (
     (".png", png_names, png_clean), (".jpg", jpeg_names, jpeg_clean), (".jpeg", jpeg_names, jpeg_clean),
-    (".webp", webp_names, webp_clean), (".glb", glb_names, glb_clean), (".ktx2", ktx2_names, ktx2_clean),
+    (".webp", webp_names, webp_clean), (".avif", avif_names, avif_clean), (".glb", glb_names, glb_clean),
+    (".ktx2", ktx2_names, ktx2_clean),
     (".hdr", hdr_names, hdr_clean), (".ply", ply_names, ply_clean), (".spz", spz_names, spz_clean),
     (".svg", svg_names, svg_clean))})
 HANDLERS[".sog"] = (sog_check, sog_scrub)
