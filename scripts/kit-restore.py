@@ -4,7 +4,9 @@
 Every run of install.ps1 that writes anything leaves a folder under `<kit home>/backups/<stamp>/`
 holding a copy of each file it replaced, plus a `manifest.txt` recording what it did: which files
 it overwrote, which ones it created (they did not exist before, so a rollback removes them), which
-files of yours it kept untouched, and which `.new` proposals it left beside them.
+files of yours it kept untouched, which `.new` proposals it left beside them, and which file of
+yours it merged the kit's new hooks into (`merged <path> <sha256>`, put back only while the file
+still has the hash it had right after the merge).
 
     python scripts/kit-restore.py --list
     python scripts/kit-restore.py --stamp 20260828-120000 --dry-run
@@ -169,6 +171,42 @@ def restore_overwritten(target, backup_file, manifest, force, dry_run, out):
     return True
 
 
+def restore_merged(rest, stamp_dir, force, dry_run, out):
+    """Put back a file of yours the installer merged new hooks into (`merged <path> <sha256>`).
+
+    The file is yours, so the managed-file manifest has no say: the hash on the line, the file's
+    hash right after the merge, is the guard. While the file still has it, nothing touched it since
+    and the copy goes back; any other hash means it changed after the merge, and only --force puts
+    the copy over it. Returns True when the entry was handled."""
+    target, _, after = rest.rpartition(" ")
+    if not target or len(after) != 64 or any(c not in "0123456789abcdef" for c in after.lower()):
+        out("missing      %s (this merged line carries no hash, so the rollback cannot check it)" % rest)
+        return False
+    backup_file = mirror_path(stamp_dir, target)
+    if not backup_file.is_file():
+        out("missing      %s (no copy in this backup)" % target)
+        return False
+    current, kept = sha256(target), sha256(backup_file)
+    if kept is None:
+        out("missing      %s (the copy in this backup cannot be read)" % target)
+        return False
+    if current == kept:
+        out("unchanged    %s (already the version in the backup)" % target)
+        return True
+    if current is None and os.path.exists(str(target)) and not force:
+        out("skipped      %s (cannot read it to compare, pass --force to overwrite it)" % target)
+        return False
+    if current is not None and current != after.lower() and not force:
+        out("skipped      %s (changed after the merge, pass --force to overwrite it)" % target)
+        return False
+    if dry_run:
+        out("would restore %s" % target)
+        return True
+    swap_in(target, lambda temp: shutil.copyfile(str(backup_file), temp))
+    out("restored     %s (the hooks merge is undone)" % target)
+    return True
+
+
 def remove_created(target, backup_file, manifest, home, force, dry_run, out):
     """Remove one file the installer created. Returns True when the entry was handled."""
     current = sha256(target)
@@ -233,6 +271,8 @@ def restore(home, stamp, force, dry_run, out):
             elif verb == "created":
                 ok = remove_created(target, mirror_path(stamp_dir, target), manifest, home, force,
                                     dry_run, out)
+            elif verb == "merged":
+                ok = restore_merged(target, stamp_dir, force, dry_run, out)
             elif verb == "kept":
                 out("kept         %s (yours, the run never wrote it)" % target)
                 ok = True

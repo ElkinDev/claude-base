@@ -125,6 +125,13 @@ try {
     Assert-Exit 0 'the dry run over the clone succeeds'
     Assert-Match $out 'plan (dry run, nothing is written):' 'install.ps1 ran as a dry run'
     Assert-Match $out 'a real run asks "Add Herdr? [Y/n]"' 'the Herdr question is shown, not asked'
+    # -NoHookMerge reaches install.ps1: a settings.json of mine is kept, and the hook step says it was told to stay out.
+    $settingsPath = Join-Path $kitHome 'settings.json'
+    $settingsBytes = [IO.File]::ReadAllBytes($settingsPath)
+    [IO.File]::WriteAllText($settingsPath, ([Text.Encoding]::UTF8.GetString($settingsBytes) -replace '^\{', "{`n  `"model`": `"mine-for-test`","))
+    try { $out = Invoke-Get @('-Dir', $dir, '-DryRun', '-NoHookMerge') } finally { [IO.File]::WriteAllBytes($settingsPath, $settingsBytes) }
+    Assert-Exit 0 'a dry run with -NoHookMerge succeeds'
+    Assert-Match $out 'not merged, -NoHookMerge' 'get.ps1 passes -NoHookMerge on to install.ps1'
 
     Write-Host "`r`nphase 5, a folder that is not a clone, or a clone of another repository, is refused"
     $other = Join-Path $base 'not-a-clone'

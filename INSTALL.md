@@ -56,8 +56,9 @@ the new clone: updates, `-Project` and the Herdr hotkey run from it.
 
 The hooks and the status line start Windows PowerShell by its full path, so they work on a machine whose PATH lost
 the PowerShell folder. An install that finds a `settings.json` you edited keeps yours and writes the kit version
-beside it as `settings.json.new`; on such a machine, merge the `.new` into yours, or its hooks keep starting
-PowerShell by name and fail.
+beside it as `settings.json.new`; on such a machine, take the hook commands from the `.new` into yours, or its
+hooks keep starting PowerShell by name and fail. The automatic merge under Updating adds hooks the file lacks, it
+does not rewrite the ones already there.
 
 ## 0. Check the machine first
 ```
@@ -81,7 +82,40 @@ backed up, kept exactly as it is, and the kit version lands beside it as `<name>
 merge by hand. If you already had a `settings.json`, that means `settings.json.new`: keep your own
 keys and add the `statusLine` block and the `worklog` SessionStart / PreCompact / SessionEnd / Stop
 hooks, and the compaction hooks (PreCompact checkpoint with summary steering, PostCompact summary
-persistence, SessionStart recovery; see `docs/CONTEXT-ECONOMICS.md`).
+persistence, SessionStart recovery; see `docs/CONTEXT-ECONOMICS.md`). That hand merge is needed once:
+see Updating below for what later runs do on their own.
+
+### Updating
+Run the same one line you installed with (the line at the top of this file, with the options you used, if any). It runs `git pull --ff-only` in the clone and then `install.ps1`; from a clone by hand it is `git pull` and
+then `install.ps1`. The run refreshes every file nobody edited and keeps the ones you did, as on the first install.
+
+Your `settings.json` gets one more step. When the installer keeps it (you or Claude Code changed it, so it differs
+from what the kit wrote) and it already runs at least one of the kit's hooks, `claude\merge-hooks.py` adds the
+hooks a newer kit brings, under their event and matcher. A hook is known by its event, its matcher, the script its
+command runs and the arguments after that script, not by the interpreter: `py -3` for `python`, or a full PowerShell
+path for a bare one, is the same hook, and the same script with other arguments is another one. What the kit has
+already offered is kept in `.kit-hooks-merged.json` in the kit home, and only hooks outside it are added, so a hook
+you take out after it was merged stays out. That record moves only when a merge writes your file or finds every new
+hook already there: a run with `-NoHookMerge`, or one that leaves your file alone, offers the same hooks next time.
+On the first run it is seeded from the kit hooks your file already runs, never from the `settings.json.new`, so a
+kit hook you took out before that run is offered once, on a line of its own; name its script in
+`hook-merge-skip.txt` to keep it out for good.
+
+It only adds: your keys, your hooks and their order stay as they are. The file is written only when its layout is
+the one the tool writes back byte for byte (an indent of spaces, the layout Claude Code itself writes) and no key
+appears twice; any other layout, a file with none of the kit's hooks, a file that is a link, and a file that does
+not parse or whose hooks are not the shape Claude Code reads are all left alone, with one line naming the `.new`.
+Before the write the file is copied into the run's backup folder and recorded as `merged`, with the hash it has
+after the merge, so `python scripts\kit-restore.py --stamp <stamp>` (the run prints it) puts it back, with the merge
+record, while you have not changed it since. The plan shows each added hook on a `hooks+` line, and `-DryRun` shows
+them without writing.
+
+- `-NoHookMerge` (on `install.ps1` or at the end of the `get.ps1` line) skips the step and leaves the new hooks in
+  `settings.json.new` for you.
+- A script name on a line of `hook-merge-skip.txt` beside `settings.json` (for example `turn-budget.py`) is never
+  added, whatever the merge record says.
+- A running Claude Code session's file watcher normally picks the change up. If a new hook does not show in an open
+  session, close it and open it again.
 
 It also makes `cc`, the account switcher, a command: `cc.cmd` lands in `<kit home>\bin` and that folder is
 added to your user PATH once, keeping the other entries as they were. A terminal opened after the run finds `cc`

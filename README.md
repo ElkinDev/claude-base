@@ -127,6 +127,15 @@ The kit lands in your user profile (`%USERPROFILE%\.claude`), so Claude Code pic
 open it. Keep the clone all the same: updates, `-Project` and the Herdr hotkey run from it. To keep it in another
 folder, pass `-Dir` (`INSTALL.md`).
 
+### Updating
+Paste the same line again. It pulls the clone and re-runs the installer, and that is the whole update: files
+nobody edited are refreshed, a file you edited is kept with the kit version beside it as `<name>.new`, and when
+your own `settings.json` already runs the kit's hooks, the hooks a newer kit adds are written into it for you
+(after a backup, nothing of yours removed or changed, a hook you moved or deleted left as you left it, and a file
+whose layout it cannot write back byte for byte left alone; `-NoHookMerge` at the end of the line skips the step).
+A running session's file watcher normally picks the change up; if a new hook does not show in one, reopen it.
+From a clone the same update is `git pull` and then `install.ps1`. `INSTALL.md` has the details.
+
 By hand, from a clone:
 ```
 # check the machine has what the kit needs (git, python, claude, Git Bash, optionally Herdr)

@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 
 MANIFEST_NAME = "manifest.txt"
-VERBS = ("overwritten", "created", "new", "kept")
+VERBS = ("overwritten", "created", "new", "kept", "merged")
 LOST = "the run never got it onto the record, this backup line is the record"
 
 
