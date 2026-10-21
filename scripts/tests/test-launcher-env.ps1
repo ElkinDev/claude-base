@@ -31,6 +31,8 @@ Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
 Remove-Item Env:\CLAUDE_CODE_DISABLE_1M_CONTEXT -ErrorAction SilentlyContinue
 # A model variable already in the shell would put a --model into every COMMAND asserted below.
 foreach ($roleName in @('ORCHESTRATOR', 'ANALYST', 'LANE', 'RESEARCH')) { Remove-Item ("Env:\CLAUDE_MODEL_" + $roleName) -ErrorAction SilentlyContinue }
+# An effort variable would put an --effort there too.
+foreach ($roleName in @('ORCHESTRATOR', 'ANALYST', 'LANE', 'RESEARCH')) { Remove-Item ("Env:\CLAUDE_EFFORT_" + $roleName) -ErrorAction SilentlyContinue }
 
 # The launcher reads its seats from CLAUDE_SEATS_DIR, so every phase runs against a temporary
 # directory and no assertion depends on the seats this machine happens to have installed. It
@@ -527,6 +529,54 @@ Test-RoleModelExplicitWins
 Test-RoleModelResume
 Test-RoleModelBlank
 Test-RoleModelUnset
+
+# The effort works like the model: CLAUDE_EFFORT_<ROLE>, then --effort on the line wins, and a value
+# claude would refuse is not passed. The machine's effort variables were cleared at the top.
+Write-Host "`r`nphase 20, a role takes its own effort from CLAUDE_EFFORT_<ROLE>"
+function Test-RoleEffort {
+    $env:CLAUDE_EFFORT_ORCHESTRATOR = 'High '
+    $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator
+    Assert-Exit 0 'RoleEffortTest: the dry run exits clean'
+    Assert-Regex $out '(?m)^EFFORT=high \(CLAUDE_EFFORT_ORCHESTRATOR\)\r?$' 'RoleEffortTest: the plan names the value, trimmed and lower case, and its variable'
+    Assert-Regex $out '(?m)^COMMAND=claude --effort high ' 'RoleEffortTest: the command begins with the effort'
+    Assert-Regex $out '(?m)^EXTRA=--effort high ' 'RoleEffortTest: the in-window array carries it first too'
+    Assert-Regex $out ('(?m)^COMMAND=.* ' + [regex]::Escape("'" + $startLine + "'") + '\r?$') 'RoleEffortTest: the start line is still the last token'
+    $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator --resume abc
+    Assert-Regex $out '(?m)^COMMAND=claude --effort high .*--resume abc' 'RoleEffortTest: the effort rides a resume'
+    $out = Get-LauncherLiteral demo -ShowEnv -Role lane
+    Assert-True (-not ($out -match '--effort')) 'RoleEffortTest: a lane gets nothing from the orchestrator variable'
+    Assert-Regex $out '(?m)^EFFORT=session default\r?$' 'RoleEffortTest: and keeps the session default'
+}
+function Test-RoleEffortExplicitWins {
+    $env:CLAUDE_EFFORT_ORCHESTRATOR = 'high'
+    $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator --effort low
+    $commandLine = ([regex]::Match($out, '(?m)^COMMAND=.*$')).Value
+    Assert-True (([regex]::Matches($commandLine, '--effort')).Count -eq 1) 'RoleEffortExplicitWinsTest: --effort appears once'
+    Assert-Match $commandLine '--effort low' 'RoleEffortExplicitWinsTest: and it is the one on the line'
+    Assert-Regex $out '(?m)^EFFORT=command line\r?$' 'RoleEffortExplicitWinsTest: the plan says the line won'
+    $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator --effort=max
+    Assert-Regex $out '(?m)^EFFORT=command line\r?$' 'RoleEffortExplicitWinsTest: the equals spelling wins as well'
+    Assert-True (-not ($out -match '--effort high')) 'RoleEffortExplicitWinsTest: and the variable is not added beside it'
+}
+function Test-RoleEffortRefusedAndBlank {
+    $env:CLAUDE_EFFORT_ORCHESTRATOR = 'turbo'
+    $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator
+    Assert-Exit 0 'RoleEffortRefusedTest: a value claude would refuse does not stop the launch'
+    Assert-True (-not (([regex]::Match($out, '(?m)^COMMAND=.*$')).Value -match '--effort')) 'RoleEffortRefusedTest: and nothing is passed'
+    Assert-Match $out 'is not low, medium, high, xhigh or max; no --effort passed' 'RoleEffortRefusedTest: and one line says why'
+    Assert-Regex $out "(?m)^EFFORT=session default \(CLAUDE_EFFORT_ORCHESTRATOR='turbo' refused\)\r?$" 'RoleEffortRefusedTest: the plan names the refused value'
+    $env:CLAUDE_EFFORT_ORCHESTRATOR = '   '
+    $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator
+    Assert-True (-not ($out -match '--effort')) 'RoleEffortBlankTest: a blank variable adds nothing'
+    Assert-Regex $out '(?m)^EFFORT=session default\r?$' 'RoleEffortBlankTest: and the plan says the session default'
+    Remove-Item Env:\CLAUDE_EFFORT_ORCHESTRATOR -ErrorAction SilentlyContinue
+    $out = Get-LauncherLiteral demo -ShowEnv -Role orchestrator
+    Assert-Regex $out ('(?m)^COMMAND=claude --name orchestrator-\d{4}-\d{4} ') 'RoleEffortUnsetTest: with no variable the command is what it was before'
+}
+Test-RoleEffort
+Test-RoleEffortExplicitWins
+Test-RoleEffortRefusedAndBlank
+Remove-Item Env:\CLAUDE_EFFORT_ORCHESTRATOR -ErrorAction SilentlyContinue
 
 Remove-Item Env:\CLAUDE_MODEL_ORCHESTRATOR -ErrorAction SilentlyContinue
 Remove-Item Env:\CLAUDE_BRIEFS_DIR -ErrorAction SilentlyContinue

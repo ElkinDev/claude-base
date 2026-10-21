@@ -166,6 +166,31 @@ else {
     }
 }
 
+# Effort per role, the same way. CLAUDE_EFFORT_<ROLE> (CLAUDE_EFFORT_ORCHESTRATOR, _ANALYST, _LANE,
+# _RESEARCH) becomes --effort when the line carries none, so a long-lived orchestrator and its lanes can
+# run at different levels on one account. It is read from this process, like the model variable: a Herdr
+# pane started before the variable was set does not see it. Blank or unset adds nothing; a value claude
+# would refuse adds nothing and says so. It goes at the front on a fresh launch and on a resume alike, so
+# the start line stays the last token.
+$effortPlan = "session default"
+$effortTokens = @($Extra | Where-Object { $_ -ne $null })
+if ($effortTokens | Where-Object { ($_ -eq "--effort") -or ($_ -like "--effort=*") }) { $effortPlan = "command line" }
+else {
+    $effortVar = "CLAUDE_EFFORT_" + $Role.ToUpper()
+    $effortValue = [Environment]::GetEnvironmentVariable($effortVar)
+    if (-not [string]::IsNullOrWhiteSpace($effortValue)) {
+        $effortValue = $effortValue.Trim().ToLower()
+        if (@("low", "medium", "high", "xhigh", "max") -contains $effortValue) {
+            $Extra = @("--effort", $effortValue) + $effortTokens
+            $effortPlan = "$effortValue ($effortVar)"
+        }
+        else {
+            $effortPlan = "session default ($effortVar='$effortValue' refused)"
+            Write-Host "$effortVar='$effortValue' is not low, medium, high, xhigh or max; no --effort passed." -ForegroundColor Yellow
+        }
+    }
+}
+
 # Extra arguments travel inside a string when launching in a new tab or window, so
 # quote the ones carrying spaces.
 $extraStr = ""
@@ -243,6 +268,8 @@ if ($ShowEnv) {
     Write-Output "COMMAND=claude$extraStr"
     # The model the launch would carry: the variable of the role, the line's own, or none.
     Write-Output "MODEL=$modelPlan"
+    # The effort the launch would carry, and where it came from.
+    Write-Output "EFFORT=$effortPlan"
     # The seat, whether this launch is fresh, the start line it would carry, and the two
     # variables a seated session reads. A role with no chair prints none and (unset).
     Write-Output "SEAT=$seatPlan"
@@ -427,6 +454,8 @@ function Show-Help {
     Write-Host "  -ShowEnv                 print the variables the session would get, then exit"
     Write-Host "  CLAUDE_MODEL_<ROLE>      environment variable: default model of a role (CLAUDE_MODEL_ORCHESTRATOR,"
     Write-Host "                           _ANALYST, _LANE, _RESEARCH), used when the line has no --model"
+    Write-Host "  CLAUDE_EFFORT_<ROLE>     environment variable: effort of a role (low, medium, high, xhigh, max),"
+    Write-Host "                           used when the line has no --effort"
     Write-Host "  -Workspace <n>   -x      with -Tab: Herdr workspace (number or id) for the new tab"
     Write-Host "  -Help            -h      this help"
     Write-Host ""
