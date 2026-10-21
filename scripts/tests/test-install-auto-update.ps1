@@ -351,8 +351,12 @@ open(path, "w", encoding="utf-8", newline="\n").write(json.dumps(data, indent=2)
     Assert-Match (Get-LastLine ' ssh: ') 'ssh: the user''s own' 'and so does a GIT_SSH such as plink'
     Invoke-DailyRun
     Assert-True ((Get-LastLine ' ssh: ') -match ' ssh: ssh -o BatchMode=yes$') 'batch mode again with neither'
+    # these runs installed the change the locked run skipped; the phases below start from here
+    Clear-Pending
+    $homeBefore = Get-KitHomeHash
 
     Write-Host "`r`nphase 12, a clone with changes of its own: logged, nothing pulled or installed"
+    $upstream = Add-Upstream @('README.md') 'upstream change six'
     Add-Content -LiteralPath (Join-Path $clone 'README.md') -Encoding ascii -Value 'A local edit.'
     $cloneHead = Get-Head $clone
     Invoke-DailyRun
