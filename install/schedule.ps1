@@ -163,7 +163,10 @@ function Save-KitInstallRecord {
             if ($LASTEXITCODE -eq 0 -and $head -match '^[0-9a-f]{40}$') { $commit = $head }
         } catch { } finally { $ErrorActionPreference = $previous }
     }
-    [ordered]@{ permissions = $Permissions; noHookMerge = $NoHookMerge; commit = $commit; clone = $KitRoot
-                installed = (Get-Date).ToString('s') } |
-        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $KitHome '.kit-install.json') -Encoding UTF8
+    # No time stamp: a run that changes nothing leaves the record, like every other file, byte for byte as it was.
+    $text = [ordered]@{ permissions = $Permissions; noHookMerge = $NoHookMerge; commit = $commit; clone = $KitRoot } |
+        ConvertTo-Json
+    $path = Join-Path $KitHome '.kit-install.json'
+    if ((Test-Path -LiteralPath $path) -and ((Get-Content -LiteralPath $path -Raw).Trim() -eq $text.Trim())) { return }
+    Set-Content -LiteralPath $path -Value $text -Encoding UTF8
 }
