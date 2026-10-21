@@ -5,14 +5,16 @@ already wrote. The definitions ask for a checkpoint report at 70 percent, but an
 counter, so on a busy project it read until the limit and handed back nothing.
 
 Inside a subagent (the harness passes `agent_id` and `agent_type`) every tool call the agent
-attempts adds one empty file to `$CLAUDE_LEDGER_DIR/turn-budget/<agent_id>/`, so the file count is
-the call count even when calls run in parallel (Windows has no atomic append). PreToolUse is the
-one event that sees every attempt: a call that then fails, is refused by another hook or is
-denied a permission fires no PostToolUse, yet it spends a turn. When the count first reaches 70
+starts adds one empty file to `$CLAUDE_LEDGER_DIR/turn-budget/<agent_id>/`, so the file count is
+the call count even when calls run in parallel (Windows has no atomic append). PreToolUse sees
+every call that passes the harness's input validation: a call that then fails, is refused by
+another hook or is denied a permission fires no PostToolUse, yet it spends a turn. A call
+rejected before that (an unknown tool, a missing parameter) fires no hook at all and is not
+counted. When the count first reaches 70
 and then 90 percent of the definition's `maxTurns` (found as `<cwd>/.claude/agents/<type>.md`,
 then `~/.claude/agents/<type>.md`), the hook adds one factual line to the agent's context through
-`additionalContext`. A turn holds one or more calls, so the count is never behind the turns and
-the note comes at or before the turn it names. In the main session, and for an agent whose
+`additionalContext`. A turn holds one or more calls, so unless calls are rejected for bad input
+the count is never behind the turns and the note comes at or before the turn it names. In the main session, and for an agent whose
 definition has no `maxTurns` or cannot be found, it does nothing and writes nothing.
 
 Known limit: a finished agent resumed by a message keeps its agent_id, so its count carries on
@@ -123,7 +125,7 @@ def budget_note(data):
             open(os.path.join(calls, "mark-%d" % mark), "x").close()
         except OSError:
             return None
-        return ("Turn budget, %d percent: this %s run has made %d tool calls; its limit is %d turns "
+        return ("Turn budget, %d percent: this %s run has started %d tool calls; its limit is %d turns "
                 "(maxTurns in %s), and a turn holds one or more calls. At the limit the run ends and "
                 "returns only what it has already written or reported."
                 % (mark, agent_type, count, limit, source))

@@ -74,7 +74,7 @@ class TurnBudget(unittest.TestCase):
         got = self.notes(outputs)
         self.assertEqual([7, 9], [n for n, _ in got])
         self.assertIn("Turn budget, 70 percent", got[0][1])
-        self.assertIn("has made 7 tool calls; its limit is 10 turns", got[0][1])
+        self.assertIn("has started 7 tool calls; its limit is 10 turns", got[0][1])
         self.assertIn("Turn budget, 90 percent", got[1][1])
         self.assertEqual("PreToolUse", outputs[6]["hookSpecificOutput"]["hookEventName"])
 

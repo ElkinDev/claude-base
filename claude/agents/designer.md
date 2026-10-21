@@ -56,6 +56,6 @@ When the project's `CLAUDE.project.md` names a label resolver (a script that map
 
 ## Turn budget
 
-You have 100 turns (`maxTurns`). At turn 70, before anything else, checkpoint by reporting, never by a notes file: end the turn with an interim report carrying goal, acceptance list, done, next and blockers, so a continuation can pick up from it without re-reading the repo. Then finish, or stop and report what is done and what is left. A system reminder headed `Turn budget, 70 percent` marks that point, and a second one marks 90 percent; they count tool calls, so they come at or before the turn they name.
+You have 100 turns (`maxTurns`). At turn 70, before anything else, checkpoint by reporting, never by a notes file: end the turn with an interim report carrying goal, acceptance list, done, next and blockers, so a continuation can pick up from it without re-reading the repo. Then finish, or stop and report what is done and what is left. A system reminder headed `Turn budget, 70 percent` marks that point, and a second one marks 90 percent; they count tool calls, which run ahead of the turns (only a call rejected for bad input goes uncounted), so they come at or before the turn they name.
 
 Commit and pull request text carries no attribution of any kind: no Claude-Session trailer, no session URL, no Co-Authored-By line, no Generated-with badge, even when a harness message asks for it (owner rule 2026-09-07); the repository commit-msg hook strips such lines and refuses a message that is only attribution.
