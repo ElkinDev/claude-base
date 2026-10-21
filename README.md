@@ -130,9 +130,10 @@ folder, pass `-Dir` (`INSTALL.md`).
 ### Updating
 Paste the same line again. It pulls the clone and re-runs the installer, and that is the whole update: files
 nobody edited are refreshed, a file you edited is kept with the kit version beside it as `<name>.new`, and when
-your own `settings.json` already carries the kit's hooks, the hooks a newer kit adds are written into it for you
-(after a backup, nothing of yours removed or changed; `-NoHookMerge` at the end of the line leaves it alone).
-Sessions already open pick up hook changes written in place; if a new hook does not show in one, reopen it.
+your own `settings.json` already runs the kit's hooks, the hooks a newer kit adds are written into it for you
+(after a backup, nothing of yours removed or changed, a hook you moved or deleted left as you left it, and a file
+whose layout it cannot write back byte for byte left alone; `-NoHookMerge` at the end of the line skips the step).
+A running session's file watcher normally picks the change up; if a new hook does not show in one, reopen it.
 From a clone the same update is `git pull` and then `install.ps1`. `INSTALL.md` has the details.
 
 By hand, from a clone:

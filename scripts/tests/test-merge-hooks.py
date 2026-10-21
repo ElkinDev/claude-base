@@ -6,6 +6,8 @@ Every case writes its files into a fresh temporary folder and runs the tool the 
 as a subprocess. No network, no real settings file.
 """
 import base64
+import copy
+import hashlib
 import json
 import os
 import shutil
@@ -69,6 +71,9 @@ class MergeHooks(unittest.TestCase):
                               capture_output=True, timeout=60)
         return done.returncode, done.stdout.decode("utf-8")
 
+    def added(self, out):
+        return sum(1 for line in out.splitlines() if line.startswith("added "))
+
     def raw(self, path=None):
         with open(path or self.settings, "rb") as handle:
             return handle.read()
@@ -87,7 +92,7 @@ class MergeHooks(unittest.TestCase):
         data = self.read_user()
         self.assertIn(("*", "python \"C:/kit/hooks/turn-budget.py\""), self.handlers(data, "PreToolUse"))
         self.assertEqual([("*", "python \"C:/kit/hooks/inflight.py\"")], self.handlers(data, "SubagentStop"))
-        self.assertEqual(2, out.count("added"))
+        self.assertEqual(2, self.added(out))
         self.assertIn("PreToolUse[*] python \"C:/kit/hooks/turn-budget.py\"", out)
 
     def test_nothing_of_the_user_is_removed_or_changed(self):
@@ -178,6 +183,142 @@ class MergeHooks(unittest.TestCase):
         after = os.stat(self.settings)
         self.assertEqual(before.st_ino, after.st_ino)
         self.assertNotEqual(before.st_size, after.st_size)
+
+    # ---------------------------------------------------- handlers known by the script they run --
+
+    def write_kit(self, data, name="kit-settings.json"):
+        path = os.path.join(self.base, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2)
+        return path
+
+    def test_a_command_whose_form_changed_is_never_wired_twice(self):
+        self.kit = self.write_kit({"hooks": {
+            "SessionStart": [{"hooks": [{"type": "command", "command":
+                "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -File \"C:/kit/hooks/b.ps1\""}]}],
+            "Stop": [{"hooks": [{"type": "command", "command": "python \"C:/kit/hooks/landing.py\""}]}]}})
+        self.write_user({"hooks": {
+            "SessionStart": [{"hooks": [{"type": "command", "command": "powershell -NoProfile -File \"C:\\kit\\hooks\\b.ps1\""}]}],
+            "Stop": [{"hooks": [{"type": "command", "command": "py -3 \"C:/kit/hooks/landing.py\""}]}]}})
+        before = self.raw()
+        code, out = self.run_tool()
+        self.assertEqual(0, code, out)
+        self.assertIn("up to date", out)
+        self.assertEqual(before, self.raw())
+
+    def test_with_the_previous_render_a_hook_the_user_deleted_or_moved_stays_as_they_left_it(self):
+        previous = copy.deepcopy(KIT)
+        previous["hooks"]["PreToolUse"] = previous["hooks"]["PreToolUse"][:1]  # turn-budget is new since
+        previous_path = self.write_kit(previous, "previous.json")
+        mine = user_settings()
+        mine["hooks"]["PreToolUse"][0]["matcher"] = "Grep"  # guard-read moved from Read to Grep
+        self.write_user(mine)  # and inflight, in the previous render, was never taken: deleted
+        code, out = self.run_tool("--previous", previous_path)
+        self.assertEqual(0, code, out)
+        data = self.read_user()
+        self.assertIn(("*", "python \"C:/kit/hooks/turn-budget.py\""), self.handlers(data, "PreToolUse"))
+        self.assertNotIn("SubagentStop", data["hooks"])
+        self.assertNotIn("Read", [m for m, _ in self.handlers(data, "PreToolUse")])
+        self.assertEqual(1, self.added(out))
+
+    def test_a_script_new_on_an_event_the_user_already_runs_it_under_is_not_added(self):
+        previous_path = self.write_kit(KIT, "previous.json")
+        kit = copy.deepcopy(KIT)
+        kit["hooks"]["PreToolUse"].append({"matcher": "Grep", "hooks": [{"type": "command", "command": "python \"C:/kit/hooks/guard-read.py\""}]})
+        self.kit = self.write_kit(kit)
+        mine = user_settings()
+        mine["hooks"]["PreToolUse"].append({"matcher": "*", "hooks": [{"type": "command", "command": "python \"C:/kit/hooks/turn-budget.py\""}]})
+        mine["hooks"]["SubagentStop"] = [{"matcher": "*", "hooks": [{"type": "command", "command": "python \"C:/kit/hooks/inflight.py\""}]}]
+        self.write_user(mine)
+        code, out = self.run_tool("--previous", previous_path)
+        self.assertEqual(0, code, out)
+        self.assertIn("up to date", out)
+
+    def test_an_unreadable_previous_render_falls_back_to_scripts_run_nowhere(self):
+        broken = os.path.join(self.base, "previous.json")
+        with open(broken, "w", encoding="utf-8") as handle:
+            handle.write("{ not json")
+        self.write_user(user_settings())
+        code, out = self.run_tool("--previous", broken)
+        self.assertEqual(0, code, out)
+        self.assertIn("cannot be read", out)
+        self.assertEqual(2, self.added(out))
+
+    # ------------------------------------------------------------- the layout gate --
+
+    def assert_left_alone(self, text):
+        with open(self.settings, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+        before = self.raw()
+        for extra in ((), ("--dry-run",)):
+            code, out = self.run_tool(*extra)
+            self.assertEqual(0, code, out)
+            self.assertIn("left alone", out)
+            self.assertNotIn("would add", out)
+            self.assertEqual(before, self.raw())
+
+    def test_a_tab_indented_file_is_left_alone(self):
+        self.assert_left_alone(json.dumps(user_settings(), indent="\t") + "\n")
+
+    def test_a_compact_file_is_left_alone(self):
+        self.assert_left_alone(json.dumps(user_settings(), separators=(",", ":")))
+
+    def test_entries_kept_on_one_line_are_left_alone(self):
+        text = json.dumps(user_settings(), indent=2) + "\n"
+        entry = json.dumps(user_settings()["hooks"]["Stop"][0])
+        pretty = json.dumps(user_settings()["hooks"]["Stop"][0], indent=2).replace("\n", "\n      ")
+        self.assertIn(pretty, text)
+        self.assert_left_alone(text.replace(pretty, entry))
+
+    def test_a_key_written_twice_is_left_alone(self):
+        text = json.dumps(user_settings(), indent=2) + "\n"
+        self.assert_left_alone(text.replace('"model": "my-model",', '"env": {"A": "1"},\n  "env": {"B": "2"},\n  "model": "my-model",'))
+
+    def test_the_layout_claude_code_writes_merges_and_keeps_raw_text(self):
+        mine = user_settings()
+        mine["statusLine"] = {"type": "command", "command": "señal.exe"}
+        with open(self.settings, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(mine, indent=2, ensure_ascii=False))  # JSON.stringify(x, null, 2), no newline
+        code, dry = self.run_tool("--dry-run")
+        self.assertEqual(0, code, dry)
+        code, out = self.run_tool()
+        self.assertEqual(0, code, out)
+        raw = self.raw()
+        self.assertIn("señal.exe".encode("utf-8"), raw)
+        self.assertFalse(raw.endswith(b"\n"))
+        self.assertIn("after-sha256 " + hashlib.sha256(raw).hexdigest(), dry)
+
+    # ------------------------------------------------------- shapes and links --
+
+    def test_a_hooks_entry_of_the_wrong_shape_stops_dry_and_real_runs_alike(self):
+        mine = user_settings()
+        mine["hooks"]["SubagentStop"] = {}
+        self.write_user(mine)
+        before = self.raw()
+        for extra in (("--dry-run",), ()):
+            code, out = self.run_tool(*extra)
+            self.assertEqual(1, code, out)
+            self.assertIn("NOTHING TOUCHED", out)
+            self.assertEqual(before, self.raw())
+
+    def test_a_settings_file_that_is_a_link_is_left_alone(self):
+        real = os.path.join(self.base, "real-settings.json")
+        with open(real, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(user_settings(), indent=2) + "\n")
+        try:
+            os.symlink(real, self.settings)
+        except (OSError, NotImplementedError):
+            # No symlink privilege: a directory junction is a link of the other kind the check reads.
+            if os.name != "nt":
+                raise
+            target = os.path.join(self.base, "a-folder")
+            os.makedirs(target)
+            subprocess.run(["cmd", "/c", "mklink", "/J", self.settings, target], capture_output=True, check=True)
+        before = self.raw(real)
+        code, out = self.run_tool()
+        self.assertEqual(0, code, out)
+        self.assertIn("it is a link", out)
+        self.assertEqual(before, self.raw(real))
 
 
 if __name__ == "__main__":

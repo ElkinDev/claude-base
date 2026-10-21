@@ -21,7 +21,7 @@
 # install.ps1 -DryRun when a clone is already there. -Permissions and -NoHookMerge are passed to install.ps1.
 #
 # Updating is the same line again: it pulls the clone and re-runs install.ps1, which adds the kit's new
-# hooks to a settings.json of yours that already carries the kit's hooks (backup first; -NoHookMerge
+# hooks to a settings.json of yours that already runs the kit's hooks (backup first; -NoHookMerge
 # leaves it alone).
 #
 # The tests replace the external commands through the environment: CLAUDE_BASE_WINGET (winget),

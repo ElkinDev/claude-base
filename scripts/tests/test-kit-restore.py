@@ -159,6 +159,52 @@ class KitRestoreTest(lib.RestoreFixture):
         self.assertTrue(mirrored.startswith(os.path.join(self.backups, "s")))
         self.assertNotIn(":", mirrored[len(self.backups) + 2:])
 
+    def merged_settings(self):
+        """A settings.json of the user's that a run merged hooks into: the copy holds it before the
+        merge, the line holds the hash it had right after, and the record keeps an older kit hash."""
+        settings = os.path.join(self.home, "settings.json")
+        self.managed[settings] = lib.sha256_text("what the kit wrote long ago")
+        merged = "mine, plus the kit's new hook"
+        self.write(settings, merged)
+        self.backup("20260828-100000", "user scope install",
+                    [("kept", settings), ("merged", "%s %s" % (settings, lib.sha256_text(merged)))],
+                    {settings: "mine"})
+        return settings
+
+    def test_a_merged_file_still_as_the_merge_left_it_is_put_back(self):
+        settings = self.merged_settings()
+        code, output = run_restore(["--stamp", "20260828-100000"])
+        self.assertEqual(code, 0, output)
+        self.assertEqual(read_text(settings), "mine")
+        self.assertIn("the hooks merge is undone", output)
+        self.assertEqual(self.managed_now()[settings], lib.sha256_text("what the kit wrote long ago"))
+
+    def test_a_merged_file_changed_after_the_merge_needs_force(self):
+        settings = self.merged_settings()
+        self.write(settings, "mine, the kit's new hook, and a line I added since")
+        code, output = run_restore(["--stamp", "20260828-100000"])
+        self.assertEqual(code, 1, output)
+        self.assertIn("changed after the merge, pass --force", output)
+        self.assertEqual(read_text(settings), "mine, the kit's new hook, and a line I added since")
+        code, output = run_restore(["--stamp", "20260828-100000", "--force"])
+        self.assertEqual(code, 0, output)
+        self.assertEqual(read_text(settings), "mine")
+
+    def test_a_merged_line_without_a_hash_is_reported_and_touches_nothing(self):
+        settings = self.write(os.path.join(self.home, "settings.json"), "mine, merged")
+        self.backup("20260828-100000", "user scope install", [("merged", settings)], {settings: "mine"})
+        code, output = run_restore(["--stamp", "20260828-100000"])
+        self.assertEqual(code, 1, output)
+        self.assertIn("carries no hash", output)
+        self.assertEqual(read_text(settings), "mine, merged")
+
+    def test_a_dry_run_over_a_merged_file_writes_nothing(self):
+        settings = self.merged_settings()
+        code, output = run_restore(["--stamp", "20260828-100000", "--dry-run"])
+        self.assertEqual(code, 0, output)
+        self.assertIn("would restore %s" % settings, output)
+        self.assertEqual(read_text(settings), "mine, plus the kit's new hook")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)

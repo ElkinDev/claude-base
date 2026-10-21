@@ -150,11 +150,12 @@ function Get-KitPython {
 function Invoke-KitHookMerge {
     <#
     The kit's new hooks into a settings.json of yours, through claude\merge-hooks.py: additions only,
-    and only into a file that already carries the kit's hooks. A dry probe runs first, so a run with
-    nothing to add writes no backup line. Before a real write the file is backed up and recorded as
-    overwritten, and its stale record leaves the manifest: the file is yours either way (a record that
-    differs from it and no record both keep it), and without the stale record kit-restore.py puts it
-    back without --force. Returns plan lines.
+    and only into a file that already runs the kit's hook scripts (its docstring has the rules). The
+    previous kit render, the .new as it was before this run refreshed it, tells a hook you moved or
+    deleted from one the kit added since. A dry probe runs first, so a run with nothing to add writes
+    no backup line. Before a real write the file is backed up and recorded as `merged <path> <sha256
+    after the merge>`: kit-restore.py puts the copy back only while the file still has that hash. The
+    manifest record is left as it was. Returns plan lines.
     #>
     param([string]$Target, [string]$KitText)
     $byHand = "take new hooks from $Target.new by hand"
@@ -162,9 +163,13 @@ function Invoke-KitHookMerge {
     $python = Get-KitPython
     if (-not $python) { return "hooks        $Target (not merged, no Python that runs; $byHand)" }
     $tool = Join-Path $root 'claude\merge-hooks.py'
-    $b64 = [Convert]::ToBase64String((New-Object System.Text.UTF8Encoding($false)).GetBytes($KitText))
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    $b64 = [Convert]::ToBase64String($utf8.GetBytes($KitText))
     $exe = $python[0]
     $pre = @($python | Select-Object -Skip 1) + @('-I', $tool, '--kit-b64', $b64)
+    if ($null -ne $script:KitHookMergePrevious) {
+        $pre += @('--previous-b64', [Convert]::ToBase64String($utf8.GetBytes($script:KitHookMergePrevious)))
+    }
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     $savedIo = $env:PYTHONIOENCODING
@@ -175,12 +180,15 @@ function Invoke-KitHookMerge {
     } finally { $ErrorActionPreference = $previous; $env:PYTHONIOENCODING = $savedIo }
     if ($code -ne 0) { return "hooks        $Target (not merged: $((@($probe) + '')[0]); $byHand)" }
     $adds = @($probe | Where-Object { $_.StartsWith('would add') })
-    $notes = @($probe | Where-Object { -not $_.StartsWith('would add') } | ForEach-Object { "hooks        $_" })
+    $after = @($probe | Where-Object { $_ -match '^after-sha256 [0-9a-f]{64}$' } | ForEach-Object { $_.Split(' ')[1] })
+    $notes = @($probe | Where-Object { -not $_.StartsWith('would add') -and -not $_.StartsWith('after-sha256') } |
+               ForEach-Object { "hooks        $_" })
     if ($adds.Count -eq 0) { return $notes }
+    if ($after.Count -ne 1) { return "hooks        $Target (not merged: the probe gave no hash of the result; $byHand)" }
     $added = @($adds | ForEach-Object { "hooks+       $Target " + $_.Substring('would add'.Length).Trim() })
     if ($DryRun) { return @($notes + $added) }
     Backup-KitFile $Target
-    Add-KitBackupLine "overwritten $Target"
+    Add-KitBackupLine "merged $Target $($after[0])"
     $ErrorActionPreference = 'Continue'
     $env:PYTHONIOENCODING = 'utf-8'
     try {
@@ -188,7 +196,6 @@ function Invoke-KitHookMerge {
         $code = $LASTEXITCODE
     } finally { $ErrorActionPreference = $previous; $env:PYTHONIOENCODING = $savedIo }
     if ($code -ne 0) { return "hooks        $Target (not merged: $((@($done) + '')[0]); $byHand)" }
-    if ($manifest.ContainsKey($Target)) { $manifest.Remove($Target) }
     return @($notes + $added)
 }
 
@@ -435,6 +442,12 @@ if ($Permissions -eq 'ask') {
 }
 $pairs += New-KitPair $null (Join-Path $kitHome 'settings.json') $settingsText
 $script:KitHookMergeTarget = Join-Path $kitHome 'settings.json'
+# The previous kit render, read before the plan refreshes the .new: it tells the hook merge which hooks the
+# kit added since, so a hook you moved or deleted is not put back.
+$script:KitHookMergePrevious = $null
+if (Test-Path -LiteralPath "$($script:KitHookMergeTarget).new" -PathType Leaf) {
+    $script:KitHookMergePrevious = [IO.File]::ReadAllText("$($script:KitHookMergeTarget).new", [Text.Encoding]::UTF8)
+}
 
 Write-Output "Kit home: $kitHome"
 Invoke-KitPlan $pairs 'user scope install'

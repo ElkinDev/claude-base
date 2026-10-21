@@ -422,6 +422,13 @@ with open(path, "w", encoding="utf-8", newline="\n") as handle:
     Assert-Exit 0 'a dry run over it succeeds'
     Assert-Regex $out 'hooks\+\s+.*settings\.json PreToolUse\[\*\] .*turn-budget\.py' 'the dry run names the hook it would add'
     Assert-True ((Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256).Hash -eq $mineBytes.Hash) 'and writes nothing'
+    function Get-TestRecord {
+        $files = (Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json).files
+        $entry = @($files.PSObject.Properties | Where-Object { $_.Name -eq $settingsPath })
+        if ($entry.Count) { return $entry[0].Value }
+        return $null
+    }
+    $recordBefore = Get-TestRecord
     $out = Invoke-Install
     Assert-Exit 0 'the update run succeeds'
     $merged = Get-Content -LiteralPath $settingsPath -Raw
@@ -429,7 +436,9 @@ with open(path, "w", encoding="utf-8", newline="\n") as handle:
     Assert-True ($merged.Contains('mine-for-test')) 'my own key is still there'
     Assert-True (Test-Path -LiteralPath "$settingsPath.new") 'the kit version is still beside it as .new'
     $stamp16 = Get-LastStamp
-    Assert-ManifestLine $stamp16 'overwritten' $settingsPath 'the record calls the merge an overwrite, so a rollback can undo it'
+    $afterHash = (Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256).Hash.ToLower()
+    Assert-ManifestLine $stamp16 'merged' "$settingsPath $afterHash" 'the backup records the merge with the hash the file has after it'
+    Assert-True (($null -ne $recordBefore) -and ((Get-TestRecord) -eq $recordBefore)) 'the managed-file record is left as it was'
     Assert-True (-not (Get-Content -LiteralPath (Get-BackupCopy $stamp16 $settingsPath) -Raw).Contains('turn-budget.py')) `
         'the backup holds my file as it was before the merge'
     $out = Invoke-Install
@@ -443,6 +452,11 @@ with open(path, "w", encoding="utf-8", newline="\n") as handle:
     Assert-Exit 0 'a run with -NoHookMerge succeeds'
     Assert-Match $out '-NoHookMerge' 'and says it left the hooks to me'
     Assert-True ((Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256).Hash -eq $mineBytes.Hash) 'and leaves my settings.json as it was'
+    # The .new beside it now holds the render that already had turn-budget.py, so its absence is my choice.
+    $out = Invoke-Install
+    Assert-Exit 0 'a plain run after the rollback succeeds'
+    Assert-Match $out 'up to date' 'and treats the hook I no longer have as one I took out'
+    Assert-True ((Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256).Hash -eq $mineBytes.Hash) 'so my settings.json stays as it is'
     & $script:Python $editor $settingsPath 'no-kit-hooks'
     $mineBytes = Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256
     $out = Invoke-Install
