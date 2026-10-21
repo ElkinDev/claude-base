@@ -177,6 +177,22 @@ class KitUpdateNotice(unittest.TestCase):
             self.assertEqual([err for _, err in outs], ["", "", "", ""])
             self.assertEqual(sum(1 for out, _ in outs if out.strip()), 1, outs)
 
+    def test_a_wait_for_another_clone_is_said_as_paused(self):
+        self.write({"result": "waiting", "line": "the last install came from C:/b; the daily update waits for an "
+                    "install from C:/a", "time": "2026-10-22 05:00", "log": UPDATED["log"]})
+        line = self.line_of(self.run_hook())
+        self.assertIn("paused: the last install came from C:/b; the daily update waits for an install from C:/a", line)
+
+    def test_a_claim_left_by_a_killed_session_is_taken_after_a_minute(self):
+        path = self.day_log(datetime.datetime.now() - datetime.timedelta(hours=3), ["start: clone C:/kit, kit home C:/h"])
+        with open(path + ".claim", "w"):
+            pass
+        self.assertEqual(self.run_hook(), "", "a fresh claim is another session's")
+        old = time.time() - 120
+        os.utime(path + ".claim", (old, old))
+        self.assertIn("never finished", self.line_of(self.run_hook()))
+        self.assertFalse(os.path.exists(path + ".claim"))
+
 
 if __name__ == "__main__":
     unittest.main()

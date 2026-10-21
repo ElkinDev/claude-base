@@ -12,7 +12,9 @@ and the permission mode read from the live settings.json (bypassPermissions is b
 unreadable file included, is ask). It passes -Unattended, so install.ps1 changes nothing outside the kit home: no
 user PATH, no Herdr, no scheduled task. A failed install writes no record, so the next run tries it again.
 
-It never waits on a question: git runs with GIT_TERMINAL_PROMPT=0, GCM_INTERACTIVE=never and an ssh in batch mode.
+It never waits on a question: git runs with GIT_TERMINAL_PROMPT=0, GCM_INTERACTIVE=never and, unless the user has
+an ssh of their own (GIT_SSH_COMMAND, GIT_SSH or core.sshCommand), an ssh in batch mode. When the last install came
+from another clone than the task's, the run installs nothing and waits for an install from the task's clone.
 One run at a time per clone: a run holds <clone>\.git\kit-auto-update.lock open for its whole length (the system
 lets go of it when the process ends, however it ends), and a run that cannot take it within
 KIT_AUTO_UPDATE_LOCK_WAIT seconds (600) logs a skip line and leaves no notice.
@@ -31,7 +33,6 @@ $ErrorActionPreference = 'Continue'
 # Never a prompt: no terminal question, no credential dialog, no ssh passphrase.
 $env:GIT_TERMINAL_PROMPT = '0'
 $env:GCM_INTERACTIVE = 'never'
-$env:GIT_SSH_COMMAND = 'ssh -o BatchMode=yes'
 
 $logs = Join-Path $KitHome 'logs'
 New-Item -ItemType Directory -Force -Path $logs | Out-Null
@@ -81,6 +82,12 @@ function Read-InstallRecord {
     try { return (Get-Content -LiteralPath $record -Raw -ErrorAction Stop | ConvertFrom-Json) } catch { return $null }
 }
 
+function Get-SamePath {
+    # One spelling of a folder, to compare two: full path, backslashes, no trailing separator, case folded.
+    param([string]$Path)
+    try { return [IO.Path]::GetFullPath($Path.Replace('/', '\')).TrimEnd('\').ToLowerInvariant() } catch { return $Path }
+}
+
 function Get-LivePermissions {
     # The mode the user has now, read from the settings.json in use: an automatic run never changes it.
     try {
@@ -116,6 +123,33 @@ while (-not $lock) {
 # $lock stays open until this process ends.
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Stop-Update 'git is not on PATH; nothing was pulled or installed' }
+
+# ssh in batch mode, so a key with a passphrase fails the pull instead of waiting; but only when the user has no ssh of
+# their own (GIT_SSH_COMMAND, GIT_SSH such as plink with pageant, or core.sshCommand), which is left as it is.
+$ownSsh = & git -C $Dir config --get core.sshCommand 2>$null
+if ($env:GIT_SSH_COMMAND -or $env:GIT_SSH -or $ownSsh) {
+    Write-UpdateLog 'ssh: the user''s own (GIT_SSH_COMMAND, GIT_SSH or core.sshCommand), left as it is'
+} else {
+    $env:GIT_SSH_COMMAND = 'ssh -o BatchMode=yes'
+    Write-UpdateLog 'ssh: ssh -o BatchMode=yes'
+}
+
+# The last finished install, by hand or by this task (install\schedule.ps1, Save-KitInstallRecord). One that came
+# from another clone is the user's latest choice: the task's clone, older or newer, must not undo it, so nothing is
+# pulled or installed until an install comes from the task's clone again. Said once in the notice.
+$prior = Read-InstallRecord
+$waiting = Join-Path $logs 'auto-update-waiting.txt'
+if ($prior -and $prior.clone -and (Get-SamePath $prior.clone) -ne (Get-SamePath $Dir)) {
+    $why = "the last install came from $($prior.clone); the daily update waits for an install from $Dir"
+    Write-UpdateLog "skipped: $why"
+    $said = if (Test-Path -LiteralPath $waiting) { [string](Get-Content -LiteralPath $waiting -TotalCount 1) } else { '' }
+    if ($said -ne $prior.clone) {
+        Set-Content -LiteralPath $waiting -Value $prior.clone -Encoding UTF8
+        Add-UpdateNotice ([ordered]@{ result = 'waiting'; line = $why })
+    }
+    exit 0
+}
+if (Test-Path -LiteralPath $waiting) { Remove-Item -LiteralPath $waiting -Force }
 $before = ((Invoke-UpdateGit @('rev-parse', 'HEAD')) | Select-Object -Last 1)
 if ($LASTEXITCODE -ne 0) { Stop-Update "git could not read the clone at $Dir; nothing was pulled or installed" }
 $changes = Invoke-UpdateGit @('status', '--porcelain', '--untracked-files=no')
@@ -129,9 +163,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 $after = ((Invoke-UpdateGit @('rev-parse', 'HEAD')) | Select-Object -Last 1)
 
-# The last finished install, by hand or by this task. Its commit equal to the clone's: nothing to install. No record
-# (a kit installed before records existed): install once, and report from the commit the clone had before the pull.
-$prior = Read-InstallRecord
+# The record's commit equal to the clone's: nothing to install. No record (lost, or a kit installed before records
+# existed): install once, and report from the commit the clone had before the pull.
 $from = if ($prior -and "$($prior.commit)" -match '^[0-9a-f]{40}$') { "$($prior.commit)" } else { $null }
 if ($from -eq $after) {
     Write-UpdateLog "done: the kit is already installed at $($after.Substring(0, 7)); nothing to install"
@@ -141,7 +174,11 @@ if (-not $from) { $from = $before }
 Write-UpdateLog "kit at $after (installed $from)"
 
 $flags = @('-Permissions', (Get-LivePermissions), '-Unattended')
-if ($prior -and $prior.noHookMerge -eq $true) { $flags += '-NoHookMerge' }
+if (-not $prior) {
+    # A choice nobody can read is never a reason to touch the user's settings.json; this install writes the record.
+    $flags += '-NoHookMerge'
+    Write-UpdateLog 'no readable install record, so -NoHookMerge: an unknown choice never merges hooks into settings.json'
+} elseif ($prior.noHookMerge -eq $true) { $flags += '-NoHookMerge' }
 Write-UpdateLog "install.ps1 $($flags -join ' ') (the mode read from settings.json, -NoHookMerge as the last install had it)"
 $env:KIT_HOME = $KitHome
 $ps = if ($env:SystemRoot) { Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe' } else { 'powershell' }

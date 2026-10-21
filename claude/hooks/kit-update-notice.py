@@ -22,8 +22,10 @@ import json
 import os
 import re
 import sys
+import time
 
 LIMIT_MINUTES = 30  # the task's ExecutionTimeLimit (install/schedule.ps1)
+CLAIM_STALE = 60  # seconds after which a claim on a log is a dead session's
 LOG_NAME = re.compile(r"^auto-update-(\d{4}-\d{2}-\d{2})\.log$")
 START = re.compile(r"^(\d\d:\d\d:\d\d) start:")
 END = re.compile(r"^\d\d:\d\d:\d\d (done|failed|skipped):")
@@ -47,7 +49,7 @@ def entries(path):
                 entry = json.loads(raw)
             except ValueError:
                 continue
-            if isinstance(entry, dict) and entry.get("result") in ("updated", "failed"):
+            if isinstance(entry, dict) and entry.get("result") in ("updated", "failed", "waiting"):
                 found.append(entry)
     return found
 
@@ -87,9 +89,7 @@ def stopped_runs(logs, now):
         if not open_starts(path, match.group(1), now):
             continue
         claim = path + ".claim"
-        try:
-            os.close(os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
-        except OSError:
+        if not take(claim):
             continue  # another session is reporting this log
         try:
             # read again under the claim: a session that just closed it leaves nothing to report
@@ -103,6 +103,23 @@ def stopped_runs(logs, now):
         finally:
             os.remove(claim)
     return found
+
+
+def take(claim):
+    """True when this session now holds the claim. A claim older than CLAIM_STALE seconds belongs to a session that
+    was stopped before it let go (a hook killed at its timeout), so it is taken over."""
+    for _ in range(2):
+        try:
+            os.close(os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            return True
+        except OSError:
+            try:
+                if time.time() - os.path.getmtime(claim) <= CLAIM_STALE:
+                    return False
+                os.remove(claim)
+            except OSError:
+                return False
+    return False
 
 
 def notice(runs):
@@ -124,6 +141,8 @@ def notice(runs):
         parts.append(text)
     if last["result"] == "failed":
         parts.append(("the last run failed: " if updates else "failed: ") + str(last.get("line", "")).rstrip("."))
+    elif last["result"] == "waiting":
+        parts.append("paused: " + str(last.get("line", "")).rstrip("."))
     return "Kit auto-update %s: %s. Log: %s" % (last.get("time", ""), "; ".join(parts), last.get("log", ""))
 
 

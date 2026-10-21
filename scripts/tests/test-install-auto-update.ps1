@@ -49,6 +49,7 @@ function Get-Head { param([string]$Repo) return (Invoke-Git $Repo @('rev-parse',
 function Get-Mode { return ((Get-Content -LiteralPath $settings -Raw | ConvertFrom-Json).permissions.defaultMode) }
 function Get-Record { return (Get-Content -LiteralPath $record -Raw | ConvertFrom-Json) }
 function Get-DayLog { return (Join-Path $logs ('auto-update-' + (Get-Date).ToString('yyyy-MM-dd') + '.log')) }
+function Get-LastLine { param([string]$Pattern) return [string](Get-Content -LiteralPath (Get-DayLog) | Where-Object { $_ -match $Pattern } | Select-Object -Last 1) }
 function Get-LastInstallLine { return [string](Get-Content -LiteralPath (Get-DayLog) | Where-Object { $_ -match ' install[.]ps1 -Permissions ' } | Select-Object -Last 1) }
 
 function Get-UserPath {
@@ -269,6 +270,45 @@ open(path, "w", encoding="utf-8", newline="\n").write(json.dumps(data, indent=2)
     Assert-Regex $script:LastRun ' done: the kit is already installed at ' 'the daily run does not install it again'
     Assert-True (@(Get-Pending).Count -eq 0) 'and reports no change the user made'
 
+    Write-Host "`r`nphase 8b, a hand install from another clone is not undone: the run waits for one from its own clone"
+    $other = Join-Path $base 'kit-b'
+    Invoke-Git $base @('clone', '--quiet', $origin, $other) | Out-Null
+    $upstream = Add-Upstream @('README.md') 'upstream change for the other clone'
+    Invoke-Git $other @('pull', '--quiet', '--ff-only') | Out-Null
+    $script:Installer = Join-Path $other 'install.ps1'
+    try { $out = Invoke-Install @('-Permissions', 'ask', '-NoHerdr') } finally { $script:Installer = Join-Path $clone 'install.ps1' }
+    Assert-True ((Get-Record).clone -eq $other) 'the record names the other clone'
+    $upstream = Add-Upstream @('README.md') 'upstream change after the other install'
+    $cloneHead = Get-Head $clone
+    $homeBefore = Get-KitHomeHash
+    Invoke-DailyRun
+    Assert-True ($script:LastRun.EndsWith("skipped: the last install came from $other; the daily update waits for an install from $clone")) `
+        'the run says where the last install came from and waits'
+    Assert-True ((Get-Head $clone) -eq $cloneHead) 'the task''s clone was not pulled'
+    Assert-True ((Get-KitHomeHash) -eq $homeBefore) 'the other clone''s install stays as it is'
+    $runs = @(Get-Pending)
+    Assert-True ($runs.Count -eq 1 -and $runs[0].result -eq 'waiting') 'one notice'
+    Assert-Match (Invoke-Notice) "paused: the last install came from $($other.Replace('\', '\\'))" 'the session start prints it'
+    Invoke-DailyRun
+    Assert-Match $script:LastRun 'skipped: the last install came from' 'the next run waits too'
+    Assert-True (@(Get-Pending).Count -eq 0) 'and says nothing again'
+    $out = Invoke-Install @('-Permissions', 'ask', '-NoHerdr')
+    Invoke-DailyRun
+    Assert-Regex $script:LastRun (' done: updated to ' + $upstream.Substring(0, 7)) 'after an install from its own clone it resumes by itself'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $logs 'auto-update-waiting.txt'))) 'and forgets the wait'
+    Clear-Pending
+
+    Write-Host "`r`nphase 8c, with the record lost the run never merges hooks into settings.json, and records again"
+    Remove-Item -LiteralPath $record
+    $upstream = Add-Upstream @('README.md') 'upstream change with no record'
+    Invoke-DailyRun
+    Assert-Regex $script:LastRun ' done: updated to ' 'the run installs'
+    Assert-Match (Get-LastLine 'no readable install record') 'so -NoHookMerge' 'it says why'
+    Assert-Match (Get-LastInstallLine) '-Unattended -NoHookMerge (' 'it passes -NoHookMerge'
+    Assert-True ((Get-Record).noHookMerge -eq $true -and (Get-Record).commit -eq $upstream) 'and the install wrote the record'
+    $out = Invoke-Install @('-Permissions', 'ask', '-NoHerdr')
+    Clear-Pending
+
     Write-Host "`r`nphase 9, an install that fails after a pull is reported, and the next run tries it again"
     $installedBefore = (Get-Record).commit
     $setup = Join-Path $origin 'install.ps1'
@@ -297,11 +337,20 @@ open(path, "w", encoding="utf-8", newline="\n").write(json.dumps(data, indent=2)
     Assert-True (@(Get-Pending).Count -eq 0) 'and no notice'
     Assert-True ((Invoke-Notice) -eq '') 'a skip is no failure at the session start either'
 
-    Write-Host "`r`nphase 11, never a prompt: git runs with prompts off and ssh in batch mode"
+    Write-Host "`r`nphase 11, never a prompt: prompts off and ssh in batch mode, unless the user has an ssh of their own"
     $code = Get-Content -LiteralPath $runner -Raw
     Assert-Match $code "`$env:GIT_TERMINAL_PROMPT = '0'" 'no terminal prompt'
-    Assert-Match $code "`$env:GIT_SSH_COMMAND = 'ssh -o BatchMode=yes'" 'no ssh passphrase prompt'
     Assert-Match $code "`$env:GCM_INTERACTIVE = 'never'" 'no credential dialog'
+    Assert-True ((Get-LastLine ' ssh: ') -match ' ssh: ssh -o BatchMode=yes$') 'ssh in batch mode by default'
+    Invoke-Git $clone @('config', 'core.sshCommand', 'ssh -i kit-test-key') | Out-Null
+    Invoke-DailyRun
+    Assert-Match (Get-LastLine ' ssh: ') 'ssh: the user''s own' 'a clone with core.sshCommand keeps it'
+    Invoke-Git $clone @('config', '--unset', 'core.sshCommand') | Out-Null
+    $env:GIT_SSH = 'plink.exe'
+    try { Invoke-DailyRun } finally { $env:GIT_SSH = $null }
+    Assert-Match (Get-LastLine ' ssh: ') 'ssh: the user''s own' 'and so does a GIT_SSH such as plink'
+    Invoke-DailyRun
+    Assert-True ((Get-LastLine ' ssh: ') -match ' ssh: ssh -o BatchMode=yes$') 'batch mode again with neither'
 
     Write-Host "`r`nphase 12, a clone with changes of its own: logged, nothing pulled or installed"
     Add-Content -LiteralPath (Join-Path $clone 'README.md') -Encoding ascii -Value 'A local edit.'
