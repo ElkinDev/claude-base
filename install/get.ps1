@@ -23,9 +23,10 @@
 # Updating is the same line again: it pulls the clone and re-runs install.ps1, which adds the kit's new
 # hooks to a settings.json of yours that already runs the kit's hooks (backup first; -NoHookMerge
 # leaves it alone). -AutoUpdate at the end of the line makes that a daily task of this user that runs
-# hidden, installs only when the clone moved, keeps the permission mode settings.json has, never touches
-# Herdr, logs to <kit home>\logs, and is reported at the next session start (install.ps1). -NoAutoUpdate
-# removes it and does nothing else: no check, no clone needed, no pull, no install.
+# hidden, installs only when the clone moved past the last install, replays that install's options with
+# the permission mode settings.json has, changes nothing outside the kit home, logs to <kit home>\logs,
+# and is reported at the next session start (install.ps1). -NoAutoUpdate removes it and does nothing
+# else: no check, no clone needed, no pull, no install.
 #
 # The tests replace the external commands through the environment: CLAUDE_BASE_WINGET (winget),
 # CLAUDE_BASE_CLAUDE_INSTALLER (a .ps1, a path or a URL, saved and run instead of the Claude Code installer), CLAUDE_BASE_MISSING

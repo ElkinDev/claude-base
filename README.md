@@ -138,14 +138,17 @@ From a clone the same update is `git pull` and then `install.ps1`. `INSTALL.md` 
 
 To have it done for you every day, add `-AutoUpdate` at the end of the line once. It registers a scheduled task of
 your own user, with no elevation, that pulls the clone at 05:00 (or as soon as you sign in after a day the machine
-was off), hidden and with no question, and runs the installer only when the clone moved. It never changes a choice
-of yours: the permission mode is the one your `settings.json` has at that moment, Herdr is left as it is, and
-`-NoHookMerge`, if you gave it, is kept. Each run writes `<kit home>\logs\auto-update-<date>.log` (the last 30 are
-kept), and the next Claude Code session prints one line when a run updated the kit (the new commit, how many files
-changed, the hooks it added) or failed, with the log path. A failed pull (a clone with changes of its own, no
-network, a moved clone) changes nothing. A pull that worked followed by an install that failed leaves the clone at
-the new commit and the kit home as that install left it, and the next day's run tries the install again.
-`-NoAutoUpdate` on the same line removes the task and does nothing else.
+was off), hidden and with no question, and installs only when the clone moved past the last install. It follows
+your last choices, never the ones of the day you enabled it: every install, by hand or by the task, records the
+commit and the options it ran with, the task replays that record, the permission mode is the one your
+`settings.json` has at that moment, and it changes nothing outside the kit home (your PATH, Herdr and the task
+itself are left as they are). Each run writes `<kit home>\logs\auto-update-<date>.log` (the last 30 are kept), and
+the next Claude Code session prints one line when a run updated the kit (the new commit, how many files changed,
+the hooks it added) or failed, with the log path. A failed pull (a clone with changes of its own, no network, a
+moved clone) changes nothing; a run that hung on something is stopped after 30 minutes and reported the same way. A
+pull that worked followed by an install that failed leaves the clone at the new commit and the kit home as that
+install left it, and the next day's run tries the install again. `-NoAutoUpdate` on the same line removes the task
+and does nothing else, even with the clone gone.
 
 By hand, from a clone:
 ```
