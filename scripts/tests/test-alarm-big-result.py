@@ -157,6 +157,22 @@ class AlarmTest(unittest.TestCase):
         self.assertEqual(out, "")
         self.assertLess(int(self.rows()[1][3]), 200)
 
+    def test_string_dimensions_and_the_original_size_are_read(self):
+        response = self.image()
+        response["file"]["dimensions"] = {"originalWidth": "1080", "originalHeight": "1920",
+                                          "displayWidth": 0, "displayHeight": None}
+        self.fire(response=response, tool="Read")
+        self.assertEqual(self.rows()[1][3], str(1080 * 1920 * 4 // 750))
+
+    def test_a_malformed_image_result_still_writes_its_row(self):
+        shapes = [{"type": "image", "file": "x"},
+                  {"type": "image", "file": {"dimensions": [1, 2]}},
+                  {"type": "image", "file": {"dimensions": {"displayWidth": float("inf"),
+                                                            "displayHeight": 10}}}]
+        for response in shapes:
+            self.assertEqual(self.fire(response=response, tool="Read"), "")
+        self.assertEqual(len(self.rows()), 1 + len(shapes), "every call keeps its ledger row")
+
     def test_a_huge_image_still_alarms(self):
         out = self.fire(response=self.image(width=8000, height=6000), tool="Read")
         self.assertIn("Read", json.loads(out)["systemMessage"])

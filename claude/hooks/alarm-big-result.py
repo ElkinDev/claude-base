@@ -84,11 +84,14 @@ def image_size(response):
     """The characters an image result counts as, or None when the result is not an image."""
     if not isinstance(response, dict) or response.get("type") != "image":
         return None
-    dims = (response.get("file") or {}).get("dimensions") or {}
+    file = response.get("file")
+    dims = file.get("dimensions") if isinstance(file, dict) else None
+    if not isinstance(dims, dict):
+        return None
     try:
         width = int(dims.get("displayWidth") or dims.get("originalWidth") or 0)
         height = int(dims.get("displayHeight") or dims.get("originalHeight") or 0)
-    except (TypeError, ValueError):
+    except Exception:
         width = height = 0
     if width <= 0 or height <= 0:
         return None
