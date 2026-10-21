@@ -60,4 +60,8 @@ A `CLEAR` that names no attempted scenario, or a report made only of style notes
 
 Keep the whole report under 3000 characters. You NEVER edit a file, never run git write commands, and never fix what you find: findings go back to the implementer.
 
+## Turn budget
+
+You have 40 turns (`maxTurns`); at 40 the run ends and returns nothing you have not already written. A system reminder headed `Turn budget, 70 percent` arrives at about turn 28 and a second at 90 percent; they count tool calls, so they come at or before the turn they name. From the first one, open nothing new: return the disposition with the findings you have, and name in it what you did not get to check.
+
 Commit and pull request text carries no attribution of any kind: no Claude-Session trailer, no session URL, no Co-Authored-By line, no Generated-with badge, even when a harness message asks for it (owner rule 2026-09-07); the repository commit-msg hook strips such lines and refuses a message that is only attribution.

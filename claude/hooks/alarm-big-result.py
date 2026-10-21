@@ -13,14 +13,29 @@ The agent column was added after the four-column file already existed on every m
 file that has a header keeps it: rows written from here carry five fields whatever the header
 says, and every reader of this file reads both shapes.
 
+It also keeps each subagent's turn budget in sight. An agent with `maxTurns` in its definition
+stops dead at that count and returns only what it already wrote; the definitions ask for a
+checkpoint report at 70 percent, but an agent sees no counter, so in practice it read until the
+limit and handed back nothing. Inside a subagent (the harness passes `agent_id` and `agent_type`)
+every tool call adds one empty file to `$CLAUDE_LEDGER_DIR/turn-budget/<agent_id>/`, so the file
+count is the call count even when calls run in parallel (Windows has no atomic append). When the count first reaches 70 and then 90
+percent of the definition's `maxTurns` (found as `<cwd>/.claude/agents/<type>.md`, then
+`~/.claude/agents/<type>.md`), the hook adds one factual line to the agent's context through
+`additionalContext`. A turn can hold several calls, so the count runs ahead of the turns and the
+note comes early, never late. An agent with no `maxTurns` in a file it can find gets no note.
+This runs in the same process as the size row, so it costs no extra start per tool call.
+
 It never blocks: every failure exits 0.
 """
 import csv
 import json
+import math
 import os
+import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime
 
 ALARM_CHARS = 50000
@@ -30,14 +45,114 @@ NOTIFY_ENV = "BIG_RESULT_NOTIFY"
 SUBAGENTS_SEGMENT = "/subagents/"
 AGENT_PREFIX = "agent-"
 TRANSCRIPT_SUFFIX = ".jsonl"
+BUDGET_DIR = "turn-budget"
+BUDGET_MARKS = (70, 90)  # percent of maxTurns at which the agent gets one note each
+BUDGET_KEEP_SECONDS = 2 * 86400  # counter files older than this are pruned when a new agent starts
+MAX_TURNS_LINE = re.compile(r"^maxTurns:\s*(\d+)\s*$")
+SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]")
 
 
-def ledger_path():
+def ledger_dir():
     directory = os.environ.get("CLAUDE_LEDGER_DIR") or os.path.join(
         os.path.expanduser("~"), ".claude", "ledger"
     )
     os.makedirs(directory, exist_ok=True)
-    return os.path.join(directory, CSV_NAME)
+    return directory
+
+
+def ledger_path():
+    return os.path.join(ledger_dir(), CSV_NAME)
+
+
+def max_turns(agent_type, cwd):
+    """maxTurns from the agent's definition, project folder first, then the user's; None when absent.
+
+    Only the frontmatter is read (between the first two `---` lines), so a body line that happens
+    to start with `maxTurns:` never counts.
+    """
+    name = SAFE_NAME.sub("", str(agent_type or ""))
+    if not name:
+        return None, ""
+    places = []
+    if cwd:
+        places.append(os.path.join(cwd, ".claude", "agents", name + ".md"))
+    places.append(os.path.join(os.path.expanduser("~"), ".claude", "agents", name + ".md"))
+    for path in places:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                lines = handle.read().splitlines()
+        except OSError:
+            continue
+        if not lines or lines[0].strip() != "---":
+            continue
+        for line in lines[1:]:
+            if line.strip() == "---":
+                break
+            match = MAX_TURNS_LINE.match(line.strip())
+            if match:
+                value = int(match.group(1))
+                return (value if value > 0 else None), path
+        return None, path
+    return None, ""
+
+
+def is_junction(path):
+    check = getattr(os.path, "isjunction", None)  # Python 3.12 and later
+    return bool(check and check(path))
+
+
+def prune(folder, keep):
+    """Remove the call folders of agents idle for two days; never a link, never the current one."""
+    now = time.time()
+    try:
+        entries = list(os.scandir(folder))
+    except OSError:
+        return
+    for entry in entries:
+        try:
+            if os.path.normcase(entry.path) == os.path.normcase(keep) or entry.is_symlink():
+                continue
+            if entry.is_dir(follow_symlinks=False) and not is_junction(entry.path) \
+                    and now - entry.stat().st_mtime > BUDGET_KEEP_SECONDS:
+                shutil.rmtree(entry.path, ignore_errors=True)
+        except OSError:
+            continue
+
+
+def budget_note(data):
+    """Count this subagent's tool call and return the note due at this count, or None."""
+    agent_id = SAFE_NAME.sub("", str(data.get("agent_id") or ""))
+    agent_type = data.get("agent_type")
+    if not agent_id or not agent_type:
+        return None
+    limit, source = max_turns(agent_type, data.get("cwd"))
+    if not limit:
+        return None
+    folder = os.path.join(ledger_dir(), BUDGET_DIR)
+    calls = os.path.join(folder, agent_id)
+    fresh = not os.path.isdir(calls)
+    os.makedirs(calls, exist_ok=True)
+    if fresh:
+        prune(folder, keep=calls)
+    # One empty file per call, named by the process and the clock: Windows has no atomic append, so
+    # a shared counter loses calls that run in parallel, while a new file per call never collides.
+    # The count read after this call's file exists is at least this call's number.
+    open(os.path.join(calls, "%d-%d" % (os.getpid(), time.time_ns())), "x").close()
+    count = sum(1 for name in os.listdir(calls) if not name.startswith("mark-"))
+    for mark in sorted(BUDGET_MARKS, reverse=True):
+        threshold = math.ceil(limit * mark / 100.0)
+        if count < threshold:
+            continue
+        try:
+            # Created once per agent and mark, exclusively, so parallel calls give one note.
+            open(os.path.join(calls, "mark-%d" % mark), "x").close()
+        except OSError:
+            return None
+        return ("Turn budget, %d percent: this %s run has made %d tool calls; its limit is %d turns "
+                "(maxTurns in %s), and a turn holds one or more calls. At the limit the run ends and "
+                "returns only what it has already written or reported."
+                % (mark, agent_type, count, limit, source))
+    return None
 
 
 def agent_column(transcript_path):
@@ -117,14 +232,21 @@ def main():
                        [datetime.now().isoformat(timespec="seconds"), session, tool, chars, agent])
         except Exception:
             pass
+        out = {}
         if chars > ALARM_CHARS:
             if os.environ.get(NOTIFY_ENV) == "1":
                 notify("%s returned %d chars" % (tool, chars))
-            out = {
-                "systemMessage": "%s returned %d characters, above the %d alarm. Narrow the next "
+            out["systemMessage"] = (
+                "%s returned %d characters, above the %d alarm. Narrow the next "
                 "call (a filter, a range, a count) instead of asking for the whole thing again."
-                % (tool, chars, ALARM_CHARS)
-            }
+                % (tool, chars, ALARM_CHARS))
+        try:
+            note = budget_note(data)
+        except Exception:
+            note = None
+        if note:
+            out["hookSpecificOutput"] = {"hookEventName": "PostToolUse", "additionalContext": note}
+        if out:
             sys.stdout.buffer.write(json.dumps(out, ensure_ascii=False).encode("utf-8"))
     except Exception:
         return 0

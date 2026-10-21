@@ -132,7 +132,7 @@ EXPECTED_LEAKS = (
     ("PreToolUse[AskUserQuestion] ask-inline.py", EVERY, LACKS, ("home/.claude/hooks/ask-inline.log",),
      "ASK_INLINE_LOG: every denied question is logged beside the hook (ask-inline.py:23)"),
     ("PostToolUse[*] alarm-big-result.py", EVERY, LACKS, ("home/.claude/ledger/tool-sizes.csv",),
-     "CLAUDE_LEDGER_DIR: every tool result is a row of ~/.claude/ledger/tool-sizes.csv (alarm-big-result.py:34-35)"),
+     "CLAUDE_LEDGER_DIR: every tool result is a row of ~/.claude/ledger/tool-sizes.csv (alarm-big-result.py:55-57)"),
     # C: the block covers it wherever it is in the environment, and here it is not
     ("SessionStart[startup|resume|clear|fork] compact-recover.py --rulings", NO_BLOCK, NO_PANE_BLOCK, START,
      "prints the machine register, the machine's open asks and its pulse (compact-recover.py:197,255,315 with the "

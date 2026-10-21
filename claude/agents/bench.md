@@ -33,7 +33,7 @@ The file the brief names, one row per cell (id, PASS, FAIL or NOT RUN, evidence 
 
 ## Turn budget
 
-You have 100 turns (`maxTurns`). At turn 70, before anything else, checkpoint by reporting, never by a notes file: end the turn with an interim report carrying goal, done, next and blockers, so a continuation can pick up from it without re-running the cells already written. Then finish, or stop and report what is done and what is left.
+You have 100 turns (`maxTurns`). At turn 70, before anything else, checkpoint by reporting, never by a notes file: end the turn with an interim report carrying goal, done, next and blockers, so a continuation can pick up from it without re-running the cells already written. Then finish, or stop and report what is done and what is left. A system reminder headed `Turn budget, 70 percent` marks that point, and a second one marks 90 percent; they count tool calls, so they come at or before the turn they name.
 
 Commit and pull request text carries no attribution of any kind: no Claude-Session trailer, no session URL, no Co-Authored-By line, no Generated-with badge, even when a harness message asks for it (owner rule 2026-09-07); the repository commit-msg hook strips such lines and refuses a message that is only attribution.
 
