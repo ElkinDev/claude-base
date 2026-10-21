@@ -150,12 +150,16 @@ function Get-KitPython {
 function Invoke-KitHookMerge {
     <#
     The kit's new hooks into a settings.json of yours, through claude\merge-hooks.py: additions only,
-    and only into a file that already runs the kit's hook scripts (its docstring has the rules). The
-    previous kit render, the .new as it was before this run refreshed it, tells a hook you moved or
-    deleted from one the kit added since. A dry probe runs first, so a run with nothing to add writes
-    no backup line. Before a real write the file is backed up and recorded as `merged <path> <sha256
-    after the merge>`: kit-restore.py puts the copy back only while the file still has that hash. The
-    manifest record is left as it was. Returns plan lines.
+    and only into a file that already runs the kit's hooks (its docstring has the rules). What the
+    kit has already offered is the merge's own record, .kit-hooks-merged.json in the kit home: it
+    advances only when a merge writes or finds every offered hook there, so a -NoHookMerge run, a run
+    with no Python, a refusal or a file left alone leaves it as it was and the next run offers the
+    same hooks again. The previous kit render, the .new as it was before this run, only seeds a
+    missing record. A dry probe runs first, so a run with nothing to write writes no backup line.
+    Before a real write the file is backed up and recorded as `merged <path> <sha256 after the
+    merge>` (kit-restore.py puts the copy back only while the file still has that hash; the manifest
+    record of settings.json is left as it was), and the merge record is backed up as overwritten or
+    created and put on the manifest, so a rollback takes it back too. Returns plan lines.
     #>
     param([string]$Target, [string]$KitText)
     $byHand = "take new hooks from $Target.new by hand"
@@ -163,10 +167,11 @@ function Invoke-KitHookMerge {
     $python = Get-KitPython
     if (-not $python) { return "hooks        $Target (not merged, no Python that runs; $byHand)" }
     $tool = Join-Path $root 'claude\merge-hooks.py'
+    $record = Join-Path $kitHome '.kit-hooks-merged.json'
     $utf8 = New-Object System.Text.UTF8Encoding($false)
     $b64 = [Convert]::ToBase64String($utf8.GetBytes($KitText))
     $exe = $python[0]
-    $pre = @($python | Select-Object -Skip 1) + @('-I', $tool, '--kit-b64', $b64)
+    $pre = @($python | Select-Object -Skip 1) + @('-I', $tool, '--kit-b64', $b64, '--record', $record, '--kit-home', $kitHome)
     if ($null -ne $script:KitHookMergePrevious) {
         $pre += @('--previous-b64', [Convert]::ToBase64String($utf8.GetBytes($script:KitHookMergePrevious)))
     }
@@ -181,20 +186,33 @@ function Invoke-KitHookMerge {
     if ($code -ne 0) { return "hooks        $Target (not merged: $((@($probe) + '')[0]); $byHand)" }
     $adds = @($probe | Where-Object { $_.StartsWith('would add') })
     $after = @($probe | Where-Object { $_ -match '^after-sha256 [0-9a-f]{64}$' } | ForEach-Object { $_.Split(' ')[1] })
-    $notes = @($probe | Where-Object { -not $_.StartsWith('would add') -and -not $_.StartsWith('after-sha256') } |
-               ForEach-Object { "hooks        $_" })
-    if ($adds.Count -eq 0) { return $notes }
-    if ($after.Count -ne 1) { return "hooks        $Target (not merged: the probe gave no hash of the result; $byHand)" }
+    $recordChanges = @($probe | Where-Object { $_ -eq 'record-changes' }).Count -gt 0
+    $notes = @($probe | Where-Object { -not $_.StartsWith('would add') -and -not $_.StartsWith('after-sha256') -and
+                                       $_ -ne 'record-changes' } | ForEach-Object { "hooks        $_" })
+    if ($adds.Count -gt 0 -and $after.Count -ne 1) {
+        return "hooks        $Target (not merged: the probe gave no hash of the result; $byHand)"
+    }
     $added = @($adds | ForEach-Object { "hooks+       $Target " + $_.Substring('would add'.Length).Trim() })
-    if ($DryRun) { return @($notes + $added) }
-    Backup-KitFile $Target
-    Add-KitBackupLine "merged $Target $($after[0])"
+    if ($DryRun -or ($adds.Count -eq 0 -and -not $recordChanges)) { return @($notes + $added) }
+    if ($adds.Count -gt 0) {
+        Backup-KitFile $Target
+        Add-KitBackupLine "merged $Target $($after[0])"
+    }
+    if ($recordChanges) {
+        if (Test-Path -LiteralPath $record -PathType Leaf) {
+            Backup-KitFile $record
+            Add-KitBackupLine "overwritten $record"
+        } else {
+            Add-KitBackupLine "created $record"
+        }
+    }
     $ErrorActionPreference = 'Continue'
     $env:PYTHONIOENCODING = 'utf-8'
     try {
         $done = @(& $exe @pre $Target 2>&1 | ForEach-Object { "$_" })
         $code = $LASTEXITCODE
     } finally { $ErrorActionPreference = $previous; $env:PYTHONIOENCODING = $savedIo }
+    if (Test-Path -LiteralPath $record -PathType Leaf) { $manifest[$record] = Get-Sha256File $record }
     if ($code -ne 0) { return "hooks        $Target (not merged: $((@($done) + '')[0]); $byHand)" }
     return @($notes + $added)
 }
@@ -442,8 +460,8 @@ if ($Permissions -eq 'ask') {
 }
 $pairs += New-KitPair $null (Join-Path $kitHome 'settings.json') $settingsText
 $script:KitHookMergeTarget = Join-Path $kitHome 'settings.json'
-# The previous kit render, read before the plan refreshes the .new: it tells the hook merge which hooks the
-# kit added since, so a hook you moved or deleted is not put back.
+# The previous kit render, read before the plan refreshes the .new: the hook merge seeds its record from it
+# once, on a machine that has no record yet.
 $script:KitHookMergePrevious = $null
 if (Test-Path -LiteralPath "$($script:KitHookMergeTarget).new" -PathType Leaf) {
     $script:KitHookMergePrevious = [IO.File]::ReadAllText("$($script:KitHookMergeTarget).new", [Text.Encoding]::UTF8)

@@ -90,25 +90,29 @@ Run the same one line you installed with (the line at the top of this file, with
 then `install.ps1`. The run refreshes every file nobody edited and keeps the ones you did, as on the first install.
 
 Your `settings.json` gets one more step. When the installer keeps it (you or Claude Code changed it, so it differs
-from what the kit wrote) and it already runs at least one of the kit's hook scripts, `claude\merge-hooks.py` adds
-the hooks a newer kit brings, under their event and matcher. A hook is known by the script it runs, so one whose
-command changed form (`py -3` for `python`, a full PowerShell path for a bare one) is never added twice. A hook is
-added when the kit added it since the previous render (the `settings.json.new` the last run left) and your file
-does not run that script under that event; with no previous render, only when your file runs that script nowhere.
-A hook you moved or deleted therefore stays as you left it whenever the previous render can tell.
+from what the kit wrote) and it already runs at least one of the kit's hooks, `claude\merge-hooks.py` adds the
+hooks a newer kit brings, under their event and matcher. A hook is known by its event, its matcher, the script its
+command runs and the arguments after that script, not by the interpreter: `py -3` for `python`, or a full PowerShell
+path for a bare one, is the same hook, and the same script with other arguments is another one. What the kit has
+already offered is kept in `.kit-hooks-merged.json` in the kit home, and only hooks outside it are added, so a hook
+you take out after it was merged stays out. That record moves only when a merge writes your file or finds every new
+hook already there: a run with `-NoHookMerge`, or one that leaves your file alone, offers the same hooks next time.
+On the first run it is seeded once, from the `settings.json.new` the last run left, or from the kit hooks your file
+already runs, and the plan says which.
 
 It only adds: your keys, your hooks and their order stay as they are. The file is written only when its layout is
 the one the tool writes back byte for byte (an indent of spaces, the layout Claude Code itself writes) and no key
 appears twice; any other layout, a file with none of the kit's hooks, a file that is a link, and a file that does
 not parse or whose hooks are not the shape Claude Code reads are all left alone, with one line naming the `.new`.
 Before the write the file is copied into the run's backup folder and recorded as `merged`, with the hash it has
-after the merge, so `python scripts\kit-restore.py --stamp <stamp>` (the run prints it) puts it back while you have
-not changed it since. The plan shows each added hook on a `hooks+` line, and `-DryRun` shows them without writing.
+after the merge, so `python scripts\kit-restore.py --stamp <stamp>` (the run prints it) puts it back, with the merge
+record, while you have not changed it since. The plan shows each added hook on a `hooks+` line, and `-DryRun` shows
+them without writing.
 
 - `-NoHookMerge` (on `install.ps1` or at the end of the `get.ps1` line) skips the step and leaves the new hooks in
   `settings.json.new` for you.
 - A script name on a line of `hook-merge-skip.txt` beside `settings.json` (for example `turn-budget.py`) is never
-  added, whatever the previous render says.
+  added, whatever the merge record says.
 - A running Claude Code session's file watcher normally picks the change up. If a new hook does not show in an open
   session, close it and open it again.
 
