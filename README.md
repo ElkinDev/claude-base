@@ -26,7 +26,7 @@ claude/                     -> installs into ~/.claude
   skills/                   18 skills (TDD, quality gates, evidence, adversarial review, commit
                             and PR text, investigation, delegation, handover, ...); the other
                             five ship as plugins, see plugins/ below
-  hooks/                    worklog, branch helpers, markitdown, read guard, big-result alarm and
+  hooks/                    worklog, branch helpers, markitdown, read guard, big-result alarm,
                             subagent turn budget notes, landings,
                             session audit, compaction checkpoint + summary persistence + recovery
   agents/                   seven agent definitions with their skills preloaded: analyst, bench,

@@ -1,4 +1,4 @@
-"""Tests for the turn budget notes of claude/hooks/alarm-big-result.py (the PostToolUse hook).
+"""Tests for claude/hooks/turn-budget.py, the PreToolUse hook that keeps a subagent's turn budget in sight.
 
     python claude/hooks/tests/test-turn-budget.py
 
@@ -18,7 +18,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-HOOK = os.path.join(os.path.dirname(HERE), "alarm-big-result.py")
+HOOK = os.path.join(os.path.dirname(HERE), "turn-budget.py")
 
 
 def definition(folder, name, max_turns=None, body=""):
@@ -45,9 +45,9 @@ class TurnBudget(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.base, ignore_errors=True)
 
-    def call(self, agent_id=None, agent_type=None, response="ok", cwd=None):
-        payload = {"session_id": "s1", "tool_name": "Read", "tool_response": response,
-                   "transcript_path": "", "cwd": cwd or self.project, "hook_event_name": "PostToolUse"}
+    def call(self, agent_id=None, agent_type=None, cwd=None, event="PreToolUse"):
+        payload = {"session_id": "s1", "tool_name": "Read", "tool_input": {"file_path": "x"},
+                   "transcript_path": "", "cwd": cwd or self.project, "hook_event_name": event}
         if agent_id is not None:
             payload["agent_id"] = agent_id
         if agent_type is not None:
@@ -76,7 +76,7 @@ class TurnBudget(unittest.TestCase):
         self.assertIn("Turn budget, 70 percent", got[0][1])
         self.assertIn("has made 7 tool calls; its limit is 10 turns", got[0][1])
         self.assertIn("Turn budget, 90 percent", got[1][1])
-        self.assertEqual("PostToolUse", outputs[6]["hookSpecificOutput"]["hookEventName"])
+        self.assertEqual("PreToolUse", outputs[6]["hookSpecificOutput"]["hookEventName"])
 
     def test_the_user_folder_is_read_when_the_project_has_no_definition(self):
         definition(os.path.join(self.home, ".claude", "agents"), "worker", 100)
@@ -105,17 +105,26 @@ class TurnBudget(unittest.TestCase):
         self.assertEqual(1, sum("70 percent" in t for t in texts))
         self.assertEqual(1, sum("90 percent" in t for t in texts))
 
-    def test_a_big_result_and_a_note_come_in_one_answer(self):
+    def test_the_note_names_the_event_it_answers(self):
         definition(os.path.join(self.project, ".claude", "agents"), "worker", 1)
-        out = self.call("a7", "worker", response="x" * 60000)
-        self.assertIn("systemMessage", out)
+        out = self.call("a7", "worker", event="PostToolUseFailure")
+        self.assertEqual("PostToolUseFailure", out["hookSpecificOutput"]["hookEventName"])
         self.assertIn("Turn budget, 90 percent", out["hookSpecificOutput"]["additionalContext"])
 
     def test_an_agent_id_cannot_leave_the_counter_folder(self):
         definition(os.path.join(self.project, ".claude", "agents"), "worker", 10)
         self.call("../../escape", "worker")
         self.assertFalse(os.path.exists(os.path.join(self.base, "escape")))
-        self.assertEqual(["....escape"], os.listdir(os.path.join(self.ledger, "turn-budget")))
+        self.assertEqual(["escape"], os.listdir(os.path.join(self.ledger, "turn-budget")))
+
+    def test_a_dots_only_agent_id_counts_nothing_and_writes_nothing(self):
+        definition(os.path.join(self.project, ".claude", "agents"), "worker", 3)
+        os.makedirs(self.ledger)
+        with open(os.path.join(self.ledger, "tool-sizes.csv"), "w") as handle:
+            handle.write("time\n")
+        outputs = [self.call(name, "worker") for name in ("..", ".", "...")]
+        self.assertEqual([], self.notes(outputs))
+        self.assertEqual(["tool-sizes.csv"], os.listdir(self.ledger))
 
     def test_old_counters_go_when_a_new_agent_starts(self):
         definition(os.path.join(self.project, ".claude", "agents"), "worker", 10)
