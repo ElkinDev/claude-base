@@ -138,9 +138,15 @@ enabled it:
   installer, its `config.toml`, its integration and the Ctrl+Alt+N shortcut), and the scheduled task. Nothing is
   asked.
 - A hand update writes the record too, so the next daily run finds nothing to install and reports nothing.
+- An install from another clone than the task's (a second checkout) is your latest choice: the daily run installs
+  nothing and waits, said once in the notice, until an install comes from the task's clone again, and then resumes
+  by itself.
+- With the record missing or unreadable, the run passes `-NoHookMerge`, since a choice nobody can read never
+  touches your `settings.json`, and its install writes the record again.
 
-It never waits on a question: git runs with prompts off and ssh in batch mode, so a key with a passphrase fails the
-pull instead of waiting. One run at a time per clone: a run holds a lock inside the clone's `.git` folder, and a run
+It never waits on a question: git runs with prompts off and, unless you have an ssh of your own (`GIT_SSH_COMMAND`,
+`GIT_SSH` such as plink with pageant, or `core.sshCommand`, which are left as they are), ssh in batch mode, so a key
+with a passphrase fails the pull instead of waiting. One run at a time per clone: a run holds a lock inside the clone's `.git` folder, and a run
 that cannot take it within ten minutes logs a skip line and leaves no notice.
 
 It shows no window. The task starts `conhost.exe --headless`, which runs PowerShell on a console with no window;
