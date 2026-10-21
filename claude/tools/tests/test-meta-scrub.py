@@ -116,6 +116,49 @@ def webp(chunks, after=b""):
     return b"RIFF" + len(body).to_bytes(4, "little") + body + after
 
 
+def iso_box(box_type, body):
+    return (8 + len(body)).to_bytes(4, "big") + box_type + body
+
+
+def iso_full_box(box_type, version, body):
+    return iso_box(box_type, bytes([version, 0, 0, 0]) + body)
+
+
+def av1_unit(kind, payload):
+    """One AV1 unit with its size field, as an encoder writes it into an AVIF item."""
+    return bytes([kind << 3 | 2, len(payload)]) + payload
+
+
+AV1_STILL = av1_unit(1, bytes(3)) + av1_unit(6, b"\x10\x20")
+
+
+def avif(handler=b"PictureHandler", items=((b"av01", b"Color", b""),), top=b"", picture=AV1_STILL,
+         meta_extra=b"", properties=b"", brands=b"avif" + bytes(4) + b"avifmif1miaf", ipma_tail=b"", located=1,
+         sizes=b"\x44\x00"):
+    """A still AVIF as ffmpeg writes one: ftyp, a meta box with hdlr, pitm, iinf and iprp, then mdat."""
+    entries = b"".join(iso_full_box(b"infe", 2, (n + 1).to_bytes(2, "big") + bytes(2) + item_type + name + b"\x00"
+                                    + (content + b"\x00" if item_type == b"mime" else b""))
+                       for n, (item_type, name, content) in enumerate(items))
+    ipco = iso_box(b"ipco", iso_full_box(b"ispe", 0, (64).to_bytes(4, "big") * 2) + properties)
+    ftyp = iso_box(b"ftyp", brands)
+
+    def meta(offset):
+        # one item, kept in the file: offsets and lengths of four bytes, no base offset
+        iloc = iso_full_box(b"iloc", 0, sizes + (1).to_bytes(2, "big") + located.to_bytes(2, "big") + bytes(2)
+                            + (1).to_bytes(2, "big") + offset.to_bytes(4, "big") + len(picture).to_bytes(4, "big"))
+        return iso_full_box(b"meta", 0, iso_full_box(b"hdlr", 0, bytes(4) + b"pict" + bytes(12) + handler + b"\x00")
+                            + iso_full_box(b"pitm", 0, b"\x00\x01") + iloc
+                            + iso_full_box(b"iinf", 0, len(items).to_bytes(2, "big") + entries)
+                            + iso_box(b"iprp", ipco + iso_full_box(b"ipma", 0, bytes(4) + ipma_tail)) + meta_extra)
+    offset = len(ftyp) + len(meta(0)) + len(top) + 8
+    return ftyp + meta(offset) + top + iso_box(b"mdat", picture)
+
+
+def avif_dinf(url_flags, location=b""):
+    url = iso_box(b"url ", bytes([0]) + url_flags.to_bytes(3, "big") + location)
+    return iso_box(b"dinf", iso_full_box(b"dref", 0, (1).to_bytes(4, "big") + url))
+
+
 def riff_list(data):
     out, i = [], 12
     while i + 8 <= len(data):
@@ -616,6 +659,153 @@ class WebpFiles(Base):
         with Image.open(p) as im:
             self.assertEqual((10, 20, 30), im.convert("RGB").getpixel((3, 3)))
         self.assertEqual(0, run("--check", p).returncode)
+
+
+class AvifFiles(Base):
+    def test_a_still_avif_as_ffmpeg_writes_it_with_bitexact_passes_and_is_left_as_it_is(self):
+        p = self.path("a.avif")
+        with open(p, "wb") as f:
+            f.write(avif())
+        before = read(p)
+        self.assertEqual(0, run("--check", p).returncode)
+        self.assertEqual(0, run(p).returncode)
+        self.assertEqual(before, read(p))
+
+    def test_an_encoder_handler_name_is_blanked_in_place_and_every_offset_holds(self):
+        p = self.path("b.avif")
+        with open(p, "wb") as f:
+            f.write(avif(handler=b"libavif"))
+        before = read(p)
+        done = run("--check", p)
+        self.assertEqual(1, done.returncode)
+        self.assertIn("handler name libavif", done.stdout)
+        self.assertEqual(0, run(p).returncode)
+        after = read(p)
+        self.assertEqual(len(before), len(after))
+        self.assertNotIn(b"libavif", after)
+        self.assertEqual(before.replace(b"libavif", bytes(7)), after)
+        self.assertEqual(0, run("--check", p).returncode)
+
+    def test_exif_and_xmp_items_are_named_and_refused_and_the_file_stays(self):
+        p = self.path("c.avif")
+        with open(p, "wb") as f:
+            f.write(avif(items=((b"av01", b"Color", b""), (b"Exif", b"", b""),
+                                (b"mime", b"", b"application/rdf+xml"))))
+        before = read(p)
+        done = run("--check", p)
+        self.assertEqual(1, done.returncode)
+        for name in ("Exif item", "XMP item"):
+            self.assertIn(name, done.stdout)
+        done = run(p)
+        self.assertEqual(2, done.returncode)
+        self.assertIn("encode it again without metadata", done.stdout + done.stderr)
+        self.assertEqual(before, read(p))
+
+    def test_an_encoder_name_in_the_picture_bytes_or_an_unknown_top_box_is_named_and_refused(self):
+        p = self.path("d.avif")
+        with open(p, "wb") as f:
+            f.write(avif(top=iso_box(b"uuid", bytes(16) + b"<x:xmpmeta/>"), picture=AV1_STILL + av1_unit(6, b"Lavc61.3.100\x00")))
+        done = run("--check", p)
+        self.assertEqual(1, done.returncode)
+        for name in ("box uuid", "Lavc"):
+            self.assertIn(name, done.stdout)
+        self.assertEqual(2, run(p).returncode)
+
+    def test_an_image_sequence_and_a_damaged_box_are_refused_not_passed(self):
+        p = self.path("e.avif")
+        with open(p, "wb") as f:
+            f.write(avif(top=iso_box(b"moov", b"")))
+        done = run("--check", p)
+        self.assertEqual(2, done.returncode)
+        self.assertIn("image sequence", done.stdout + done.stderr)
+        q = self.path("f.avif")
+        with open(q, "wb") as f:
+            f.write(avif()[:-2])
+        self.assertEqual(2, run("--check", q).returncode)
+
+    def test_text_in_a_box_it_does_not_read_is_named_wherever_the_box_sits(self):
+        cases = {"meta box uuid": dict(meta_extra=iso_box(b"uuid", bytes(16) + b"<x:xmpmeta>a place</x:xmpmeta>")),
+                 "meta box udta": dict(meta_extra=iso_box(b"udta", iso_box(b"\xa9nam", b"someone"))),
+                 "of a padding box": dict(top=iso_box(b"free", b"Shot on a phone")),
+                 "property box uuid": dict(properties=iso_box(b"uuid", bytes(16) + b"someone")),
+                 "data reference url": dict(meta_extra=avif_dinf(0, b"https://example.com/a.avif\x00"))}
+        for n, (name, parts) in enumerate(cases.items()):
+            p = self.path("t%d.avif" % n)
+            with open(p, "wb") as f:
+                f.write(avif(**parts))
+            before = read(p)
+            done = run("--check", p)
+            self.assertEqual(1, done.returncode, name)
+            self.assertIn(name, done.stdout)
+            self.assertEqual(2, run(p).returncode, name)
+            self.assertEqual(before, read(p))
+
+    def test_text_after_the_last_field_of_a_box_is_named_and_unparsed_structures_are_not_read(self):
+        p = self.path("j.avif")
+        with open(p, "wb") as f:
+            f.write(avif(ipma_tail=b"someone, a street"))
+        done = run("--check", p)
+        self.assertEqual(1, done.returncode)
+        self.assertIn("bytes after the fields of ipma", done.stdout)
+        for n, parts in enumerate((dict(meta_extra=iso_full_box(b"iref", 0, iso_box(b"uuid", b"someone"))),
+                                   dict(meta_extra=iso_box(b"idat", b"someone")),
+                                   dict(properties=iso_full_box(b"auxC", 0, b"urn:alpha\x00")))):
+            q = self.path("k%d.avif" % n)
+            with open(q, "wb") as f:
+                f.write(avif(**parts))
+            done = run("--check", q)
+            self.assertEqual(2, done.returncode, done.stdout)
+            self.assertIn("not read", done.stdout + done.stderr)
+
+    def test_brands_unlisted_items_and_av1_metadata_are_named_and_unread_structures_refused(self):
+        named = {"file type brand some": dict(brands=b"avif" + bytes(4) + b"avifsome"),
+                 "file type minor version": dict(brands=b"avif" + b"name" + b"avifmif1"),
+                 "item the item list does not name": dict(located=2),
+                 "AV1 metadata unit": dict(picture=AV1_STILL + av1_unit(5, b"\x04someone"))}
+        for n, (name, parts) in enumerate(named.items()):
+            p = self.path("n%d.avif" % n)
+            with open(p, "wb") as f:
+                f.write(avif(**parts))
+            done = run("--check", p)
+            self.assertEqual(1, done.returncode, name)
+            self.assertIn(name, done.stdout)
+            self.assertEqual(2, run(p).returncode, name)
+        second_handler = iso_full_box(b"hdlr", 0, bytes(4) + b"pict" + bytes(12) + b"someone\x00")
+        refused = {"two hdlr boxes": dict(meta_extra=second_handler),
+                   "configuration units": dict(properties=iso_box(b"av1C", b"\x81\x28\x00\x00someone")),
+                   "an ICC profile": dict(properties=iso_box(b"colr", b"prof" + b"desc someone")),
+                   "not 0, 4 or 8 bytes": dict(sizes=b"\x34\x00"),
+                   "AV1 unit this reader cannot size": dict(picture=b"\x30someone")}
+        for n, (name, parts) in enumerate(refused.items()):
+            p = self.path("r%d.avif" % n)
+            with open(p, "wb") as f:
+                f.write(avif(**parts))
+            done = run("--check", p)
+            self.assertEqual(2, done.returncode, name)
+            self.assertIn(name, done.stdout + done.stderr)
+
+    def test_zero_padding_a_self_contained_data_reference_and_a_mif1_major_brand_pass(self):
+        p = self.path("h.avif")
+        with open(p, "wb") as f:
+            f.write(avif(top=iso_box(b"free", bytes(12)), meta_extra=avif_dinf(1),
+                         brands=b"mif1" + bytes(4) + b"mif1avifmiaf"))
+        done = run("--check", p)
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+        q = self.path("i.avif")
+        with open(q, "wb") as f:
+            f.write(avif(brands=b"mif1" + bytes(4) + b"mif1heic"))
+        self.assertEqual(2, run("--check", q).returncode)
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "needs ffmpeg")
+    def test_a_frame_ffmpeg_encodes_with_bitexact_and_no_metadata_passes(self):
+        p = self.path("g.avif")
+        made = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=64x64", "-frames:v", "1",
+                               "-c:v", "libaom-av1", "-still-picture", "1", "-map_metadata", "-1", "-fflags",
+                               "+bitexact", "-flags", "+bitexact", p], capture_output=True)
+        if made.returncode != 0:
+            self.skipTest("ffmpeg has no libaom-av1 encoder")
+        done = run("--check", p)
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
 
 
 class GlbFiles(Base):
