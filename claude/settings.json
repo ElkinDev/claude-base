@@ -178,6 +178,11 @@
             "type": "command",
             "command": "python \"%USERPROFILE%/.claude/hooks/guard-read.py\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/guard-find.py\"",
+            "timeout": 10
           }
         ]
       },
@@ -187,6 +192,11 @@
           {
             "type": "command",
             "command": "python \"%USERPROFILE%/.claude/hooks/guard-read.py\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/guard-find.py\"",
             "timeout": 10
           }
         ]
