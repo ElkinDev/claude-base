@@ -58,6 +58,16 @@ DENY_BASH = [
     "rg -l three C:/",
     "/usr/bin/find / -name x",
     "find.exe / -name x",
+    "find -L / -name x",
+    "find -H -O2 /c -name x",
+    "find -D tree / -name x",
+    "(find / -name x)",
+    "{ find / -name x; }",
+    "echo $(find / -name x)",
+    "bash -c \"find / -name x\"",
+    "sh -c 'cd /tmp && find /c -name x'",
+    "pwsh -c \"Get-ChildItem C:\\ -Recurse\"",
+    "cat <<'EOF' > notes.txt\nhello\nEOF\nfind / -name x",
 ]
 ALLOW_BASH = [
     "find /c/Repo/Odin -name three.core.js",
@@ -79,6 +89,12 @@ ALLOW_BASH = [
     "git commit -m 'guard: deny find / -name'",
     "python -c \"print('find / x')\"",
     "cat <<'EOF'\nnot a heredoc with an apostrophe's quote\nEOF",
+    "cat <<EOF > brief.md\nfind / -name x\nEOF",
+    "cat <<-'END'\n\tgrep -r x /\n\tEND",
+    "find -L /c/Repo -name x",
+    "bash -c \"find . -name x\"",
+    "find /c/Repo -name x -exec ls {} \\;",
+    "awk '{print $1}' file | sort",
 ]
 DENY_PS = [
     "Get-ChildItem -Path C:\\ -Recurse -Filter three.core.js",
@@ -87,8 +103,14 @@ DENY_PS = [
     "ls -Recurse -LiteralPath 'C:\\'",
     "dir C:\\ -rec",
 ]
+DENY_PS += [
+    "(Get-ChildItem C:\\ -Recurse).Count",
+    "1..2 | ForEach-Object { Get-ChildItem -Path D:\\ -Recurse }",
+    "Get-ChildItem C:\\ -Recurse:$true",
+]
 ALLOW_PS = [
     "Get-ChildItem -Path C:\\Repo\\Odin -Recurse -Filter three.core.js",
+    "(Get-ChildItem C:\\Repo -Recurse).Count",
     "Get-ChildItem C:\\",
     "gci -r C:\\ -Depth 2",
     "Get-ChildItem -Recurse -Filter C:",

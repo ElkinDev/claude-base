@@ -23,6 +23,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG = os.environ.get("GUARD_FIND_LOG") or os.path.join(HERE, "guard-find.log")
 SHELL_TOOLS = ("Bash", "PowerShell")
+SEPARATORS = ";&|(){}"  # a subshell, a group, a substitution or a script block starts a new command
 MAX_DEPTH = 2
 WRAPPERS = {"sudo", "timeout", "nice", "nohup", "env", "command", "exec", "time", "builtin"}
 ROOT = re.compile(r"^(/|/\*|/[a-z]/?\*?|/mnt/[a-z]/?\*?|/cygdrive/[a-z]/?\*?|[a-z]:/?\*?)$")
@@ -43,13 +44,13 @@ def is_root(token):
 
 
 def commands(line, posix):
-    """Split a command line into simple commands (lists of words), on ; & | and newlines."""
-    lex = shlex.shlex(line, posix=posix, punctuation_chars=";&|")
+    """Split a command line into simple commands (lists of words), on ; & | ( ) { } and newlines."""
+    lex = shlex.shlex(line, posix=posix, punctuation_chars=SEPARATORS)
     lex.whitespace_split = True
     lex.commenters = "#" if posix else ""
     current, out = [], []
     for tok in lex:
-        if tok and set(tok) <= set(";&|"):
+        if tok and set(tok) <= set(SEPARATORS):
             if current:
                 out.append(current)
             current = []
@@ -58,6 +59,21 @@ def commands(line, posix):
     if current:
         out.append(current)
     return out
+
+
+def heredoc_free(line):
+    """The command line without heredoc bodies, so a line of text written into a file is never read as a command."""
+    out, end = [], None
+    for raw in line.split("\n"):
+        if end is not None:
+            if raw.strip() == end:
+                end = None
+            continue
+        m = re.search(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1", raw)
+        if m:
+            end = m.group(2)
+        out.append(raw)
+    return "\n".join(out)
 
 
 def strip_wrappers(words):
@@ -106,6 +122,14 @@ def operands(args):
 def walks_root(words, posix=True):
     """The reason a simple command walks a root, or None. posix is False for PowerShell, where ls and dir are
     Get-ChildItem."""
+    words = list(words)
+    while words:  # a subshell, a group or a command substitution: (find / ...), { find / ...; }, $(find / ...)
+        if words[0] in ("(", "{", "$("):
+            words.pop(0)
+        elif words[0].startswith("$(") or words[0][:1] in ("(", "{"):
+            words[0] = words[0][2:] if words[0].startswith("$(") else words[0][1:]
+        else:
+            break
     words = strip_wrappers(words)
     if not words:
         return None
@@ -113,9 +137,23 @@ def walks_root(words, posix=True):
     if name.endswith(".exe"):
         name = name[:-4]
     args = words[1:]
+    if name in ("bash", "sh", "zsh", "dash", "pwsh", "powershell"):  # a command handed to another shell as a string
+        low = [a.lower() for a in args]
+        for flag in ("-c", "-command"):
+            if flag in low and low.index(flag) + 1 < len(args):
+                inner_posix = name not in ("pwsh", "powershell")
+                try:
+                    inner = commands(heredoc_free(args[low.index(flag) + 1]), inner_posix)
+                except ValueError:
+                    return None
+                return next((r for r in (walks_root(w, inner_posix) for w in inner) if r), None)
+        return None
     if name == "find":
         starts = []
-        for a in args:
+        i = 0  # find's own leading options come before the start paths: -L, -H, -P, -O<level>, -D <debugopts>
+        while i < len(args) and (args[i] in ("-L", "-H", "-P", "-D") or re.match(r"^-O\d*$", args[i])):
+            i += 2 if args[i] == "-D" else 1
+        for a in args[i:]:
             if a.startswith("-") or a in ("(", "!", "\\("):
                 break
             starts.append(a)
@@ -165,7 +203,7 @@ def main():
     line = (payload.get("tool_input") or {}).get("command") or ""
     posix = payload.get("tool_name") == "Bash"
     try:
-        simple = commands(line.replace("\n", ";"), posix)
+        simple = commands((heredoc_free(line) if posix else line).replace("\n", ";"), posix)
     except ValueError:  # an unclosed quote: the shell itself will refuse it
         return 0
     for words in simple:
