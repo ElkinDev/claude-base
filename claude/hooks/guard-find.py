@@ -69,7 +69,7 @@ def heredoc_free(line):
             if raw.strip() == end:
                 end = None
             continue
-        m = re.search(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1", raw)
+        m = re.search(r"(?<!<)<<(?!<)-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1", raw)  # not a here-string <<<
         if m:
             end = m.group(2)
         out.append(raw)

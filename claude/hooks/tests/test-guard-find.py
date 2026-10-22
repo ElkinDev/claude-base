@@ -68,6 +68,7 @@ DENY_BASH = [
     "sh -c 'cd /tmp && find /c -name x'",
     "pwsh -c \"Get-ChildItem C:\\ -Recurse\"",
     "cat <<'EOF' > notes.txt\nhello\nEOF\nfind / -name x",
+    "cat <<< foo\nfind / -name x\nfoo",
 ]
 ALLOW_BASH = [
     "find /c/Repo/Odin -name three.core.js",
