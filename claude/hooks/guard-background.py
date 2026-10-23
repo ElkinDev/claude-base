@@ -9,9 +9,11 @@ timeout runs in the foreground; work that must run longer is started detached by
 at once (a log and an exit file), after which the agent ends its turn and its parent resumes it once the exit file
 exists.
 
-The exception: a call that starts a local server (python -m http.server, npx serve, npm run dev, serve or preview,
-vite but not vite build, uvicorn, flask run) or `emulator ... -avd` (SERVER_RE) may still run in the background,
-since the agent needs it alive for the rest of its own turn. That call is still denied when it also holds a wait
+The exception: a call that starts a local dev server on the list below or `emulator ... -avd` (SERVER_RE) may still
+run in the background, since the agent needs it alive for the rest of its own turn. The list: npm, pnpm, yarn or bun
+with dev, start, serve or preview (with or without run); npx or bunx next dev; npx serve; vite or vite preview, never
+vite build; python -m http.server; manage.py runserver; uvicorn; flask run; php -S; rails s or rails server; dotnet
+run or dotnet watch; ng serve. Builds and tests (npm run build, npm test, vite build, pytest) are not on it. That call is still denied when it also holds a wait
 loop: a shell, PowerShell or Python loop around a sleep (has_loop), with heredoc bodies dropped first so a script
 written to a file is not a loop.
 
@@ -36,9 +38,12 @@ PS_LOOP_RE = re.compile(
     r"|\bdo\s*\{[\s\S]{0,2000}?\bStart-Sleep\b", re.IGNORECASE)
 PY_LOOP_RE = re.compile(r"\b(?:while|for)\b[^\n]{0,400}?:[\s\S]{0,2000}?\b(?:time|asyncio)\.sleep\s*\(")
 SERVER_RE = re.compile(
-    r"(?:python3?(?:\.exe)?\s+-m\s+http\.server|\bnpx\s+serve\b|\bnpm\s+run\s+(?:dev|serve|preview)\b"
-    r"|\bvite(?:\.js)?(?=\s|$)(?!\s+build)|\buvicorn\b|\bflask\s+run\b"
-    r"|\bemulator(?:\.exe)?\s+(?:-[a-z0-9-]+\s+(?:[^-\s]\S*\s+)?)*-avd\b)", re.IGNORECASE)
+    r"\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve|preview)(?![\w-])"
+    r"|\b(?:npx|bunx)\s+next\s+dev\b|\bnpx\s+serve\b"
+    r"|\bvite(?:\.js)?(?=\s|$)(?!\s+build)"
+    r"|\bpython3?(?:\.exe)?\s+-m\s+http\.server\b|\bmanage\.py\s+runserver\b|\buvicorn\b|\bflask\s+run\b"
+    r"|\bphp\s+(?-i:-S)(?=\s|$)|\brails\s+(?:s|server)\b|\bdotnet\s+(?:run|watch)\b|\bng\s+serve\b"
+    r"|\bemulator(?:\.exe)?\s+(?:-[a-z0-9-]+\s+(?:[^-\s]\S*\s+)?)*-avd\b", re.IGNORECASE)
 HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n[\s\S]*?^\s*\2\s*$", re.MULTILINE)
 REASON = (
     "A subagent may not use run_in_background: every child exit re-invokes you, and every stop with a child "
@@ -47,8 +52,10 @@ REASON = (
     "a FOREGROUND call that returns at once, with its output to a log and its exit code to an exit file (for "
     "example the kit clone's scripts/gate-detach.ps1 -Command '<bash command>; echo $? > <exit file>' -Log <log>), "
     "then end your turn naming the log and the exit file; the session that launched you resumes you once the "
-    "exit file exists. A local server (python -m http.server, npx serve, npm run dev, vite, uvicorn, flask run) "
-    "or emulator -avd that this task needs may still run in the background, with no wait loop in the same command."
+    "exit file exists. A local dev server on this hook's list (npm, pnpm, yarn or bun dev, start, serve or preview; "
+    "npx or bunx next dev; npx serve; vite but not vite build; python -m http.server; manage.py runserver; uvicorn; "
+    "flask run; php -S; rails server; dotnet run or watch; ng serve) or emulator -avd that this task needs may still "
+    "run in the background, with no wait loop in the same command."
 )
 
 

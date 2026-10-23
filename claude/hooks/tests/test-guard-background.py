@@ -93,15 +93,43 @@ class GuardBackground(unittest.TestCase):
     def test_other_tool_passes(self):
         self.assertEqual(self.run_hook(self.payload("x", tool="Read")), "")
 
-    def test_servers_pass(self):
-        for command in ("python -m http.server 8000", "cd site && npx serve -l 5000", "npm run dev",
-                        "npm run preview", "vite --port 5173", "uvicorn app:app --reload", "flask run",
-                        "emulator -avd Pixel_8", "emulator.exe -no-snapshot -gpu host -avd Pixel_8"):
-            self.assertEqual(self.run_hook(self.payload(command)), "", command)
+    SERVERS = (
+        # npm, pnpm, yarn and bun with dev, start, serve or preview, with or without run
+        "npm run dev", "npm run start", "npm start", "npm run serve", "npm run preview", "npm run dev:host",
+        "pnpm dev", "pnpm run dev", "pnpm start", "pnpm preview", "yarn dev", "yarn start", "yarn run serve",
+        "bun run dev", "bun dev", "bun run preview",
+        # next and serve through npx or bunx
+        "npx next dev", "bunx next dev --turbo", "cd site && npx serve -l 5000",
+        # vite and vite preview
+        "vite", "vite --port 5173", "vite preview", "npx vite preview --port 4173",
+        # python
+        "python -m http.server 8000", "python3 -m http.server", "py -3 manage.py runserver 8000",
+        "python manage.py runserver", "uvicorn app:app --reload", "flask run",
+        # php, rails, dotnet, angular
+        "php -S localhost:8000", "php -S 127.0.0.1:8080 -t public", "rails s", "bin/rails server -p 3001",
+        "bundle exec rails s", "dotnet run --project Api", "dotnet watch run", "ng serve --port 4300",
+        # the emulator
+        "emulator -avd Pixel_8", "emulator.exe -no-snapshot -gpu host -avd Pixel_8",
+    )
+    NOT_SERVERS = (
+        "npm run build", "npm test", "npm run test", "npm run lint", "npm run development-build",
+        "pnpm build", "yarn test", "bun run build", "bun test", "npx next build", "vite build",
+        "npx vite build --mode prod", "pytest", "python -m pytest tests", "python manage.py test",
+        "php -s index.php", "php artisan test", "rails test", "dotnet build", "dotnet test", "ng build",
+        "./gradlew assembleDebug", "emulator -list-avds",
+    )
+
+    def test_each_server_passes(self):
+        for command in self.SERVERS:
+            with self.subTest(command=command):
+                self.assertEqual(self.run_hook(self.payload(command)), "", command)
         self.assertEqual(self.log_lines(), [])
 
-    def test_vite_build_denied(self):
-        self.assertDenied(self.run_hook(self.payload("vite build")))
+    def test_each_build_or_test_denied(self):
+        for command in self.NOT_SERVERS:
+            with self.subTest(command=command):
+                self.assertDenied(self.run_hook(self.payload(command)))
+        self.assertEqual(len(self.log_lines()), len(self.NOT_SERVERS))
 
     def test_server_with_wait_loop_denied(self):
         for command in ("npm run dev & while ! curl -s localhost:5173; do sleep 5; done",
