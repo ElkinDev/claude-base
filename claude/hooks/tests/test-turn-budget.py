@@ -31,6 +31,33 @@ def definition(folder, name, max_turns=None, body=""):
         handle.write("\n".join(lines))
 
 
+def record(kind, uuid, **extra):
+    """One transcript line in the compact form the harness writes."""
+    line = {"parentUuid": None, "isSidechain": True, "agentId": "a1"}
+    if kind == "prompt":
+        line.update(type="user", message={"role": "user", "content": extra.pop("text", "Do the task.")})
+    elif kind == "result":
+        line.update(type="user", message={"role": "user", "content": [
+            {"tool_use_id": "t" + uuid, "type": "tool_result", "content": "ok"}]})
+    elif kind == "image":
+        line.update(type="user", isMeta=True, message={"role": "user", "content": [
+            {"type": "text", "text": "[Image: original 1080x2400]"}]})
+    elif kind == "tool":
+        line.update(type="assistant", message={"id": "m" + uuid, "type": "message", "role": "assistant",
+                                               "content": [{"type": "tool_use", "id": "t" + uuid}],
+                                               "stop_reason": "tool_use", "usage": {"input_tokens": 1}})
+    elif kind == "end":
+        line.update(type="assistant", message={"id": "m" + uuid, "type": "message", "role": "assistant",
+                                               "content": [{"type": "text", "text": "Report: done."}],
+                                               "stop_reason": "end_turn", "usage": {"input_tokens": 1}})
+    elif kind == "attachment":
+        line.update(type="attachment", attachment={"type": "total_tokens_reminder", "text": "left"})
+    serial = int(uuid[1:])
+    line.update(uuid=uuid, timestamp="2026-10-23T%02d:%02d:00.000Z" % (10 + serial // 60, serial % 60))
+    line.update(extra)
+    return json.dumps(line, separators=(",", ":"))
+
+
 class TurnBudget(unittest.TestCase):
     def setUp(self):
         self.base = tempfile.mkdtemp(prefix="turn-budget-")
@@ -45,9 +72,11 @@ class TurnBudget(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.base, ignore_errors=True)
 
-    def call(self, agent_id=None, agent_type=None, cwd=None, event="PreToolUse"):
+    def call(self, agent_id=None, agent_type=None, cwd=None, event="PreToolUse", transcript="", own=None):
         payload = {"session_id": "s1", "tool_name": "Read", "tool_input": {"file_path": "x"},
-                   "transcript_path": "", "cwd": cwd or self.project, "hook_event_name": event}
+                   "transcript_path": transcript, "cwd": cwd or self.project, "hook_event_name": event}
+        if own is not None:
+            payload["agent_transcript_path"] = own
         if agent_id is not None:
             payload["agent_id"] = agent_id
         if agent_type is not None:
@@ -138,6 +167,128 @@ class TurnBudget(unittest.TestCase):
         self.call("new", "worker")
         self.assertFalse(os.path.exists(old))
         self.assertTrue(os.path.exists(os.path.join(self.ledger, "turn-budget", "recent")))
+
+
+class ResumedRun(unittest.TestCase):
+    """A resumed agent keeps its agent_id but gets a fresh maxTurns: the count starts again."""
+
+    tearDown, call, notes = TurnBudget.tearDown, TurnBudget.call, TurnBudget.notes
+
+    def setUp(self):
+        TurnBudget.setUp(self)
+        definition(os.path.join(self.project, ".claude", "agents"), "worker", 10)
+        self.sessions = os.path.join(self.home, ".claude", "projects", "p")
+        self.main = os.path.join(self.sessions, "s1.jsonl")
+        self.own = os.path.join(self.sessions, "s1", "subagents", "agent-a1.jsonl")
+        os.makedirs(os.path.dirname(self.own))
+        self.serial = 0
+        self.write(record("prompt", self.uid()))
+
+    def uid(self):
+        self.serial += 1
+        return "u%d" % self.serial
+
+    def write(self, *lines):
+        with open(self.own, "a", encoding="utf-8", newline="\n") as handle:
+            handle.write("".join(line + "\n" for line in lines))
+
+    def turns(self, n):
+        """n turns of one call each, written to the transcript the way the harness writes them."""
+        outputs = []
+        for _ in range(n):
+            uid = self.uid()
+            self.write(record("tool", uid))
+            outputs.append(self.call("a1", "worker", transcript=self.main))
+            self.write(record("result", uid), record("attachment", self.uid()))
+        return outputs
+
+    def budget(self):
+        return os.path.join(self.ledger, "turn-budget", "a1")
+
+    def runs(self):
+        return sorted(name for name in os.listdir(self.budget()) if name.startswith("run-"))
+
+    def calls_in(self, folder):
+        return sum(1 for name in os.listdir(folder) if name[0].isdigit())
+
+    def test_a_first_run_reaches_70_percent_and_counts_in_the_agent_folder(self):
+        got = self.notes(self.turns(8))
+        self.assertEqual([7], [n for n, _ in got])
+        self.assertIn("has started 7 tool calls", got[0][1])
+        self.assertEqual([], self.runs())
+        self.assertEqual(8, self.calls_in(self.budget()))
+
+    def test_a_resume_after_the_final_report_starts_the_count_again(self):
+        self.assertEqual([7, 9], [n for n, _ in self.notes(self.turns(9))])
+        self.write(record("end", self.uid()), record("attachment", self.uid()),
+                   record("prompt", self.uid(), text="Round 2.", isMeta=True, origin={"kind": "coordinator"}))
+        got = self.notes(self.turns(9))
+        self.assertEqual([7, 9], [n for n, _ in got])
+        self.assertIn("has started 7 tool calls", got[0][1])
+        self.assertEqual(1, len(self.runs()))
+        self.assertEqual(9, self.calls_in(os.path.join(self.budget(), self.runs()[0])))
+        self.assertEqual(9, self.calls_in(self.budget()))
+
+    def test_a_second_resume_starts_a_third_run(self):
+        for _ in range(2):
+            self.turns(7)
+            self.write(record("end", self.uid()), record("prompt", self.uid(), text="Next round."))
+        self.assertEqual([7], [n for n, _ in self.notes(self.turns(7))])
+        self.assertEqual(2, len(self.runs()))
+
+    def test_a_resume_after_a_cut_off_at_the_limit_starts_the_count_again(self):
+        self.turns(10)
+        self.write(record("image", self.uid()),
+                   record("prompt", self.uid(), text="You hit the limit.", isMeta=True, origin={"kind": "coordinator"}))
+        self.assertEqual([7, 9], [n for n, _ in self.notes(self.turns(9))])
+
+    def test_a_message_while_the_agent_works_starts_nothing_even_past_the_limit(self):
+        self.turns(3)
+        self.write(record("prompt", self.uid(), text="Also check B.", isMeta=True, origin={"kind": "coordinator"}),
+                   record("image", self.uid()))
+        self.assertEqual([4, 6], [n for n, _ in self.notes(self.turns(10))])
+        self.assertEqual([], self.runs())
+        self.assertEqual([], self.notes(self.turns(4)))  # 17 calls: the message never becomes a run
+
+    def test_an_image_record_starts_nothing_even_past_the_limit(self):
+        self.turns(10)  # parallel calls can pass the limit before the turns do
+        self.write(record("image", self.uid()))
+        self.assertEqual([], self.notes(self.turns(7)))
+        self.assertEqual([], self.runs())
+
+    def test_a_task_notification_after_the_report_is_a_new_run_too(self):
+        self.turns(9)
+        self.write(record("end", self.uid()), record("prompt", self.uid(), text="[SYSTEM NOTIFICATION]",
+                                                     isMeta=True, origin={"kind": "task-notification"}))
+        self.assertEqual([7], [n for n, _ in self.notes(self.turns(7))])
+
+    def test_an_unreadable_transcript_gives_the_count_of_before(self):
+        os.remove(self.own)
+        os.makedirs(self.own)  # a folder where the transcript should be: found by the glob, unreadable
+        outputs = [self.call("a1", "worker", transcript=self.main) for _ in range(12)]
+        outputs += [self.call("a1", "worker", own=os.path.join(self.base, "missing.jsonl")) for _ in range(2)]
+        self.assertEqual([7, 9], [n for n, _ in self.notes(outputs)])
+        self.assertEqual(14, self.calls_in(self.budget()))
+        self.assertEqual([], self.runs())
+
+    def test_a_transcript_of_garbage_gives_the_count_of_before(self):
+        with open(self.own, "wb") as handle:
+            handle.write(b'\x00\xff{"type":"user" not json\n' * 50)
+        outputs = [self.call("a1", "worker", own=self.own) for _ in range(12)]
+        self.assertEqual([7, 9], [n for n, _ in self.notes(outputs)])
+        self.assertEqual([], self.runs())
+
+    def test_parallel_calls_in_a_resumed_run_count_once_each_and_give_each_note_once(self):
+        definition(os.path.join(self.project, ".claude", "agents"), "worker", 20)
+        self.turns(20)
+        self.write(record("end", self.uid()), record("prompt", self.uid(), text="Round 2."))
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            outputs = list(pool.map(lambda _: self.call("a1", "worker", own=self.own), range(20)))
+        texts = [o["hookSpecificOutput"]["additionalContext"] for o in outputs if "hookSpecificOutput" in o]
+        self.assertEqual(1, sum("70 percent" in t for t in texts))
+        self.assertEqual(1, sum("90 percent" in t for t in texts))
+        self.assertEqual(1, len(self.runs()))
+        self.assertEqual(20, self.calls_in(os.path.join(self.budget(), self.runs()[0])))
 
 
 if __name__ == "__main__":

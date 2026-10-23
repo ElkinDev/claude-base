@@ -17,9 +17,22 @@ then `~/.claude/agents/<type>.md`), the hook adds one factual line to the agent'
 the count is never behind the turns and the note comes at or before the turn it names. In the main session, and for an agent whose
 definition has no `maxTurns` or cannot be found, it does nothing and writes nothing.
 
-Known limit: a finished agent resumed by a message keeps its agent_id, so its count carries on
-from the first run. If the harness gives the resumed run a fresh `maxTurns`, its notes come early
-or not at all.
+A run that a message resumes gets a fresh `maxTurns`, so the count starts again with it. The run is
+found in the agent's own transcript (`agent_transcript_path`, else
+`<folder of transcript_path>/<session_id>/subagents/agent-<agent_id>.jsonl`, else the first
+`agent-<agent_id>*.jsonl` there); only its last 256 KB are read, with no JSON parse except for a
+prompt. A prompt is a user record that is not a tool result and not a harness meta record (an
+image, a skill text, a retry); a coordinator message or a task notification counts as one. A
+prompt starts a new run when it comes right after an assistant record (the agent had ended its
+turn), or when the run counted so far already holds `maxTurns` calls (the agent was cut off, and
+its last tool result sits before the prompt). A prompt that comes while the agent works starts
+nothing, and a `seen-<uuid>` file keeps it that way once the calls reach the limit. The first run
+counts in `<agent_id>/` itself; a later run counts in `<agent_id>/run-<time>-<uuid>/`, the newest
+of which is the run counted so far. Each run gets its own 70 and 90 percent notes, once each. When
+the transcript cannot be found or read, the count goes on in the run counted so far, which for an
+agent never seen with a transcript is `<agent_id>/`, as before. A first turn that writes more than
+256 KB before its first call pushes its prompt out of reach, and that run is counted with the one
+before it.
 
 It never blocks and never decides: every failure exits 0 with no output.
 """
@@ -34,6 +47,12 @@ import time
 BUDGET_DIR = "turn-budget"
 MARKS = (70, 90)  # percent of maxTurns at which the agent gets one note each
 KEEP_SECONDS = 2 * 86400  # call folders idle this long are pruned when a new agent starts
+TAIL_BYTES = 256 * 1024  # the end of the transcript searched for the prompt that started the run
+USER_MARKS = (b'"type":"user"', b'"type": "user"')
+ASSISTANT_MARKS = (b'"type":"assistant"', b'"type": "assistant"')
+RESULT_MARKS = (b'"type":"tool_result"', b'"type": "tool_result"')
+META_MARKS = (b'"isMeta":true', b'"isMeta": true')
+ORIGIN_MARKS = (b'"origin":',)  # a coordinator message or a task notification, both meta records
 MAX_TURNS_LINE = re.compile(r"^maxTurns:\s*(\d+)\s*$")
 SAFE_NAME = re.compile(r"[^A-Za-z0-9_-]")  # no dots, so no name can be "." or ".."
 
@@ -97,6 +116,111 @@ def prune(folder, keep):
             continue
 
 
+def find_transcript(data, agent_id):
+    """The subagent's own transcript, or "" when it cannot be found."""
+    given = data.get("agent_transcript_path")
+    if isinstance(given, str) and given and os.path.isfile(given):
+        return given
+    main = data.get("transcript_path")
+    session = SAFE_NAME.sub("", str(data.get("session_id") or ""))
+    if not isinstance(main, str) or not main or not session:
+        return ""
+    subagents = os.path.join(os.path.dirname(main), session, "subagents")
+    derived = os.path.join(subagents, "agent-%s.jsonl" % agent_id)
+    if os.path.isfile(derived):
+        return derived
+    import glob
+    hits = sorted(glob.glob(os.path.join(glob.escape(subagents), "agent-%s*.jsonl" % agent_id)))
+    return hits[0] if hits else ""
+
+
+def prompts(path):
+    """The prompts in the transcript's last TAIL_BYTES, oldest first, as (uuid, time, after, first).
+
+    after: the record before it (attachments and API records aside) is an assistant record.
+    first: it is the first record of the file, the prompt the agent started with.
+    Only a line that may be a prompt is parsed; the others are told apart by their bytes.
+    """
+    with open(path, "rb") as handle:
+        handle.seek(0, 2)
+        size = handle.tell()
+        start = max(0, size - TAIL_BYTES)
+        handle.seek(start)
+        data = handle.read(size - start)
+    lines = data.split(b"\n")[:-1]  # the last piece is empty or a line still being written
+    if start:
+        lines = lines[1:]  # cut by the tail, so the record before the next one is unknown
+    found, before = [], None if start else "start"
+    for raw in lines:
+        if any(m in raw for m in USER_MARKS):
+            if not any(m in raw for m in RESULT_MARKS) and (not any(m in raw for m in META_MARKS)
+                                                            or any(m in raw for m in ORIGIN_MARKS)):
+                try:
+                    record = json.loads(raw)
+                except ValueError:
+                    record = None
+                if isinstance(record, dict) and record.get("type") == "user":
+                    uuid = SAFE_NAME.sub("", str(record.get("uuid") or ""))
+                    if uuid:
+                        found.append((uuid, SAFE_NAME.sub("", str(record.get("timestamp") or "")),
+                                      before == "assistant", before == "start"))
+            before = "user"
+        elif any(m in raw for m in ASSISTANT_MARKS):
+            before = "assistant"
+    return found
+
+
+def is_call(name):
+    return name[:1].isdigit()  # call files are <pid>-<ns>; marks, runs and seen prompts are not
+
+
+def run_folder(agent_dir, transcript, limit):
+    """The folder that counts this run's calls: agent_dir for the first run, a run-* folder after.
+
+    The run counted so far is the newest run-* folder, or agent_dir; the transcript's prompts, oldest
+    first, then move it on. A prompt with a folder is a run already counted, one with a seen- file
+    was judged to start nothing, and any other one starts a run when it follows an assistant record
+    or when the run so far holds limit calls. A prompt judged to start nothing is marked seen, so
+    calls that reach the limit later never turn it into a new run.
+    """
+    try:
+        names = set(os.listdir(agent_dir))
+    except OSError:
+        names = set()
+    runs = sorted(name for name in names if name.startswith("run-"))
+    current = os.path.join(agent_dir, runs[-1]) if runs else agent_dir
+    if not transcript:
+        return current
+    try:
+        found = prompts(transcript)
+    except (OSError, ValueError):
+        return current
+    for uuid, stamp, after, first in found:
+        name = "run-%s-%s" % (stamp, uuid)
+        if first:
+            current = agent_dir
+        elif name in names:
+            current = os.path.join(agent_dir, name)
+        elif "seen-" + uuid in names:
+            continue
+        elif after or calls_in(current) >= limit:
+            current = os.path.join(agent_dir, name)
+        else:
+            try:
+                open(os.path.join(agent_dir, "seen-" + uuid), "x").close()
+            except OSError:
+                pass
+            names.add("seen-" + uuid)
+    return current
+
+
+def calls_in(folder):
+    try:
+        return sum(1 for name in os.listdir(folder) if is_call(name))
+    except OSError:
+        return 0
+
+
 def budget_note(data):
     """Count this subagent's tool call and return the note due at this count, or None."""
     agent_id = SAFE_NAME.sub("", str(data.get("agent_id") or ""))
@@ -107,21 +231,23 @@ def budget_note(data):
     if not limit:
         return None
     folder = os.path.join(ledger_dir(), BUDGET_DIR)
-    calls = os.path.join(folder, agent_id)
-    fresh = not os.path.isdir(calls)
-    os.makedirs(calls, exist_ok=True)
+    agent_dir = os.path.join(folder, agent_id)
+    fresh = not os.path.isdir(agent_dir)
+    os.makedirs(agent_dir, exist_ok=True)
     if fresh:
-        prune(folder, keep=calls)
+        prune(folder, keep=agent_dir)
+    calls = run_folder(agent_dir, find_transcript(data, agent_id), limit)
+    os.makedirs(calls, exist_ok=True)
     # One empty file per call, named by the process and the clock: a shared counter loses calls
     # that run in parallel, while a new file per call never collides. The count read after this
     # call's file exists is at least this call's number.
     open(os.path.join(calls, "%d-%d" % (os.getpid(), time.time_ns())), "x").close()
-    count = sum(1 for name in os.listdir(calls) if not name.startswith("mark-"))
+    count = calls_in(calls)
     for mark in sorted(MARKS, reverse=True):
         if count < math.ceil(limit * mark / 100.0):
             continue
         try:
-            # Created once per agent and mark, exclusively, so parallel calls give one note.
+            # Created once per run and mark, exclusively, so parallel calls give one note.
             open(os.path.join(calls, "mark-%d" % mark), "x").close()
         except OSError:
             return None
