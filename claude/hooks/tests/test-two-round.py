@@ -135,6 +135,63 @@ class TwoRound(Base):
         p2 = self.review("review-proto-x-r2-%s.md" % DAY, "BLOCK")
         self.assertEqual(self.hook(p2, tool="Read"), "")
 
+    def bash(self, command, cwd=None):
+        payload = {"session_id": SESSION, "hook_event_name": "PostToolUse", "tool_name": "Bash",
+                   "tool_input": {"command": command}, "tool_response": {}}
+        if cwd is not None:
+            payload["cwd"] = cwd
+        return self.hook("", raw=json.dumps(payload))
+
+    def test_bash_heredoc_absolute(self):
+        self.review("review-proto-x-%s.md" % DAY, "BLOCK")
+        p2 = self.review("review-proto-x-r2-%s.md" % DAY, "BLOCK")
+        cmd = "cd /c/proj; cat > \"%s\" <<'EOF'\nBLOCK\n1. MAJOR\nEOF" % p2.replace("\\", "/")
+        self.assertIn("proto-x has 2 BLOCK reviews", self.notice(self.bash(cmd)))
+        self.assertEqual(self.bash(cmd), "", "once per key")
+
+    def test_bash_msys_form(self):
+        self.review("review-proto-x-%s.md" % DAY, "BLOCK")
+        p2 = self.review("review-proto-x-r2-%s.md" % DAY, "BLOCK").replace("\\", "/")
+        msys = "/" + p2[0].lower() + p2[2:]
+        self.assertIn("has 2 BLOCK reviews", self.notice(self.bash("cat >'%s' <<'EOF'\nBLOCK\nEOF" % msys)))
+
+    def test_bash_relative_to_cwd(self):
+        self.review("review-proto-x-%s.md" % DAY, "BLOCK")
+        self.review("review-proto-x-r2-%s.md" % DAY, "BLOCK")
+        cmd = "cat > reviews/review-proto-x-r2-%s.md <<'EOF'\nBLOCK\nEOF" % DAY
+        self.assertEqual(self.bash(cmd), "", "no cwd, no notice")
+        self.assertIn("has 2 BLOCK reviews", self.notice(self.bash(cmd, cwd=os.path.join(self.tmp, "proj"))))
+
+    def test_bash_two_pieces_and_quiet_ones(self):
+        self.review("review-proto-x-%s.md" % DAY, "BLOCK")
+        px = self.review("review-proto-x-r2-%s.md" % DAY, "BLOCK").replace("\\", "/")
+        self.review("review-proto-y-%s.md" % DAY, "BLOCK")
+        py = self.review("review-proto-y-r2-%s.md" % DAY, "BLOCK").replace("\\", "/")
+        self.review("review-proto-z-%s.md" % DAY, "BLOCK")
+        pz = self.review("review-proto-z-r2-%s.md" % DAY, "CLEAR").replace("\\", "/")
+        ctx = self.notice(self.bash("cp a.md '%s' && cp b.md \"%s\" && cat '%s' \"%s\"" % (px, py, pz, px)))
+        self.assertIn("proto-x has 2", ctx)
+        self.assertIn("proto-y has 2", ctx)
+        self.assertNotIn("proto-z", ctx)
+        self.assertEqual(ctx.count("Two-round rule"), 2, "the same path twice is one check")
+        self.assertEqual(self.bash("ls %s/notes.md; echo reviews" % self.reviews.replace("\\", "/")), "")
+
+    def test_bash_cd_then_relative_and_escaped_spaces(self):
+        self.review("review-proto-x-%s.md" % DAY, "BLOCK")
+        self.review("review-proto-x-r2-%s.md" % DAY, "BLOCK")
+        proj = os.path.join(self.tmp, "proj").replace("\\", "/")
+        cmd = "cd \"%s\"; cat > reviews/review-proto-x-r2-%s.md <<'EOF'\nBLOCK\nEOF" % (proj, DAY)
+        self.assertIn("proto-x has 2", self.notice(self.bash(cmd, cwd="C:/")))
+        self.review("review-proto-w-%s.md" % DAY, "BLOCK")
+        pw = self.review("review-proto-w-r2-%s.md" % DAY, "BLOCK").replace("\\", "/").replace(" ", "\\ ")
+        self.assertIn("proto-w has 2", self.notice(self.bash("tee -a %s < x" % pw)))
+
+    def test_bash_long_command_is_linear(self):
+        cmd = "a" * 200000 + " x" + "/b" * 50000 + " " + "'q" * 20000
+        start = time.time()
+        self.assertEqual(self.bash(cmd + " reviews"), "")
+        self.assertLess(time.time() - start, 3.0)
+
     def test_bad_stdin_and_missing_file(self):
         self.assertEqual(self.hook("", raw="not json {"), "")
         self.assertEqual(self.hook("", raw=""), "")
