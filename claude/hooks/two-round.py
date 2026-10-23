@@ -1,4 +1,4 @@
-"""PostToolUse hook for Write and Edit: name the two-round rule when a second BLOCK review of a piece is saved.
+"""PostToolUse hook for Write, Edit and Bash: name the two-round rule when a second BLOCK review of a piece is saved.
 
 The two-round rule: after the second BLOCK on one piece, the piece is not resent as it is. Two BLOCKs in a row
 usually mean the piece rests on a wrong premise that a third patch round will not find, so a diagnosis names
@@ -11,6 +11,11 @@ The file shapes it reads, in a folder named `reviews` (any case):
   FAIL word in its first 40 lines, and BLOCK or FAIL counts as a block;
 - a diagnosis is `[review-]diagnosis-<name>-<YYYY-MM-DD>.md`; it covers the piece when <name> is the piece,
   either one is the other with a prefix and a dash in front, or the piece is named on its first line.
+
+Bash too, since a project that writes its reviews with a shell heredoc never calls Write: a Bash command is read
+for .md paths in a reviews folder, MSYS /c/ forms and paths relative to the payload's cwd or to a folder the
+command cds into included, and each is checked as if it had just been written. A read of such a file is checked
+too; the notice still needs the rule's condition and still comes once per key.
 Only files changed in the last 7 days count, and only reviews newer than the newest diagnosis of the piece.
 The notice is due when at least two of those reviews are blocks and the newest review is one of them.
 
@@ -32,6 +37,9 @@ BLOCKS_DUE = 2                  # blocks since the last diagnosis that make the 
 STATE_DAYS = 14
 REVIEW_NAME = re.compile(r"^(?:review-)?(?P<diag>diagnosis-)?(?P<piece>.+?)(?:-r(?P<round>\d+))?-(?P<day>\d{4}-\d\d-\d\d)\.md$")
 VERDICT_WORD = re.compile(r"\b(BLOCK|CLEAR|PASS|FAIL)\b")
+QUOTED = re.compile(r"""'([^'\n]*)'|"([^"\n]*)\"""")  # quoted words, in one linear pass
+WORD_SEP = re.compile(r"""[\s'"<>|;&()`=]+""")      # bare words: split, never a backtracking match
+CD = re.compile(r"""(?:^|[;&|\n]\s*)cd\s+(?:"([^"\n]+)"|'([^'\n]+)'|((?:\\ |[^\s;&|])+))""")
 NOTICE = ("Two-round rule: %s has %d BLOCK reviews since its last diagnosis (%s). After a second BLOCK a piece is "
           "not resent as it is. Before round %d, write diagnosis-%s-%s.md in this reviews folder naming the wrong "
           "premise, then rewrite under it and bound the next round to the rewrite.")
@@ -121,16 +129,68 @@ def log_notice(session, folder, piece, n):
         pass
 
 
-def run(data):
-    if not isinstance(data, dict) or data.get("tool_name") not in ("Write", "Edit"):
-        return None
+def msys_to_win(path):
+    m = re.match(r"^/([A-Za-z])/(.*)$", path)
+    return "%s:/%s" % (m.group(1).upper(), m.group(2)) if m else path
+
+
+def is_abs(path):
+    return bool(re.match(r"^[A-Za-z]:/", path)) or path.startswith("/")
+
+
+def md_words(command):
+    """Every quoted or bare word of a shell command that ends in .md; an escaped space stays inside its word."""
+    words = ["".join(g) for g in QUOTED.findall(command)]
+    rest = QUOTED.sub(" ", command).replace("\\ ", "\0")
+    words += [w.replace("\0", " ") for w in WORD_SEP.split(rest)]
+    return [w for w in words if w.lower().endswith(".md")]
+
+
+def candidate_paths(data):
+    """The file a Write or Edit names, or every .md word of a Bash command, absolute and with forward slashes.
+    A relative word is tried against the payload's cwd and against each folder the command cds into."""
     tool_input = data.get("tool_input")
     if not isinstance(tool_input, dict):
+        return []
+    if data.get("tool_name") in ("Write", "Edit"):
+        raw = tool_input.get("file_path")
+        return [raw.replace("\\", "/")] if isinstance(raw, str) and raw else []
+    command = tool_input.get("command")
+    if data.get("tool_name") != "Bash" or not isinstance(command, str):
+        return []
+    cwd = data.get("cwd") if isinstance(data.get("cwd"), str) else ""
+    cwd = msys_to_win(cwd.replace("\\", "/")).rstrip("/")
+    bases = [cwd] if cwd else []
+    for g in CD.findall(command):
+        d = msys_to_win("".join(g).replace("\\ ", " ").replace("\\", "/")).rstrip("/")
+        if is_abs(d):
+            bases.append(d)
+        elif cwd:
+            bases.append(cwd + "/" + d)
+    out = []
+    for word in md_words(command):
+        path = msys_to_win(word.replace("\\", "/"))
+        out += [path] if is_abs(path) else [b + "/" + path for b in bases]
+    return out
+
+
+def run(data):
+    if not isinstance(data, dict):
         return None
-    raw = tool_input.get("file_path")
-    if not isinstance(raw, str) or not raw:
+    texts, seen = [], set()
+    for path in candidate_paths(data):
+        if path.lower() in seen:
+            continue
+        seen.add(path.lower())
+        text = check_one(data, path)
+        if text:
+            texts.append(text)
+    if not texts:
         return None
-    path = raw.replace("\\", "/")
+    return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "\n".join(texts)}}
+
+
+def check_one(data, path):
     folder, name = path.rsplit("/", 1) if "/" in path else ("", path)
     if folder.rsplit("/", 1)[-1].lower() != "reviews":
         return None
@@ -154,8 +214,7 @@ def run(data):
     save_state(state_path, state)
     log_notice(str(data.get("session_id") or ""), folder, piece, n)
     names = ", ".join(p.rsplit("/", 1)[-1] for p in blocks)
-    text = NOTICE % (piece, n, names, n + 1, piece, time.strftime("%Y-%m-%d"))
-    return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": text}}
+    return NOTICE % (piece, n, names, n + 1, piece, time.strftime("%Y-%m-%d"))
 
 
 def main():
