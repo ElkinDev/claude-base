@@ -43,11 +43,11 @@ def record(kind, uuid, **extra):
         line.update(type="user", isMeta=True, message={"role": "user", "content": [
             {"type": "text", "text": "[Image: original 1080x2400]"}]})
     elif kind == "tool":
-        line.update(type="assistant", message={"id": "m" + uuid, "type": "message", "role": "assistant",
+        line.update(type="assistant", message={"id": "msg_" + extra.pop("turn", uuid), "type": "message", "role": "assistant",
                                                "content": [{"type": "tool_use", "id": "t" + uuid}],
                                                "stop_reason": "tool_use", "usage": {"input_tokens": 1}})
     elif kind == "end":
-        line.update(type="assistant", message={"id": "m" + uuid, "type": "message", "role": "assistant",
+        line.update(type="assistant", message={"id": "msg_" + uuid, "type": "message", "role": "assistant",
                                                "content": [{"type": "text", "text": "Report: done."}],
                                                "stop_reason": "end_turn", "usage": {"input_tokens": 1}})
     elif kind == "attachment":
@@ -202,6 +202,17 @@ class ResumedRun(unittest.TestCase):
             self.write(record("result", uid), record("attachment", self.uid()))
         return outputs
 
+    def parallel(self, turns, per):
+        """turns of per parallel calls each: one assistant message with per tool_use records."""
+        outputs = []
+        for _ in range(turns):
+            turn = self.uid()
+            ids = [self.uid() for _ in range(per)]
+            self.write(*[record("tool", uid, turn=turn) for uid in ids])
+            outputs += [self.call("a1", "worker", transcript=self.main) for _ in ids]
+            self.write(*[record("result", uid) for uid in ids])
+        return outputs
+
     def budget(self):
         return os.path.join(self.ledger, "turn-budget", "a1")
 
@@ -249,6 +260,33 @@ class ResumedRun(unittest.TestCase):
         self.assertEqual([4, 6], [n for n, _ in self.notes(self.turns(10))])
         self.assertEqual([], self.runs())
         self.assertEqual([], self.notes(self.turns(4)))  # 17 calls: the message never becomes a run
+        # Judged once and marked, so no later call reads further back than the tail for it.
+        self.assertEqual(1, sum(name.startswith("seen-") for name in os.listdir(self.budget())))
+
+    def test_parallel_calls_past_the_limit_before_the_turns_do_start_no_run(self):
+        self.assertEqual([7, 9], [n for n, _ in self.notes(self.parallel(3, 4))])  # 12 calls, 3 turns
+        self.write(record("prompt", self.uid(), text="Also check B.", isMeta=True, origin={"kind": "coordinator"}))
+        self.assertEqual([], self.notes(self.parallel(1, 3) + self.parallel(6, 1)))  # turns 4 to 10
+        self.assertEqual([], self.runs())
+
+    def test_a_resume_after_a_cut_off_with_parallel_calls_starts_the_count_again(self):
+        self.parallel(3, 4)
+        self.write(record("prompt", self.uid(), text="Also check B.", isMeta=True, origin={"kind": "coordinator"}))
+        self.parallel(7, 1)  # cut off at turn 10, with 19 calls
+        self.write(record("prompt", self.uid(), text="Go on.", isMeta=True, origin={"kind": "coordinator"}))
+        got = self.notes(self.parallel(9, 1))
+        self.assertEqual([7, 9], [n for n, _ in got])
+        self.assertIn("has started 7 tool calls", got[0][1])
+        self.assertEqual(1, len(self.runs()))
+
+    def test_a_cut_off_whose_start_is_out_of_the_tail_reads_further_back(self):
+        definition(os.path.join(self.project, ".claude", "agents"), "worker", 4)
+        self.write(*[record("attachment", self.uid(), pad="x" * 4000) for _ in range(80)])  # 320 KB
+        self.turns(4)
+        self.write(*[record("attachment", self.uid(), pad="x" * 4000) for _ in range(80)])
+        self.write(record("prompt", self.uid(), text="Go on.", isMeta=True, origin={"kind": "coordinator"}))
+        self.assertEqual([3, 4], [n for n, _ in self.notes(self.turns(4))])
+        self.assertEqual(1, len(self.runs()))
 
     def test_an_image_record_starts_nothing_even_past_the_limit(self):
         self.turns(10)  # parallel calls can pass the limit before the turns do
@@ -289,6 +327,22 @@ class ResumedRun(unittest.TestCase):
         self.assertEqual(1, sum("90 percent" in t for t in texts))
         self.assertEqual(1, len(self.runs()))
         self.assertEqual(20, self.calls_in(os.path.join(self.budget(), self.runs()[0])))
+
+
+class Judge(unittest.TestCase):
+    """judge() in process: when the bytes read hold no start of the run, only a seen prompt is settled."""
+
+    def setUp(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("turn_budget", HOOK)
+        self.hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.hook)
+
+    def test_a_seen_prompt_needs_no_wider_read_and_an_unseen_one_does(self):
+        found = [("u9", "t9", False, False, 2)]  # a message after a tool result, 2 turns into the tail
+        self.assertEqual(("A", []), self.hook.judge("A", {"seen-u9"}, "A", found, False, 10))
+        self.assertIsNone(self.hook.judge("A", set(), "A", found, False, 10))
+        self.assertEqual(("A", ["u9"]), self.hook.judge("A", set(), "A", found, True, 10))
 
 
 if __name__ == "__main__":
