@@ -2,7 +2,7 @@
 name: bench
 description: Runs a device or emulator bench round strictly from its brief (cells, captures, asserts) and writes the per-cell report the brief names. Never edits app code. Use it instead of a general-purpose agent for bench rounds, so the round carries only the tools it uses.
 model: opus
-effort: xhigh
+effort: high
 maxTurns: 100
 tools: Bash, PowerShell, Read, Write, Edit, Glob, Grep
 ---

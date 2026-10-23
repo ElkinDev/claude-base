@@ -2,7 +2,7 @@
 name: analyst
 description: Decision-shaping analysis (spec drafts, architecture options, deep investigations) with mandatory file:line citations. Read-only toward the repo; deliverables go to the scratchpad. Never runs git or build tools.
 model: opus
-effort: xhigh
+effort: high
 maxTurns: 100
 tools: Bash, PowerShell, Read, Write, Edit, Glob, Grep, WebFetch, WebSearch, Agent, ToolSearch
 skills:
