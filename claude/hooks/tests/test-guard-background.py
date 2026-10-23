@@ -114,7 +114,7 @@ class GuardBackground(unittest.TestCase):
     NOT_SERVERS = (
         "npm run build", "npm test", "npm run test", "npm run lint", "npm run development-build",
         "pnpm build", "yarn test", "bun run build", "bun test", "npx next build", "vite build",
-        "npx vite build --mode prod", "pytest", "python -m pytest tests", "python manage.py test",
+        "npx vite build --mode prod", "dotnet watch test", "npm run dev:test", "vite --mode x build", "pytest", "python -m pytest tests", "python manage.py test",
         "php -s index.php", "php artisan test", "rails test", "dotnet build", "dotnet test", "ng build",
         "./gradlew assembleDebug", "emulator -list-avds",
     )

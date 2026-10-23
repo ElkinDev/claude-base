@@ -38,11 +38,11 @@ PS_LOOP_RE = re.compile(
     r"|\bdo\s*\{[\s\S]{0,2000}?\bStart-Sleep\b", re.IGNORECASE)
 PY_LOOP_RE = re.compile(r"\b(?:while|for)\b[^\n]{0,400}?:[\s\S]{0,2000}?\b(?:time|asyncio)\.sleep\s*\(")
 SERVER_RE = re.compile(
-    r"\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve|preview)(?![\w-])"
+    r"\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve|preview)(?![\w:-])"
     r"|\b(?:npx|bunx)\s+next\s+dev\b|\bnpx\s+serve\b"
-    r"|\bvite(?:\.js)?(?=\s|$)(?!\s+build)"
+    r"|\bvite(?:\.js)?(?=\s|$)(?![^;&|\n]*\bbuild\b)"
     r"|\bpython3?(?:\.exe)?\s+-m\s+http\.server\b|\bmanage\.py\s+runserver\b|\buvicorn\b|\bflask\s+run\b"
-    r"|\bphp\s+(?-i:-S)(?=\s|$)|\brails\s+(?:s|server)\b|\bdotnet\s+(?:run|watch)\b|\bng\s+serve\b"
+    r"|\bphp\s+(?-i:-S)(?=\s|$)|\brails\s+(?:s|server)\b|\bdotnet\s+(?:run|watch)\b(?![^;&|\n]*\btest\b)|\bng\s+serve\b"
     r"|\bemulator(?:\.exe)?\s+(?:-[a-z0-9-]+\s+(?:[^-\s]\S*\s+)?)*-avd\b", re.IGNORECASE)
 HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n[\s\S]*?^\s*\2\s*$", re.MULTILINE)
 REASON = (
