@@ -38,7 +38,7 @@ PS_LOOP_RE = re.compile(
     r"|\bdo\s*\{[\s\S]{0,2000}?\bStart-Sleep\b", re.IGNORECASE)
 PY_LOOP_RE = re.compile(r"\b(?:while|for)\b[^\n]{0,400}?:[\s\S]{0,2000}?\b(?:time|asyncio)\.sleep\s*\(")
 SERVER_RE = re.compile(
-    r"\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve|preview)(?![\w:-])"
+    r"\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve|preview)(?::(?![\w-]*(?:test|build))[\w-]+)?(?![\w:-])"
     r"|\b(?:npx|bunx)\s+next\s+dev\b|\bnpx\s+serve\b"
     r"|\bvite(?:\.js)?(?=\s|$)(?![^;&|\n]*\bbuild\b)"
     r"|\bpython3?(?:\.exe)?\s+-m\s+http\.server\b|\bmanage\.py\s+runserver\b|\buvicorn\b|\bflask\s+run\b"
