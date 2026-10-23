@@ -28,6 +28,9 @@ NOTES.autosave.md
 
 # written by the hooks themselves, beside them, on the machine that runs them
 claude/hooks/*.log
+claude/hooks/wake-turns-state/
+claude/hooks/long-run-state/
+claude/hooks/two-round-state.json
 claude/hooks/inflight-state/
 
 # the sanitization guard's private denylist: the real names, never committed (ADR-007)

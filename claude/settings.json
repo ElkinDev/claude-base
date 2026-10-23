@@ -183,6 +183,11 @@
             "type": "command",
             "command": "python \"%USERPROFILE%/.claude/hooks/guard-find.py\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/guard-background.py\"",
+            "timeout": 10
           }
         ]
       },
@@ -197,6 +202,11 @@
           {
             "type": "command",
             "command": "python \"%USERPROFILE%/.claude/hooks/guard-find.py\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/guard-background.py\"",
             "timeout": 10
           }
         ]
@@ -239,6 +249,26 @@
           {
             "type": "command",
             "command": "python \"%USERPROFILE%/.claude/hooks/alarm-big-result.py\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/wake-turns.py\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/long-run.py\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/two-round.py\"",
             "timeout": 10
           }
         ]

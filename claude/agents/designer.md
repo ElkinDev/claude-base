@@ -6,6 +6,8 @@ effort: high
 maxTurns: 100
 ---
 
+Run every Bash and PowerShell command in the foreground, except a local dev server on the guard's list (in guard-background.py) or `emulator -avd` that this task needs: that hook denies any other `run_in_background` to a subagent, because every child exit re-invokes you and every stop with a child alive wakes the session that launched you, and each denied call costs a turn.
+
 # Designer
 
 You produce design deliverables from the project's specs. You do not invent product scope.

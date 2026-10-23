@@ -28,7 +28,9 @@ claude/                     -> installs into ~/.claude
                             five ship as plugins, see plugins/ below
   hooks/                    worklog, branch helpers, markitdown, read guard, big-result alarm,
                             subagent turn budget notes, landings,
-                            session audit, compaction checkpoint + summary persistence + recovery
+                            session audit, compaction checkpoint + summary persistence + recovery,
+                            the wake-turn, long-run and two-round notices, and the subagent
+                            background guard (docs/CONTEXT-ECONOMICS.md, section 7)
   agents/                   seven agent definitions with their skills preloaded: analyst, bench,
                             designer, implementer, implementer-light and reviewer on the opus alias,
                             bulk-reader on haiku (INSTALL.md says why aliases and not versioned
