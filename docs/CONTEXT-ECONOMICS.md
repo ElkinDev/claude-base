@@ -318,6 +318,23 @@ one.
 Nothing in the flow asks the model to write anything before compaction: the checkpoint is
 computed from disk, which is cheaper and more reliable, for the reasons in section 9.
 
+### Turns that re-read the context for nothing
+
+Four more hooks cut the turns that pay a whole context read for little work. Each one says its rule at the
+moment it is crossed instead of in a later review, prints at most a short notice, never blocks on an error, and
+keeps its state and log next to the hook (an environment variable moves them, for tests).
+
+| piece | event | what it does |
+|---|---|---|
+| `claude/hooks/wake-turns.py` | PostToolUse, every tool | a main session only: a wake, the turn a finished subagent or background command starts, takes at most 3 API turns. At the 3rd and again at the 6th turn of one wake it adds one notice to batch what is left into one call and end the turn. It reads the last 512 KB of the transcript and keeps one small state file per session. `WAKE_TURNS_DIR` moves state and log. |
+| `claude/hooks/long-run.py` | PostToolUse, every tool | a subagent only: when its last turn carried 200k and then 300k context tokens, one notice each to write its report as a checkpoint at the next clean point and end, after giving any verdict in full, releasing any lock and leaving no staged change, rebase or merge half made; the parent goes on with a fresh agent from that report. A main session's payload is dropped on a byte test before any parse. `LONG_RUN_DIR` moves state and log. |
+| `claude/hooks/two-round.py` | PostToolUse, Write and Edit | when a second BLOCK review of one piece is saved in a `reviews` folder with no diagnosis since, one notice naming the two-round rule: write `diagnosis-<piece>-<date>.md` naming the wrong premise, rewrite under it, and bound the next round to the rewrite. The file name shapes are in its docstring. `TWO_ROUND_DIR` moves state and log. |
+| `claude/hooks/guard-background.py` | PreToolUse, Bash and PowerShell | denies `run_in_background` to a subagent, except a local server or `emulator -avd` with no wait loop in the same command: every child exit re-invokes the agent and every stop with a child alive wakes its parent for a full turn. The reason gives the detached form (a foreground call that starts the work with a log and an exit file, then the turn ends). `GUARD_BACKGROUND_LOG` moves its log and `GUARD_BACKGROUND_OFF=1` turns it off. The kit's agent definitions carry one line saying so. |
+
+A project that keeps a periodic waste check can read each hook's log beside its own counts: a hook whose count
+does not move in two windows is not earning its notice: take it out of `settings.json`, and a line in
+`hook-merge-skip.txt` keeps a later kit update from offering it again.
+
 ## 8. Install and use
 
 The hooks install with the rest of the toolkit (`install.ps1`); `claude/settings.json` wires

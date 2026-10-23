@@ -99,6 +99,8 @@ A pane with no seat says `Seat: none (lane)`. A pane launched by nothing at all,
 
 `prompt-log.py` adds one line to a seated session once the closing round has opened: the day ends, write the resume brief, land or stop every agent. The round runs from 45 minutes before the closing hour to two hours after it, wrapped around midnight so a closing hour after it behaves like any other, and the line is added only to a prompt a person typed, never to a slash command or a harness tag.
 
+Two notices reach any main session, seated or not, and carry their rule in their own words: `wake-turns.py` when one wake (the turn a finished agent or background command starts) passes 3 and then 6 API turns, and `two-round.py` when a second BLOCK review of a piece is saved in a `reviews` folder with no diagnosis since. The seat texts name both rules in one sentence of their agent rule; docs/CONTEXT-ECONOMICS.md, section 7, has the details.
+
 | Variable | What it does |
 |---|---|
 | `CLAUDE_ROLE` | names the chair: `orchestrator`, `analyst`, anything else is a lane |
