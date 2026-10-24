@@ -84,6 +84,14 @@ show the correct way with a concrete example.
 - Propose alternatives with tradeoffs when relevant, and give a recommendation, not an exhaustive
   survey.
 - No flattery openers. Go straight to the answer.
+- An `rm` names its target by a literal absolute path, a literal glob included
+  (`rm -f /c/work/queue/*-tag.ticket`): an empty variable makes
+  `rm -rf "$dir/$name"` delete the wrong tree. Claude Code 2.1.281 and later asks before an `rm`
+  whose path holds a variable that could be empty, and an unattended session denies it after about
+  two minutes, failing the command, which has stalled subagents in their build and review scripts.
+  Spelling each variable `${VAR:?}` (`rm -f "${dir:?}/${name:?}"`) passes only when the variable is
+  not set by a command substitution in the same command; one that is, such as
+  `f=$(ls dir | head -1)`, still asks and cannot be allowed by a rule, so spell that path literally.
 
 ## Git discipline (project policy in CLAUDE.project.md)
 - Follow the project's git discipline. If it is hand-off only: never commit, push, open a PR, or
