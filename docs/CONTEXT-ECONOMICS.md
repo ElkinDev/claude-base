@@ -299,7 +299,7 @@ Eight pieces, all zero-token, all in this repo:
 Data flow of one compaction with the toolkit on:
 
 ```
-watcher sees idle + 65%  ->  /compact  ->  PreCompact: autosave (dialogue tail), worklog snapshot,
+watcher sees idle + 65%  ->  /compact  ->  PreCompact: autosave (dialogue tail),
 checkpoint (git truth + subagents + last words) and its instructions  ->  the summarizer runs
 with those instructions  ->  PostCompact: summary saved next to the checkpoint  ->  SessionStart
 (compact): recovery text points at the checkpoint  ->  the session continues at the floor

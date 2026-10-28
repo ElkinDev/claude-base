@@ -24,7 +24,7 @@
 - A project kit instantiates exactly one profile; skills and hooks resolve all project-specific values through it.
 - Adapters read the canonical source and never own content; deleting an adapter never loses information.
 - The capability matrix is derived from adapters and is the only place allowed to claim agent support.
-- Hooks write the worklog; the worklog skill reads and updates it; session-start hooks inject it as context.
+- The worklog skill reads and updates the worklog; its hooks are not wired since 2026-10-28, and worklog-context.ps1 prints it by hand.
 - The evidence harness writes into the evidence pack; the evidence-report skill assembles the pack's documents.
 - The sanitization guard gates every commit and every CI run of this repo, including content ported from private setups.
 

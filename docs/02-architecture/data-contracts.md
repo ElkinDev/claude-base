@@ -66,7 +66,7 @@ Common: exit 0 on the happy path and on any internal error (hooks never break a 
 
 ## Worklog storage
 
-`~/.claude/worklog/<repo-id>/`: `tasks/<task-key>.md` (semantic state, owned by the worklog skill) and `sessions.jsonl` (mechanical snapshots, owned by the snapshot hook). Task key is the leading digits of the branch name. Full rationale in `docs/WORKLOG.md` (F07).
+`~/.claude/worklog/<repo-id>/`: `tasks/<task-key>.md` (semantic state, owned by the worklog skill) and `sessions.jsonl` (mechanical snapshots, written by worklog-snapshot.ps1 when run; not wired as a hook since 2026-10-28). Task key is the leading digits of the branch name. Full rationale in `docs/WORKLOG.md` (F07).
 
 ## Profile contract (`CLAUDE.project.md`)
 

@@ -80,12 +80,15 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 Nothing you already have is overwritten or deleted. Any file the installer did not write itself is
 backed up, kept exactly as it is, and the kit version lands beside it as `<name>.new` for you to
 merge by hand. If you already had a `settings.json`, that means `settings.json.new`: keep your own
-keys and add the `statusLine` block and the `worklog` SessionStart / PreCompact / SessionEnd / Stop
-hooks, and the compaction hooks (PreCompact checkpoint with summary steering, PostCompact summary
+keys and add the `statusLine` block and the compaction hooks (PreCompact checkpoint with summary steering, PostCompact summary
 persistence, SessionStart recovery; see `docs/CONTEXT-ECONOMICS.md`). That hand merge is needed once:
 see Updating below for what later runs do on their own.
 
 ### Updating
+
+The worklog hooks left the kit on 2026-10-28. The merge below only adds hooks, so an install made before
+that date still runs them: delete from your settings.json the four blocks whose command names
+`worklog-context.ps1` or `worklog-snapshot.ps1` (SessionStart, PreCompact, SessionEnd, Stop).
 Run the same one line you installed with (the line at the top of this file, with the options you used, if any). It runs `git pull --ff-only` in the clone and then `install.ps1`; from a clone by hand it is `git pull` and
 then `install.ps1`. The run refreshes every file nobody edited and keeps the ones you did, as on the first install.
 

@@ -51,7 +51,7 @@ Existing files move toward this layout during the sprints; nothing moves without
 ## Runtime model
 
 - Hooks are event-bound sh scripts invoked by the agent harness; on Windows they run under Git Bash via the absolute path resolved at install time. They read JSON from stdin where the event provides it and write additional context or exit codes per the hook contract in `data-contracts.md`.
-- The worklog subsystem: session-start hook injects the branch's task block; snapshot hook appends mechanical git state on stop/compact/end; the worklog skill owns semantic updates. Storage layout in `data-contracts.md`.
+- The worklog subsystem: the worklog skill owns semantic updates; its context and snapshot scripts are no longer wired as hooks (2026-10-28) and run by hand. Storage layout in `data-contracts.md`.
 - Branch safety: an advisory session-start check against the active story marker, and an upstream fixer that repoints feature branches so a plain `git push` cannot hit a protected integration branch.
 - The statusline is a stateless script fed the agent's JSON on stdin.
 

@@ -8,8 +8,10 @@ description: Maintain a cross-session worklog so any session or worktree resumes
 Maintain per-task working state so the next session, or a parallel worktree, catches up from a
 compact distilled note, never by re-reading the transcript. Data lives at
 `~/.claude/worklog/<repo-id>/`, shared by all worktrees of the repo. The kit no longer wires its
-hooks (owner 2026-10-28: they never ran); to load the current branch's task block, run
-`worklog-context.ps1` by hand. This skill is the WRITE side. Everything in
+hooks (owner 2026-10-28: with no task open they only started PowerShell on every Stop). To
+load the current branch's task block, run from the repo
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\hooks\worklog-context.ps1"`;
+it prints the block inside SessionStart hook JSON (additionalContext). This skill is the WRITE side. Everything in
 English, no AI attribution, no em-dashes.
 
 ## Resolve paths first

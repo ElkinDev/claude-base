@@ -19,7 +19,7 @@ and resolved per machine by `scripts/evidence-path.py`. See `docs/EVIDENCE.md`.
 ```
 claude/                     -> installs into ~/.claude
   CLAUDE.md                 global always-on rules (language, voice, persona, principles)
-  settings.json             base settings (status line + worklog hooks); paths filled at install
+  settings.json             base settings (status line and hooks); paths filled at install
   statusline.ps1            role / model / effort / account / folder / git / context / quota status line
   claude-account.ps1        optional: switch between several Claude Code accounts (see docs/ACCOUNTS.md)
   merge-settings.py         helper the switcher uses to merge settings.json without dropping keys

@@ -103,7 +103,7 @@ LEAK_KINDS = (LACKS, NO_SEAM, NO_PANE_BLOCK, OUTSIDE)
 # as the run line prints it (the decoy changed, the file of the marker printed, the path created or named), with * for
 # a part that changes from run to run. A listed reader that leaks a file its entries do not name fails the run, and
 # so does a listed file that no longer leaks.
-CHECKPOINTS, WORKLOG = "home/.claude/checkpoints/sandbox-project/", "home/.claude/worklog/beta-*/sessions.jsonl"
+CHECKPOINTS = "home/.claude/checkpoints/sandbox-project/"
 HOME_RULINGS, HOME_LANDINGS, HOME_LAW, HOME_PULSE = ("home/.claude/rulings.md", "home/.claude/landings.md",
                                                      "home/.claude/law.md", "home/.claude/pulse.md")
 HOME_ASKS, FIRST_EV = "home/.claude/decisions/owner-decisions-2026-10-12.md", "repo/evidence"
