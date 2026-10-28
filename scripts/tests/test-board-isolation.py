@@ -221,11 +221,6 @@ EXPECTED_LEAKS = (
      "the checkpoint of the session, in the same folder (precompact-checkpoint.py:285,292)"),
     ("PostCompact postcompact-persist.py", EVERY, STORE, (CHECKPOINTS + "*-summary.md",),
      "the compaction summary of the session, in the same folder (postcompact-persist.py:23,30)"),
-    ("PreCompact worklog-snapshot.ps1", W_ONLY, STORE, (WORKLOG,),
-     "the worklog of the repository, ~/.claude/worklog/<repo id> (worklog-lib.ps1:25,30); it writes on a branch that "
-     "has a task file, so not from P on its base branch"),
-    ("SessionEnd worklog-snapshot.ps1", W_ONLY, STORE, (WORKLOG,), "as PreCompact worklog-snapshot.ps1"),
-    ("Stop worklog-snapshot.ps1", W_ONLY, STORE, (WORKLOG,), "as PreCompact worklog-snapshot.ps1"),
 )
 
 # Runs that end as an error today, with the reason: (reader, situations, reason). A listed error that stops happening

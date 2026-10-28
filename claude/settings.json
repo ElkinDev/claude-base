@@ -15,14 +15,6 @@
   "hooks": {
     "SessionStart": [
       {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\.claude\\hooks\\worklog-context.ps1\""
-          }
-        ]
-      },
-      {
         "matcher": "startup|resume|clear|fork",
         "hooks": [
           {
@@ -79,14 +71,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\.claude\\hooks\\worklog-snapshot.ps1\""
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
             "command": "python \"%USERPROFILE%/.claude/hooks/precompact-autosave.py\"",
             "timeout": 20
           }
@@ -118,14 +102,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\.claude\\hooks\\worklog-snapshot.ps1\""
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
             "command": "python \"%USERPROFILE%/.claude/hooks/session-audit-hook.py\"",
             "timeout": 60
           }
@@ -133,14 +109,6 @@
       }
     ],
     "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\.claude\\hooks\\worklog-snapshot.ps1\""
-          }
-        ]
-      },
       {
         "hooks": [
           {

@@ -7,8 +7,9 @@ description: Maintain a cross-session worklog so any session or worktree resumes
 
 Maintain per-task working state so the next session, or a parallel worktree, catches up from a
 compact distilled note, never by re-reading the transcript. Data lives at
-`~/.claude/worklog/<repo-id>/`, shared by all worktrees of the repo. A SessionStart hook injects
-the current branch's task block automatically; this skill is the WRITE side. Everything in
+`~/.claude/worklog/<repo-id>/`, shared by all worktrees of the repo. The kit no longer wires its
+hooks (owner 2026-10-28: they never ran); to load the current branch's task block, run
+`worklog-context.ps1` by hand. This skill is the WRITE side. Everything in
 English, no AI attribution, no em-dashes.
 
 ## Resolve paths first
@@ -30,8 +31,8 @@ not a transcript.
    `{"ts":"<utc>","id":<Key>,"branch":"<branch>","kind":"manual","did":"...","decisions":"...","next":"...","commit":"<short>","clean":<bool>}`
 
 ### new <id>-<slug>
-Scaffold `tasks/<id>.md` (create `tasks/` if missing) with this shape, then it is picked up by
-the SessionStart hook on the next start:
+Scaffold `tasks/<id>.md` (create `tasks/` if missing) with this shape, then `worklog-context.ps1`
+prints it when run by hand:
 ```
 ---
 id: <id>
@@ -56,15 +57,15 @@ Set `status: done`, move `tasks/<id>.md` into `archive/`. Keeps the active set s
 
 ### switch <id>
 Only when not changing git branch. Normally the branch IS the switch (worktrees): use
-`git checkout` or the worktree and let the SessionStart hook load the right task.
+`git checkout` or the worktree, then run `worklog-context.ps1` to print the right task.
 
 ## Save proactively, not only on /worklog save
 - BEFORE asking the user a question that blocks progress: save state + the `open_question`
   first, so the next session knows exactly where it stopped. Highest value.
 - On branch switch (`git checkout` to another story): save the outgoing task first.
 - At milestones: tests green, commit or PR handoff.
-Mechanical git snapshots (branch, commit, dirty, timestamp) are written automatically by the
-snapshot hook on PreCompact / SessionEnd / Stop. You only write the semantic save.
+No hook writes a mechanical snapshot any more; the commit and clean fields of each save carry
+the git state. You only write the semantic save.
 
 ## Notes
 - The worklog lives under `~/.claude`, never inside a project repo.
