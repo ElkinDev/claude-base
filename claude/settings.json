@@ -206,6 +206,11 @@
             "type": "command",
             "command": "python \"%USERPROFILE%/.claude/hooks/turn-budget.py\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/long-run.py\" --wall",
+            "timeout": 10
           }
         ]
       }

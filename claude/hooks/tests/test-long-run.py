@@ -202,5 +202,98 @@ class LongRun(Base):
         self.assertNotice(self.run_hook(), 205)
 
 
+WALL_REASON = ("Context wall (330k). Stop working now. Write your checkpoint report (what is done, what is left, the "
+               "exit files or logs you wait on, any lock you hold and any rebase, merge or staged change in progress, "
+               "the next step) as a new file or as your final message, then end your turn. Your parent continues "
+               "with a fresh agent.")
+
+
+class Wall(Base):
+    """PreToolUse mode, long-run.py --wall."""
+
+    def run_wall(self, payload=None, raw=None, tool="Bash"):
+        payload = self.payload(tool_name=tool, hook_event_name="PreToolUse") if payload is None else payload
+        env = dict(os.environ, LONG_RUN_DIR=self.tmp)
+        data = raw if raw is not None else json.dumps(payload).encode("utf-8")
+        proc = subprocess.run([sys.executable, "-I", HOOK, "--wall"], input=data, capture_output=True, env=env,
+                              timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stderr, b"")
+        return proc.stdout.decode("utf-8")
+
+    def notice_300k(self):
+        """The 300k notice through the PostToolUse mode, which leaves the marker."""
+        self.turn(310000)
+        self.assertNotice(self.run_hook(), 310)
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, "long-run-state", AGENT + ".300000.mark")))
+
+    def assertDeny(self, out):
+        self.assertEqual(json.loads(out), {"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                                                  "permissionDecision": "deny",
+                                                                  "permissionDecisionReason": WALL_REASON}})
+
+    def test_wall_denies_bash_allows_write_edit(self):
+        self.notice_300k()
+        self.turn(340000)
+        self.assertDeny(self.run_wall(tool="Bash"))
+        self.assertEqual(self.run_wall(tool="Write"), "")
+        self.assertEqual(self.run_wall(tool="Edit"), "")
+        self.assertDeny(self.run_wall(tool="Read"))
+        log = self.log_lines()
+        self.assertEqual(len(log), 3)                   # the 300k notice and two denials
+        self.assertEqual(log[1].split("\t")[1:], [SESSION[:8], AGENT[:8], "C--work-Fixture", "wall 340000"])
+        self.assertEqual(log[2].split("\t")[4], "wall 340000")
+
+    def test_wall_needs_marker(self):
+        """An agent at 340k that never got the 300k notice is allowed; the PostToolUse notice comes first."""
+        self.turn(340000)
+        self.assertEqual(self.run_wall(), "")
+        self.assertEqual(self.log_lines(), [])
+        self.assertNotice(self.run_hook(), 340)
+        self.assertDeny(self.run_wall())
+
+    def test_wall_below_330k(self):
+        self.notice_300k()
+        self.turn(329999)
+        self.assertEqual(self.run_wall(), "")
+        self.turn(330000)
+        self.assertDeny(self.run_wall())
+
+    def test_wall_main_session(self):
+        self.notice_300k()
+        self.turn(400000)
+        main = {"session_id": SESSION, "transcript_path": self.sub, "tool_name": "Bash",
+                "hook_event_name": "PreToolUse"}
+        self.assertEqual(self.run_wall(main), "")
+        self.assertEqual(len(self.log_lines()), 1)
+
+    def test_wall_broken_transcript(self):
+        self.notice_300k()
+        with open(self.sub, "w", encoding="utf-8") as fh:   # a cut assistant line, garbage, a usage that is no dict
+            fh.write(assistant(340000)[:120] + "\n")
+            fh.write("not json at all \x00\xff\n")
+            fh.write('{"type":"assistant","message":{"usage":"340000"}}\n')
+            fh.write('{"type":"assistant","message":[1,2]}\n')
+        self.assertEqual(self.run_wall(), "")
+        with open(self.sub, "wb") as fh:
+            fh.write(b"\xff\xfe\x00broken" * 1000)
+        self.assertEqual(self.run_wall(), "")
+        os.remove(self.sub)
+        os.makedirs(self.sub)                                 # the path is a folder
+        self.assertEqual(self.run_wall(), "")
+        self.assertEqual(len(self.log_lines()), 1)
+
+    def test_wall_bad_input(self):
+        for raw in (b"", b"not json", b"[1,2]", b'{"agent_id": "../../x", "transcript_path": "y"}',
+                    b'{"agent_id": 5, "transcript_path": 7}', b'{"agent_id": null}'):
+            self.assertEqual(self.run_wall(raw=raw), "")
+
+    def test_post_tool_use_mode_never_denies(self):
+        """Without --wall the hook only ever sends the notice, even past the wall."""
+        self.notice_300k()
+        self.turn(400000)
+        self.assertEqual(self.run_hook(), "")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

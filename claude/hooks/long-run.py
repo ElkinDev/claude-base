@@ -1,5 +1,5 @@
 """PostToolUse hook for every tool: tell a subagent when its context has grown past the point where a fresh agent
-is cheaper.
+is cheaper. With --wall, a PreToolUse hook for every tool that stops one that ran on past the last notice.
 
 The long-run rule: every API call of an agent re-reads its whole context. An agent that keeps working for hours
 grows from a few tens of thousands of tokens a turn to a few hundred thousand, and its late calls each cost
@@ -25,6 +25,16 @@ one log line per notice in long-run.log. LONG_RUN_DIR moves all of them (tests a
 next to this file.
 
 It never blocks: every path exits 0 and prints nothing except a notice.
+
+The wall: a notice is advice, and an agent busy with a long task can read it and keep going. Agents that got the
+300k notice and ran on were seen re-reading tens of millions of context tokens at 300k or more before they ended.
+`long-run.py --wall` is a PreToolUse hook for every tool. With the same payload parsing and the same context read,
+a subagent whose last turn carried WALL tokens or more, and whose 300k marker exists, is denied every tool except
+Write and Edit (WALL_ALLOWED), with WALL_REASON, so the one thing left to it is writing its checkpoint report. An
+agent without the marker is allowed: the PostToolUse notice comes first. Each denial writes one long-run.log line
+with the level "wall <n>". Any error path exits 0 with no output, so the call is allowed.
+
+The turn budget (70 and 90 percent of a definition's maxTurns) is not this hook's: turn-budget.py says it.
 """
 import os
 import sys
@@ -40,6 +50,13 @@ NOTICE = ("Long-run rule: your last turn carried %d k tokens of context, and eve
           "task is a review or a single answer, give that verdict or answer first, in full; release any lock you "
           "hold; leave no staged change, rebase or merge in progress. The parent continues with a fresh agent from "
           "that report. Go on only if fewer than 10 calls remain.")
+WALL = 330_000
+WALL_AFTER = 300000             # the notice level whose marker must exist before the wall acts
+WALL_ALLOWED = ("Write", "Edit")
+WALL_REASON = ("Context wall (330k). Stop working now. Write your checkpoint report (what is done, what is left, the "
+               "exit files or logs you wait on, any lock you hold and any rebase, merge or staged change in progress, "
+               "the next step) as a new file or as your final message, then end your turn. Your parent continues "
+               "with a fresh agent.")
 
 
 def base_dir():
@@ -152,7 +169,7 @@ def project_name(data, path):
 def log_notice(session, agent, project, n):
     import time
     try:
-        line = "%s\t%s\t%s\t%s\t%d\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), session[:8], agent[:8], project, n)
+        line = "%s\t%s\t%s\t%s\t%s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), session[:8], agent[:8], project, n)
         with open(os.path.join(base_dir(), "long-run.log"), "a", encoding="utf-8") as fh:
             fh.write(line)
         state_dir = os.path.join(base_dir(), "long-run-state")    # prune at each notice, 7 days
@@ -196,6 +213,36 @@ def run(data):
                                    "additionalContext": NOTICE % int(round(n / 1000.0))}}
 
 
+def wall(data):
+    """PreToolUse: the deny output at the wall, or None (allowed)."""
+    if not isinstance(data, dict):
+        return None
+    agent = data.get("agent_id")
+    if not agent:
+        return None             # a main session: the rule is for subagents
+    agent = str(agent)
+    session = str(data.get("session_id") or "")
+    if not safe_id(agent) or (session and not safe_id(session)):
+        return None
+    if data.get("tool_name") in WALL_ALLOWED:
+        return None
+    marker = os.path.join(base_dir(), "long-run-state", "%s.%d.mark" % (agent, WALL_AFTER))
+    if not os.path.isfile(marker):
+        return None             # no 300k notice yet: the PostToolUse mode sends it first
+    path = find_transcript(data, session, agent)
+    if not path:
+        return None
+    try:
+        n = last_context(read_tail(path))
+    except Exception:
+        return None
+    if n is None or n < WALL:
+        return None
+    log_notice(session, agent, project_name(data, path), "wall %d" % n)
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                   "permissionDecisionReason": WALL_REASON}}
+
+
 def main():
     try:
         raw = sys.stdin.buffer.read()
@@ -206,7 +253,7 @@ def main():
     except Exception:
         return 0
     try:
-        out = run(data)
+        out = wall(data) if "--wall" in sys.argv[1:] else run(data)
         if out:
             sys.stdout.buffer.write(json.dumps(out, ensure_ascii=False).encode("utf-8"))
     except Exception:
