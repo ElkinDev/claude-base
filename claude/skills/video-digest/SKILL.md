@@ -39,14 +39,22 @@ reproduction, a walkthrough. Not for a still image or a GIF, which you can open 
    `--prompt "<text>"` primes punctuation and casing; with `--language en` and no `--prompt` a
    short meeting greeting is sent, and `--prompt ""` sends none (the Metadata names the prompt). A transcript made before this
    default with no `--prompt` can differ from a new one: compare runs with the same explicit `--prompt`.
+   For a clip that is not a meeting (a short social video, a demo), pass `--prompt ""` or a prompt of its own.
    `--vad-model <ggml file>` turns on voice activity detection for a single stream.
    `--whisper-cli <path>` names the binary when it is not on PATH, and `--gpu-device N` picks the
-   GPU of FFmpeg's whisper filter and of whisper-cli (`-dev`).
+   GPU of FFmpeg's whisper filter and of whisper-cli (`-dev`). To keep a Python engine
+   (faster-whisper, openai-whisper) off the GPU set `CUDA_VISIBLE_DEVICES=-1`; an empty value did
+   not hide the GPU in a probe on Windows.
 2. Read `<stem>.digest.md` beside the recording (or in `--out <dir>`): the Metadata block, then
-   the whole Transcript.
+   the whole Transcript. On one audio stream the digest never tells voices apart: its single
+   label names the stream, not a speaker, and lines join up to 60 s, so a dialogue reads like a
+   monologue. Never state a speaker count or "one voice" from it; listen, measure or ask.
 3. Open a frame only for a moment the screen matters: what was shown, a number on a slide, an
    error on screen. Each `### [h:mm:ss]` keyframe heading names the transcript line it falls in,
-   so pick frames from the transcript, never page through all of them.
+   so pick frames from the transcript, never page through all of them. A long-lived orchestrating
+   session reads the Markdown itself and hands the frames it needs to a lane or a fork with the
+   question to answer: a frame opened in that session stays in its context and is re-read on every
+   later turn.
 4. If the Metadata lists a silent track, say so to the user: the recorder probably did not
    capture that side, and its speech is missing from the transcript.
 
