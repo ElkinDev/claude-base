@@ -24,7 +24,8 @@ creates long-run-state/<agent_id>.<level>.mark (O_CREAT | O_EXCL) prints. State 
 one log line per notice in long-run.log. LONG_RUN_DIR moves all of them (tests and probes); by default they sit
 next to this file.
 
-It never blocks: every path exits 0 and prints nothing except a notice.
+The PostToolUse mode never blocks: every path exits 0 and prints nothing except a notice. Only the --wall mode
+below denies a call, and only at the wall.
 
 The wall: a notice is advice, and an agent busy with a long task can read it and keep going. Agents that got the
 300k notice and ran on were seen re-reading tens of millions of context tokens at 300k or more before they ended.

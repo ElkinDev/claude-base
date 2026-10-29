@@ -47,8 +47,8 @@ reproduction, a walkthrough. Not for a still image or a GIF, which you can open 
    not hide the GPU in a probe on Windows.
 2. Read `<stem>.digest.md` beside the recording (or in `--out <dir>`): the Metadata block, then
    the whole Transcript. On one audio stream the digest never tells voices apart: its single
-   label names the stream, not a speaker, and lines join up to 60 s, so a dialogue reads like a
-   monologue. Never state a speaker count or "one voice" from it; listen, measure or ask.
+   label, `speaker`, names the stream, not a person, and lines join up to 60 s, so a dialogue
+   reads like a monologue. Never state a speaker count or "one voice" from it; measure or ask.
 3. Open a frame only for a moment the screen matters: what was shown, a number on a slide, an
    error on screen. Each `### [h:mm:ss]` keyframe heading names the transcript line it falls in,
    so pick frames from the transcript, never page through all of them. A long-lived orchestrating
