@@ -1,6 +1,7 @@
 """Pins for scripts/gate-detach.ps1, the detached no-window launcher: the -Command form starts a detached bash command
 whose output lands in the -Log file (stdout and stderr, stdin closed), a missing bash and a command over the length bound
-are refused with exit 2 and no pid, and the process is started with no console window.
+are refused with exit 2 and no pid, the process is started with no console window, and a call piped to tail from Git
+bash returns at once because the job inherits no handle of the calling shell (the pipe guard).
 
   python scripts/tests/test-gate-detach.py            the gate-detach.ps1 under scripts/
   GATE_DETACH=<path> python scripts/tests/test-gate-detach.py   another copy (a staged one, or a mutant for a red run)
@@ -127,6 +128,73 @@ class GateDetachCommandTest(unittest.TestCase):
         self.assertRegex(src, r"(?m)^\$psi\.UseShellExecute = \$false\s*$")
         self.assertRegex(src, r"(?m)^\$psi\.CreateNoWindow = \$true\s*$")
         self.assertIsNone(re.search(r"RedirectStandard", src), "output must go through bash redirects, not .NET pipes")
+
+
+BASH = os.environ.get("GATE_DETACH_BASH") or r"C:\Program Files\Git\bin\bash.exe"
+PIPE_TIMEOUT = 60
+
+
+def posix(path):
+    win = os.path.abspath(path)
+    return "/" + win[0].lower() + win[2:].replace("\\", "/")
+
+
+@unittest.skipUnless(os.path.isfile(BASH), "Git bash not found (set GATE_DETACH_BASH)")
+class GateDetachPipeTest(unittest.TestCase):
+    """The pipe guard: called from Git bash as `gate-detach.ps1 ... 2>&1 | tail -2`, the launcher returns at once
+    although the job runs on, because no handle of the calling shell is inherited by the job. Each call goes through
+    Git bash -lc, as a tool shell runs it, with the shell's own stdout on a file, so only the pipe inside the command
+    line can hold the call open. A timeout is a failure."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="gdp-")
+        self.p = posix(self.root)
+        self.detach = DETACH.replace("\\", "/")
+
+    def tearDown(self):
+        for _ in range(30):
+            try:
+                shutil.rmtree(self.root)
+                return
+            except OSError:
+                time.sleep(1)
+
+    def shell(self, cmdline):
+        """Runs one line through Git bash -lc; returns (exit code, seconds, output)."""
+        out_path = os.path.join(self.root, "shell.out")
+        t0 = time.time()
+        with open(out_path, "wb") as out:
+            try:
+                rc = subprocess.run([BASH, "-lc", cmdline], stdin=subprocess.DEVNULL, stdout=out,
+                                    stderr=subprocess.STDOUT, timeout=PIPE_TIMEOUT).returncode
+            except subprocess.TimeoutExpired:
+                self.fail("timed out after %d s: %s" % (PIPE_TIMEOUT, cmdline))
+        secs = time.time() - t0
+        with open(out_path, encoding="utf-8", errors="replace") as f:
+            return rc, secs, f.read()
+
+    def test_a_piped_call_returns_at_once(self):
+        cmdline = "powershell -NoProfile -File '%s' -Command 'sleep 20' -Log %s/p.log 2>&1 | tail -2" % (
+            self.detach, self.p)
+        rc, secs, out = self.shell(cmdline)
+        self.assertEqual(rc, 0, out)
+        self.assertRegex(out.strip(), r"^\d+$")
+        self.assertLess(secs, 6, "the piped call waited %.1f s, the job's length" % secs)
+
+    def test_a_piped_jobs_own_output_reaches_its_log(self):
+        cmdline = ("powershell -NoProfile -File '%s' -Command 'echo out-c; echo err-c >&2; sleep 2; echo late-c' "
+                   "-Log %s/c.log 2>&1 | tail -2") % (self.detach, self.p)
+        rc, _, out = self.shell(cmdline)
+        self.assertEqual(rc, 0, out)
+        path = os.path.join(self.root, "c.log")
+        end = time.time() + 30
+        text = ""
+        while time.time() < end and "late-c" not in text:
+            time.sleep(0.5)
+            if os.path.exists(path):
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    text = f.read()
+        self.assertEqual(text.split(), ["out-c", "err-c", "late-c"])
 
 
 if __name__ == "__main__":

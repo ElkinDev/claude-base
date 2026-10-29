@@ -10,6 +10,14 @@
 # whose reader is gone kills the writer with SIGPIPE. Whatever exit file or marker the command writes
 # works exactly as if it had been started by hand.
 #
+# The pipe guard: .NET Framework starts the process through CreateProcess with bInheritHandles TRUE, so
+# the job inherits every inheritable handle of this PowerShell. Called as `gate-detach.ps1 ... 2>&1 | tail -2`
+# from Git bash, those include the pipe to tail and a further pipe that msys leaves inheritable in a native
+# child, and the tool call hung for the job's whole length. A pipe from the calling shell must not reach the
+# detached job: just before Start every inheritable handle of this process has HANDLE_FLAG_INHERIT cleared
+# (clearing only the three standard handles was measured and still hung), and each flag is restored right
+# after. The job needs none of them; bash redirects all three of its own.
+#
 # Usage:
 #   powershell -NoProfile -File scripts/gate-detach.ps1 -Command 'cd /c/work/repo && exec bash scripts/run-gate.sh tag' -Log /c/work/repo/gates/tag.launch.log
 #
@@ -47,5 +55,20 @@ $psi.CreateNoWindow = $true
 $psi.WorkingDirectory = (Get-Location).Path
 $proc = New-Object System.Diagnostics.Process
 $proc.StartInfo = $psi
+Add-Type -Namespace DetachPipe -Name Kernel32 -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError = true)] public static extern bool GetHandleInformation(IntPtr hObject, out uint lpdwFlags);
+[DllImport("kernel32.dll", SetLastError = true)] public static extern bool SetHandleInformation(IntPtr hObject, uint dwMask, uint dwFlags);
+public static System.Collections.Generic.List<IntPtr> ClearAll() {
+    var saved = new System.Collections.Generic.List<IntPtr>();
+    for (long v = 4; v < 0x100000; v += 4) {
+        IntPtr h = new IntPtr(v); uint f;
+        if (GetHandleInformation(h, out f) && (f & 1) != 0 && SetHandleInformation(h, 1, 0)) saved.Add(h);
+    }
+    return saved;
+}
+'@
+$inheritFlag = [uint32]1
+$saved = [DetachPipe.Kernel32]::ClearAll()
 try { [void]$proc.Start() } catch { Write-Error "start failed: $($_.Exception.Message)"; exit 2 }
+finally { foreach ($h in $saved) { [void][DetachPipe.Kernel32]::SetHandleInformation($h, $inheritFlag, $inheritFlag) } }
 Write-Output $proc.Id
