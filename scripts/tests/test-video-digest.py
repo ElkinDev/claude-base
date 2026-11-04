@@ -5,9 +5,11 @@ No real recording and no model: the transcription engine is replaced by the fake
 from VIDEO_DIGEST_FAKE_ENGINE (fixed segments per audio stream, optionally with their words), by a
 fake whisper-cli on PATH or named by --whisper-cli, by a fake ffmpeg first on PATH that lists the
 whisper filter and answers it while every other call goes to the real ffmpeg, or by fake
-faster_whisper and whisper modules on PYTHONPATH, so each adapter's command line and output parser
-run for real while nothing is downloaded. The three-stream order test speaks its sentences with
-Windows SAPI (System.Speech) and is skipped where that is missing. VIDEO_DIGEST_TOOL points the
+faster_whisper, whisper and sherpa_onnx modules on PYTHONPATH (with a small numpy stand-in, so the
+suite needs no numpy), so each adapter's command line and output parser run for real while nothing
+is downloaded. The fake faster_whisper raises PyAV 19's TypeError when it is handed a path. The
+three-stream order test speaks its sentences with Windows SAPI (System.Speech) and is skipped where
+that is missing. VIDEO_DIGEST_TOOL points the
 suite at another copy of the tool, which is how a mutant is shown to turn a pin red.
 
 Run:
@@ -112,6 +114,15 @@ def fake_engine(folder, rows):
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(rows, handle)
     return {"VIDEO_DIGEST_FAKE_ENGINE": path}
+
+
+def install_packages(folder, packages):
+    """Fake Python packages under folder, the numpy stand-in among them; returns folder."""
+    for package, body in dict(packages, numpy=FAKE_NUMPY).items():
+        os.makedirs(os.path.join(folder, package), exist_ok=True)
+        with open(os.path.join(folder, package, "__init__.py"), "w", encoding="utf-8") as handle:
+            handle.write(body)
+    return folder
 
 
 class ClipTest(unittest.TestCase):
@@ -299,16 +310,52 @@ def record(kw):
             json.dump(kw, handle)
 """
 
-FAKE_FASTER = FAKE_RECORD + """import os
+# faster-whisper 1.2.1 hands a path to PyAV, and PyAV 19.0.2 refuses the metadata_errors argument
+# it passes, so a path fails the way a fresh install failed; samples are what the snippet must pass.
+FAKE_PYAV_19 = """
+def samples(audio):
+    if isinstance(audio, str):
+        raise TypeError("open() got an unexpected keyword argument 'metadata_errors'")
+    assert len(audio) > 0
+    return {"samples": len(audio), "peak": max(abs(value) for value in audio)}
+"""
+
+FAKE_NUMPY = """import array, sys
+float32 = "float32"
+class ndarray(list):
+    def astype(self, kind):
+        return ndarray(float(value) for value in self)
+    def __truediv__(self, by):
+        return ndarray(value / by for value in self)
+    def __getitem__(self, key):
+        got = list.__getitem__(self, key)
+        return ndarray(got) if isinstance(key, slice) else got
+def frombuffer(data, dtype=None):
+    assert dtype == "<i2", dtype
+    values = array.array("h", bytes(data))
+    if sys.byteorder == "big":
+        values.byteswap()
+    return ndarray(values)
+def zeros(count, dtype=None):
+    return ndarray([0.0] * count)
+def asarray(values, dtype=None):
+    return ndarray(values)
+def concatenate(parts):
+    joined = ndarray()
+    for part in parts:
+        joined.extend(part)
+    return joined
+"""
+
+FAKE_FASTER = FAKE_RECORD + FAKE_PYAV_19 + """
 class Segment:
     def __init__(self, start, end, text):
         self.start, self.end, self.text = start, end, text
 class WhisperModel:
     def __init__(self, name):
         self.name = name
-    def transcribe(self, wav, language=None, **kw):
-        assert os.path.getsize(wav) > 0, wav
-        record(kw)
+    def transcribe(self, audio, language=None, **kw):
+        record(dict(kw, **samples(audio)))
         return iter([Segment(0.5, 1.5, " fast %s %s" % (self.name, language))]), None
 """
 
@@ -354,11 +401,8 @@ class AdapterBase(ClipTest):
         return env, model, log
 
     def python_engines(self):
-        fakes = os.path.join(self.dir, "fakes")
-        for package, body in (("faster_whisper", FAKE_FASTER), ("whisper", FAKE_OPENAI)):
-            os.makedirs(os.path.join(fakes, package))
-            with open(os.path.join(fakes, package, "__init__.py"), "w", encoding="utf-8") as handle:
-                handle.write(body)
+        fakes = install_packages(os.path.join(self.dir, "fakes"),
+                                 {"faster_whisper": FAKE_FASTER, "whisper": FAKE_OPENAI})
         return {"PYTHONPATH": fakes}
 
 
@@ -409,6 +453,19 @@ class FasterWhisperBeamTest(AdapterBase):
         with open(log, encoding="utf-8") as handle:
             kw = json.load(handle)
         self.assertEqual(kw.get("beam_size"), 5, kw)
+
+    def test_the_snippet_passes_the_decoded_samples_never_the_wav_path(self):
+        # The pin for PyAV 19: the fake raises its TypeError on a path, as a fresh install did.
+        log = os.path.join(self.dir, "kw.json")
+        env = dict(self.python_engines(), FAKE_KW_LOG=log)
+        res = run_tool(self.clip, "--no-frames", "--engine", "faster-whisper", "--model", "tiny",
+                       env=env)
+        self.assertNotIn("metadata_errors", res.stderr)
+        self.ok(res)
+        with open(log, encoding="utf-8") as handle:
+            kw = json.load(handle)
+        self.assertLessEqual(abs(kw["samples"] - 5 * 16000), 160, kw)
+        self.assertTrue(0.05 < kw["peak"] <= 1.0, kw)
 
 
 class VideoDigestDefaultTimeoutTest(AdapterBase):
@@ -621,12 +678,9 @@ class VideoDigestEngineFailureTest(ClipTest):
     def test_output_an_engine_wrote_that_cannot_be_parsed_exits_3(self):
         clip = make_clip(self.dir, "voice.mkv", "color=c=gray:s=160x90:r=1:d=3",
                          audio=("sine=frequency=440:sample_rate=16000",), seconds=3)
-        fakes = os.path.join(self.dir, "fakes", "faster_whisper")
-        os.makedirs(fakes)
-        with open(os.path.join(fakes, "__init__.py"), "w", encoding="utf-8") as handle:
-            handle.write(FAKE_BROKEN)
+        fakes = install_packages(os.path.join(self.dir, "fakes"), {"faster_whisper": FAKE_BROKEN})
         res = run_tool(clip, "--engine", "faster-whisper", "--model", "tiny", "--no-frames",
-                       env={"PYTHONPATH": os.path.dirname(fakes)})
+                       env={"PYTHONPATH": fakes})
         self.assertEqual(res.returncode, 3, res.stderr)
         self.assertIn("faster-whisper wrote output that cannot be parsed", res.stderr)
 
@@ -851,7 +905,7 @@ cues = json.loads(os.environ.get("FAKE_FILTER_CUES", "{}")).get(stream, [[0.5, 1
 write_srt(options["destination"], cues)
 '''
 
-FAKE_FASTER_WORDS = FAKE_RECORD + """
+FAKE_FASTER_WORDS = FAKE_RECORD + FAKE_PYAV_19 + """
 class Word:
     def __init__(self, start, end, word):
         self.start, self.end, self.word = start, end, word
@@ -861,7 +915,8 @@ class Segment:
 class WhisperModel:
     def __init__(self, name):
         pass
-    def transcribe(self, wav, language=None, **kw):
+    def transcribe(self, audio, language=None, **kw):
+        samples(audio)
         record(kw)
         words = [Word(0.5, 1.0, " alpha"), Word(1.2, 1.8, " beta"), Word(3.6, 4.0, " gamma")]
         return iter([Segment(words if kw.get("word_timestamps") else None)]), None
@@ -1049,11 +1104,8 @@ class WhisperCliRegionArgsTest(RegionBase):
 
 class PythonEngineRegionWordsTest(RegionBase):
     def test_python_engines_get_word_timestamps_in_region_mode_only(self):
-        fakes = os.path.join(self.dir, "fakes")
-        for package, body in (("faster_whisper", FAKE_FASTER_WORDS), ("whisper", FAKE_OPENAI_WORDS)):
-            os.makedirs(os.path.join(fakes, package))
-            with open(os.path.join(fakes, package, "__init__.py"), "w", encoding="utf-8") as handle:
-                handle.write(body)
+        fakes = install_packages(os.path.join(self.dir, "fakes"),
+                                 {"faster_whisper": FAKE_FASTER_WORDS, "whisper": FAKE_OPENAI_WORDS})
         kw_log = os.path.join(self.dir, "kw.json")
         env = {"PYTHONPATH": fakes, "FAKE_KW_LOG": kw_log}
         for engine in ("faster-whisper", "openai-whisper"):
@@ -1066,6 +1118,155 @@ class PythonEngineRegionWordsTest(RegionBase):
             self.assertEqual(lines, [("0:00:00", "speaker", "alpha beta gamma")], engine)
             with open(kw_log, encoding="utf-8") as handle:
                 self.assertNotIn("word_timestamps", json.load(handle), engine)
+
+
+# A fake sherpa_onnx: the VAD calls a sample at 0.01 or more speech and keeps a quiet run under
+# 0.5 s inside a piece; the recognizer answers the first piece "alpha beta" and the next "gamma",
+# SentencePiece tokens timed from the start of the stream it got (0.25 s of lead, then the piece).
+FAKE_SHERPA = FAKE_RECORD + '''
+LEAD = 4000
+PIECES = ((("\\u2581al", 1.2), ("pha", 1.4), ("\\u2581be", 1.6), ("ta", 1.7)),
+          (("\\u2581gam", 1.2), ("ma", 1.4)))
+LOADED = {}
+class Result:
+    def __init__(self, tokens):
+        self.tokens = [token for token, _ in tokens]
+        self.timestamps = [LEAD / 16000 + at for _, at in tokens]
+        self.text = "".join(self.tokens).replace("\\u2581", " ")
+class Stream:
+    def accept_waveform(self, rate, audio):
+        assert rate == 16000 and len(audio) > LEAD and not any(audio[:LEAD]), len(audio)
+class OfflineRecognizer:
+    decoded = 0
+    @classmethod
+    def from_transducer(cls, **kw):
+        LOADED.update(kw)
+        return cls()
+    def create_stream(self):
+        return Stream()
+    def decode_stream(self, stream):
+        stream.result = Result(PIECES[OfflineRecognizer.decoded % len(PIECES)])
+        OfflineRecognizer.decoded += 1
+class SileroVadModelConfig:
+    def __init__(self):
+        self.model, self.threshold, self.window_size = "", 0.5, 512
+class VadModelConfig:
+    def __init__(self):
+        self.silero_vad, self.sample_rate, self.num_threads = SileroVadModelConfig(), 16000, 1
+class SpeechSegment:
+    def __init__(self, start, samples):
+        self.start, self.samples = start, samples
+class VoiceActivityDetector:
+    def __init__(self, config, buffer_size_in_seconds=60):
+        silero = config.silero_vad
+        record(dict(LOADED, vad_model=silero.model, max_speech=silero.max_speech_duration))
+        self.rate, self.audio, self.pieces = config.sample_rate, [], []
+    def accept_waveform(self, audio):
+        self.audio.extend(audio)
+    def flush(self):
+        spans = []
+        for at, value in enumerate(self.audio):
+            if abs(value) < 0.01:
+                continue
+            if spans and at - spans[-1][1] < self.rate // 2:
+                spans[-1][1] = at + 1
+            else:
+                spans.append([at, at + 1])
+        self.pieces = [SpeechSegment(first, self.audio[first:end]) for first, end in spans]
+    def empty(self):
+        return not self.pieces
+    @property
+    def front(self):
+        return self.pieces[0]
+    def pop(self):
+        self.pieces.pop(0)
+'''
+
+TRANSDUCER = ("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt")
+
+
+class SherpaOnnxEngineTest(RegionBase):
+    def sherpa(self, folder="bark", parts=TRANSDUCER):
+        """(env, model folder, Silero VAD file, kw log) with the fake sherpa_onnx on PYTHONPATH."""
+        model = os.path.join(self.dir, folder)
+        os.makedirs(model)
+        for name in parts:
+            ggml_file(model, name)
+        vad = ggml_file(self.dir, "silero_vad.onnx")
+        fakes = install_packages(os.path.join(self.dir, "fake-packages"), {"sherpa_onnx": FAKE_SHERPA})
+        log = os.path.join(self.dir, "kw.json")
+        return {"PYTHONPATH": fakes, "FAKE_KW_LOG": log}, model, vad, log
+
+    def loaded(self, log):
+        with open(log, encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def test_one_stream_gives_a_row_per_vad_piece_and_two_streams_a_row_per_word(self):
+        env, model, vad, log = self.sherpa()
+        text, lines = self.digest(self.single, "--engine", "sherpa-onnx", "--model", model,
+                                  "--vad-model", vad, "--language", "en", env=env)
+        # The pieces start at 1 s and 8 s, their first words 1.2 s later; one stream keeps pieces.
+        self.assertEqual(lines, [("0:00:01", "speaker", "alpha beta gamma")])
+        for shown in ("Engine: sherpa-onnx", "Model: bark", "VAD model: silero_vad.onnx",
+                      "Prompt: none (sherpa-onnx takes no prompt)"):
+            self.assertIn("\n- %s\n" % shown, text)
+        kw = self.loaded(log)
+        self.assertEqual([kw[part] for part in ("encoder", "decoder", "joiner", "tokens")],
+                         [os.path.join(model, name) for name in TRANSDUCER])
+        self.assertEqual((kw["model_type"], kw["decoding_method"], kw["num_threads"], kw["vad_model"],
+                          kw["max_speech"]),
+                         ("nemo_transducer", "greedy_search", load_tool().default_threads(), vad, 20))
+        text, lines = self.digest(self.pair, "--engine", "sherpa-onnx", "--model", model,
+                                  "--vad-model", vad, "--language", "en", "--threads", "3", env=env)
+        # Each word placed by its own time through the offset table (alpha at 2.2 s on stream 1,
+        # 5.7 s on stream 2); the last gamma starts past its 1 s piece and stops at the piece's end.
+        self.assertEqual(lines, [("0:00:02", "me", "alpha beta"), ("0:00:05", "others", "alpha beta"),
+                                 ("0:00:09", "me", "gamma"), ("0:00:11", "others", "gamma")])
+        self.assertIn("\n- VAD model: silero_vad.onnx\n", text)
+        self.assertEqual(self.loaded(log)["num_threads"], 3)
+
+    def test_a_folder_without_the_four_files_is_refused_and_plain_onnx_parts_are_taken(self):
+        env, model, vad, log = self.sherpa(parts=TRANSDUCER[:2] + TRANSDUCER[3:])
+        res = run_tool(self.single, "--no-frames", "--engine", "sherpa-onnx", "--model", model,
+                       "--vad-model", vad, "--language", "en", env=env)
+        self.assertEqual(res.returncode, 3, res.stderr)
+        self.assertIn("sherpa-onnx: --model is not a folder holding encoder, decoder and joiner",
+                      res.stderr)
+        self.assertIn("pip install sherpa-onnx numpy", res.stderr)
+        ggml_file(model, "joiner.onnx")
+        self.digest(self.single, "--engine", "sherpa-onnx", "--model", model, "--vad-model", vad,
+                    "--language", "en", env=env)
+        self.assertEqual(self.loaded(log)["joiner"], os.path.join(model, "joiner.onnx"))
+
+    def test_english_unless_the_folder_is_parakeet_and_a_silero_onnx_vad_is_needed(self):
+        env, model, vad, _ = self.sherpa()
+        cases = ((("--vad-model", vad), "takes --language en"),
+                 (("--vad-model", vad, "--language", "es"), "takes --language en"),
+                 (("--language", "en"), "needs --vad-model <silero_vad.onnx>"),
+                 (("--language", "en", "--vad-model", self.vad), "needs --vad-model <silero_vad.onnx>"))
+        for extra, needle in cases:
+            res = run_tool(self.single, "--no-frames", "--engine", "sherpa-onnx", "--model", model,
+                           *extra, env=env)
+            self.assertEqual(res.returncode, 2, (extra, res.stderr))
+            self.assertIn(needle, res.stderr, extra)
+        parakeet = os.path.join(self.dir, "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8")
+        shutil.copytree(model, parakeet)
+        for language in ("es", "auto"):
+            text, _ = self.digest(self.single, "--engine", "sherpa-onnx", "--model", parakeet,
+                                  "--vad-model", vad, "--language", language, env=env)
+            self.assertIn("\n- Engine: sherpa-onnx\n", text)
+
+    def test_auto_never_picks_sherpa_onnx(self):
+        env, model, vad, _ = self.sherpa()
+        absent = "raise ImportError('not installed')\n"
+        install_packages(env["PYTHONPATH"], {"faster_whisper": absent, "whisper": absent})
+        empty = os.path.join(self.dir, "empty-path")
+        os.makedirs(empty)
+        res = run_tool(self.single, "--no-frames", "--ffmpeg", os.path.dirname(FFMPEG), "--model",
+                       model, "--vad-model", vad, "--language", "en", env=dict(env, PATH=empty))
+        self.assertEqual(res.returncode, 3, res.stderr)
+        self.assertIn("no transcription engine found", res.stderr)
+        self.assertNotIn("sherpa", res.stderr)
 
 
 class FfmpegWhisperRegionTest(RegionBase):
@@ -1090,11 +1291,8 @@ class VideoDigestEngineChoiceTest(RegionBase):
     def test_auto_tries_whisper_cli_then_faster_then_openai_then_the_filter(self):
         cli_env, _, _ = self.word_cli()
         filter_env, _ = self.fake_ffmpeg()
-        fakes = os.path.join(self.dir, "fakes")
-        for package, body in (("faster_whisper", FAKE_FASTER), ("whisper", FAKE_OPENAI)):
-            os.makedirs(os.path.join(fakes, package))
-            with open(os.path.join(fakes, package, "__init__.py"), "w", encoding="utf-8") as handle:
-                handle.write(body)
+        fakes = install_packages(os.path.join(self.dir, "fakes"),
+                                 {"faster_whisper": FAKE_FASTER, "whisper": FAKE_OPENAI})
         only_openai = os.path.join(self.dir, "only-openai")
         os.makedirs(os.path.join(only_openai, "faster_whisper"))
         with open(os.path.join(only_openai, "faster_whisper", "__init__.py"), "w") as handle:

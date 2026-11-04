@@ -2,8 +2,9 @@
 """Turn a meeting or screen recording into one Markdown file an agent can read.
 
     python scripts/video-digest.py <recording> [--out <dir>]
-        [--engine auto|whisper-cli|faster-whisper|openai-whisper|ffmpeg-whisper]
-        [--model <name or path>] [--vad-model <ggml vad file>] [--language <code or auto>]
+        [--engine auto|whisper-cli|faster-whisper|openai-whisper|ffmpeg-whisper|sherpa-onnx]
+        [--model <name or path>] [--vad-model <ggml vad file, or silero_vad.onnx>]
+        [--language <code or auto>]
         [--engine-python <python>] [--whisper-cli <path>] [--gpu-device N]
         [--threshold 0.90] [--floor 60] [--frame-edge 1280]
         [--tracks 1,2] [--track-labels me,others] [--min-gap 5] [--threads N] [--prompt TEXT]
@@ -17,10 +18,11 @@ folder). A model that reads images but not video reads the transcript first and 
 frames it needs. Standard library only; ffmpeg and ffprobe do the decoding, on PATH or in
 --ffmpeg <dir>.
 
-Exit codes: 0 done; 2 bad arguments (a --tracks number past the last audio stream included), or
-ffmpeg or ffprobe missing or not startable; 3 no transcription engine found (the message names
-what to install), or the engine that was found failed or cannot be started; 4 the recording cannot
-be read, or a step timed out (the message names the step).
+Exit codes: 0 done; 2 bad arguments (a --tracks number past the last audio stream included, and
+--engine sherpa-onnx without --language en for a model that is not Parakeet, or without a Silero
+VAD onnx in --vad-model), or ffmpeg or ffprobe missing or not startable; 3 no transcription engine
+found (the message names what to install), or the engine that was found failed or cannot be
+started; 4 the recording cannot be read, or a step timed out (the message names the step).
 
 Frames. ffmpeg decodes one frame a second, scaled to GRAY_SIZE in grayscale, as raw bytes through
 a pipe, so no image per second is ever written. A frame is kept when its normalized
@@ -62,6 +64,25 @@ The filter comes last: it measured 0.3 to 0.5x real time per stream, with cues u
 queue early. The prompt is --prompt as given (--prompt "" sends none); without it, --language en
 sends DEFAULT_PROMPTS["en"] and any other language none. The Metadata names the prompt sent.
 Segment times are clamped to the recording's duration and the clamped ones counted.
+The faster-whisper snippet reads the 16-bit wav itself (wave and numpy) and passes the samples:
+given a path, faster-whisper 1.2.1 opens it with PyAV, and PyAV 19 refuses the metadata_errors
+argument it is called with (TypeError), so a fresh install failed on every file.
+
+One more engine, only when named, never in the auto order:
+  sherpa-onnx     a NeMo transducer through sherpa-onnx, imported by --engine-python: Bark 3.0 for
+                  English, Parakeet TDT v3 for its 25 European languages. --model is the model
+                  folder; it must hold encoder, decoder and joiner (.int8.onnx, else .onnx) and
+                  tokens.txt. --vad-model is the Silero VAD onnx (silero_vad.onnx), required: the
+                  file is split by that VAD (threshold 0.5, min silence 0.5 s, min speech 0.25 s,
+                  max speech 20 s, so the model never decodes more than 20 s at once), each piece
+                  gets 0.25 s of silence before it (the Bark card asks for it) and is decoded
+                  greedy, one [start, end, text] row per piece. --language must be en unless the
+                  folder's name says parakeet: Bark and Parakeet folders hold the same four file
+                  names and the same tokens.txt, so the name is what tells them apart, and Bark is
+                  English only. --threads goes to num_threads, default as whisper-cli; no prompt.
+                  It measured 25.27 % WER on a 594 s AMI meeting window at 1.7 minutes per hour of
+                  audio on 8 CPU threads, against 26.34 % and 18 minutes for faster-whisper
+                  large-v3-turbo int8 on the same CPU.
 
 Region mode, when two or more streams are transcribed (one stream takes the path above
 unchanged). On a stream that is silent half the time, whisper times run across the pauses: VAD
@@ -75,9 +96,13 @@ joined timeline back to the recording, and the engine runs WITHOUT VAD (the regi
 silence). whisper-cli gets -ml 1 -sow and the Python engines word_timestamps=True, so every word
 is placed by its start and the text is rebuilt into one segment per region (split where
 TURN_SPLIT_SECONDS passed), and a segment that crosses a gap cannot glue two turns; the filter's
-segments, which carry no word times, are placed by their start. A word or segment that starts in
-a gap goes to the next region when it ends inside it; one that lies only inside a gap is dropped
-and counted. The Metadata lists each stream's regions and gap-dropped count.
+segments, which carry no word times, are placed by their start. sherpa-onnx is the exception to
+"without VAD": it keeps its VAD on the joined regions, since the model decodes 20 s at most, and
+writes one row per word from the result's token times (a token that starts with the SentencePiece
+word mark starts a word, a word ends where the next one starts and the last at its piece's end).
+A word or segment that starts in a gap goes to the next region when it ends inside it; one that
+lies only inside a gap is dropped and counted. The Metadata lists each stream's regions and
+gap-dropped count.
 
 Echo rule, two or more transcribed streams only: a segment of the first chosen stream is dropped
 when it has at least ECHO_MIN_WORDS words, overlaps in time a segment of another stream, and their texts
@@ -151,6 +176,8 @@ MIN_THREADS = 4
 EXE = ".exe" if os.name == "nt" else ""
 FRAME_NAME = re.compile(r"^\d{4}_\d+-\d\d-\d\d\.jpg$")
 ENGINES = ("whisper-cli", "faster-whisper", "openai-whisper", "ffmpeg-whisper")
+EXPLICIT_ENGINES = ("sherpa-onnx",)
+TRANSDUCER_PARTS = ("encoder", "decoder", "joiner")
 INSTALL = {
     "ffmpeg-whisper": "an FFmpeg 8.0 or later build with the whisper filter (ffmpeg -filters lists"
                       " it), with --model <ggml model file>",
@@ -160,18 +187,25 @@ INSTALL = {
                       " large-v3>",
     "openai-whisper": "pip install openai-whisper into --engine-python, with --model <name, such as"
                       " large-v3>",
+    "sherpa-onnx": "pip install sherpa-onnx numpy into --engine-python, with --model <a folder"
+                   " holding encoder, decoder and joiner .onnx and tokens.txt, such as Bark 3.0"
+                   " int8> and --vad-model <silero_vad.onnx>",
 }
-PYTHON_MODULE = {"faster-whisper": "faster_whisper", "openai-whisper": "whisper"}
+PYTHON_MODULE = {"faster-whisper": "faster_whisper", "openai-whisper": "whisper",
+                 "sherpa-onnx": "sherpa_onnx, numpy"}
 PYTHON_SNIPPET = {
     "faster-whisper": (
-        "import json, sys\n"
+        "import json, sys, wave\n"
+        "import numpy\n"
         "from faster_whisper import WhisperModel\n"
         "wav, model, language, out, threads, prompt, words = sys.argv[1:8]\n"
         "load = {'cpu_threads': int(threads)} if int(threads) > 0 else {}\n"
         "ask = {'initial_prompt': prompt} if prompt else {}\n"
         "if words == '1':\n"
         "    ask['word_timestamps'] = True\n"
-        "segments, _ = WhisperModel(model, **load).transcribe(wav, language=None if language == 'auto' else language, beam_size=5, **ask)\n"
+        "with wave.open(wav, 'rb') as handle:\n"
+        "    audio = numpy.frombuffer(handle.readframes(handle.getnframes()), dtype='<i2').astype(numpy.float32) / 32768.0\n"
+        "segments, _ = WhisperModel(model, **load).transcribe(audio, language=None if language == 'auto' else language, beam_size=5, **ask)\n"
         "rows = []\n"
         "for s in segments:\n"
         "    found = (getattr(s, 'words', None) or []) if words == '1' else []\n"
@@ -190,6 +224,55 @@ PYTHON_SNIPPET = {
         "for s in result['segments']:\n"
         "    found = (s.get('words') or []) if words == '1' else []\n"
         "    rows += [[w['start'], w['end'], w['word']] for w in found] or [[s['start'], s['end'], s['text']]]\n"
+        "with open(out, 'w', encoding='utf-8') as handle:\n"
+        "    json.dump(rows, handle)\n"),
+    "sherpa-onnx": (
+        "import json, sys, wave\n"
+        "import numpy\n"
+        "import sherpa_onnx\n"
+        "wav, model, language, out, threads, prompt, words, vad_model, encoder, decoder, joiner, tokens = sys.argv[1:13]\n"
+        "with wave.open(wav, 'rb') as handle:\n"
+        "    rate = handle.getframerate()\n"
+        "    audio = numpy.frombuffer(handle.readframes(handle.getnframes()), dtype='<i2').astype(numpy.float32) / 32768.0\n"
+        "recognizer = sherpa_onnx.OfflineRecognizer.from_transducer(encoder=encoder, decoder=decoder, joiner=joiner, tokens=tokens, num_threads=int(threads), model_type='nemo_transducer', decoding_method='greedy_search')\n"
+        "config = sherpa_onnx.VadModelConfig()\n"
+        "config.silero_vad.model = vad_model\n"
+        "config.silero_vad.threshold = 0.5\n"
+        "config.silero_vad.min_silence_duration = 0.5\n"
+        "config.silero_vad.min_speech_duration = 0.25\n"
+        "config.silero_vad.max_speech_duration = 20\n"
+        "config.sample_rate = rate\n"
+        "config.num_threads = 1\n"
+        "vad = sherpa_onnx.VoiceActivityDetector(config, buffer_size_in_seconds=60)\n"
+        "lead = numpy.zeros(int(0.25 * rate), dtype=numpy.float32)\n"
+        "rows = []\n"
+        "def drain():\n"
+        "    while not vad.empty():\n"
+        "        segment = vad.front\n"
+        "        piece = numpy.asarray(segment.samples, dtype=numpy.float32)\n"
+        "        start = segment.start / rate\n"
+        "        vad.pop()\n"
+        "        end = start + len(piece) / rate\n"
+        "        stream = recognizer.create_stream()\n"
+        "        stream.accept_waveform(rate, numpy.concatenate([lead, piece]))\n"
+        "        recognizer.decode_stream(stream)\n"
+        "        result, found = stream.result, []\n"
+        "        for token, at in (zip(result.tokens, result.timestamps) if words == '1' else ()):\n"
+        "            at = min(max(start + at - 0.25, start), end)\n"
+        "            if found and not token.startswith(('\\u2581', ' ')):\n"
+        "                found[-1][2] += token\n"
+        "            else:\n"
+        "                found.append([at, end, token.lstrip('\\u2581 ')])\n"
+        "        for word, after in zip(found, found[1:]):\n"
+        "            word[1] = after[0]\n"
+        "        text = result.text.strip()\n"
+        "        rows.extend([w for w in found if w[2]] or ([[start, end, text]] if text else []))\n"
+        "window = config.silero_vad.window_size\n"
+        "for at in range(0, len(audio), window):\n"
+        "    vad.accept_waveform(audio[at:at + window])\n"
+        "    drain()\n"
+        "vad.flush()\n"
+        "drain()\n"
         "with open(out, 'w', encoding='utf-8') as handle:\n"
         "    json.dump(rows, handle)\n"),
 }
@@ -539,20 +622,21 @@ class WhisperCli:
 class PythonWhisper:
     timeout = None
 
-    def __init__(self, name, python, model, language, ffmpeg, threads, prompt):
+    def __init__(self, name, python, model, language, ffmpeg, threads, prompt, extra=()):
         self.name, self.python, self.model, self.language = name, python, model, language
         self.threads, self.prompt = threads or 0, prompt or ""
+        self.extra = list(extra)
         self.env = dict(os.environ)
         self.env["PATH"] = os.path.dirname(ffmpeg) + os.pathsep + self.env.get("PATH", "")
 
     def region_units(self, wav, n, work):
-        """Region mode: word_timestamps=True, one row per word."""
+        """Region mode: one row per word (word_timestamps=True, or sherpa-onnx's token times)."""
         return self.transcribe(wav, n, work, region=True), True
 
     def transcribe(self, wav, n, work, region=False):
         out = os.path.join(work, "segments-%d.json" % n)
         res = run([self.python, "-c", PYTHON_SNIPPET[self.name], wav, self.model, self.language, out,
-                   str(self.threads), self.prompt, "1" if region else "0"], "engine",
+                   str(self.threads), self.prompt, "1" if region else "0"] + self.extra, "engine",
                   timeout=self.timeout, env=self.env, engine=self.name)
         return read_output(self.name, out, res, parse_rows)
 
@@ -625,13 +709,41 @@ def try_engine(name, args, ffmpeg):
                 "is named by --whisper-cli" if args.whisper_cli else "is on PATH")
         return WhisperCli(binary, model, args.language, args.threads or default_threads(),
                           engine_prompt(args), args.vad_model, args.gpu_device), None
+    files = None
+    if name == "sherpa-onnx":
+        files = transducer_files(model)
+        if not files:
+            return None, ("sherpa-onnx: --model is not a folder holding encoder, decoder and joiner"
+                          " (.int8.onnx or .onnx) and tokens.txt")
     imports, reason = python_imports(args.engine_python, PYTHON_MODULE[name])
     if not imports:
         return None, reason
+    if files:
+        return PythonWhisper(name, args.engine_python, model, args.language, ffmpeg,
+                             args.threads or default_threads(), None, [args.vad_model] + files), None
     if not model:
         return None, "%s imports in %s, but no --model names a model" % (name, args.engine_python)
     return PythonWhisper(name, args.engine_python, model, args.language, ffmpeg, args.threads,
                          engine_prompt(args)), None
+
+
+def transducer_files(folder):
+    """[encoder, decoder, joiner, tokens] paths of a NeMo transducer folder (each part .int8.onnx,
+    else .onnx), or None when one is missing."""
+    if not (folder and os.path.isdir(folder)):
+        return None
+    found = []
+    for part in TRANSDUCER_PARTS:
+        names = [os.path.join(folder, part + ending) for ending in (".int8.onnx", ".onnx")]
+        found += [path for path in names if os.path.isfile(path)][:1]
+    found.append(os.path.join(folder, "tokens.txt"))
+    return found if len(found) == 4 and os.path.isfile(found[-1]) else None
+
+
+def holds_parakeet(folder):
+    """Bark and Parakeet folders hold the same file names and tokens.txt; the folder's name says
+    which (the sherpa-onnx releases name theirs sherpa-onnx-nemo-parakeet-...)."""
+    return "parakeet" in os.path.basename(os.path.normpath(folder or "")).lower()
 
 
 def engine_prompt(args):
@@ -644,6 +756,8 @@ def engine_prompt(args):
 def shown_prompt(engine, args):
     if isinstance(engine, FfmpegWhisper):
         return "none (the whisper filter takes no prompt)"
+    if engine.name == "sherpa-onnx":
+        return "none (sherpa-onnx takes no prompt)"
     return engine_prompt(args) or "none"
 
 
@@ -925,7 +1039,7 @@ def markdown(recording, info, args, state):
     ]
     if not args.vad_model:
         meta = [pair for pair in meta if pair[0] != "VAD model"]
-    elif state["regions"]:
+    elif state["regions"] and state["engine"] != "sherpa-onnx":
         meta = [(key, value + " (ignored in region mode)" if key == "VAD model" else value)
                 for key, value in meta]
     if state["regions"]:
@@ -955,13 +1069,18 @@ def parse_args(argv):
         description="Turn a recording into one Markdown file: transcript, keyframes, an index.")
     parser.add_argument("recording")
     parser.add_argument("--out", help="output folder (default: beside the recording)")
-    parser.add_argument("--engine", default="auto", choices=("auto",) + ENGINES)
-    parser.add_argument("--model", help="a ggml model file, or a model name for the Python engines")
+    parser.add_argument("--engine", default="auto", choices=("auto",) + ENGINES + EXPLICIT_ENGINES,
+                        help="auto tries the four whisper engines in order; sherpa-onnx only when"
+                        " named")
+    parser.add_argument("--model", help="a ggml model file, a model name for the whisper Python"
+                        " engines, or the model folder for sherpa-onnx")
     parser.add_argument("--vad-model", help="a ggml VAD model file for the ffmpeg-whisper and"
-                                            " whisper-cli engines")
+                                            " whisper-cli engines; the Silero VAD onnx"
+                                            " (silero_vad.onnx) for sherpa-onnx, which needs it")
     parser.add_argument("--language", default="auto", help="a language code, or auto")
     parser.add_argument("--engine-python", default=sys.executable,
-                        help="the Python that runs faster-whisper or openai-whisper")
+                        help="the Python that runs faster-whisper, openai-whisper or"
+                        " sherpa-onnx")
     parser.add_argument("--whisper-cli", help="the whisper-cli binary to run (default: whisper-cli on"
                                               " PATH)")
     parser.add_argument("--gpu-device", type=int, help="the GPU whisper-cli (-dev) and the ffmpeg-whisper"
@@ -998,6 +1117,14 @@ def parse_args(argv):
         parser.error("--gpu-device must be 0 or more")
     if args.whisper_cli is not None and not os.path.isfile(args.whisper_cli):
         parser.error("--whisper-cli %s is not a file" % args.whisper_cli)
+    if args.engine == "sherpa-onnx":
+        if args.language != "en" and not holds_parakeet(args.model):
+            parser.error("--engine sherpa-onnx takes --language en (Bark is English only); another"
+                         " language needs a Parakeet model folder, got --language %s" % args.language)
+        if not (args.vad_model and args.vad_model.lower().endswith(".onnx")
+                and os.path.isfile(args.vad_model)):
+            parser.error("--engine sherpa-onnx needs --vad-model <silero_vad.onnx>, the Silero VAD"
+                         " onnx file")
     try:
         args.chosen = parse_tracks(args.tracks)
     except ValueError as error:
