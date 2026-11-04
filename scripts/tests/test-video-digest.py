@@ -1186,14 +1186,19 @@ TRANSDUCER = ("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tok
 
 
 class SherpaOnnxEngineTest(RegionBase):
-    def sherpa(self, folder="bark", parts=TRANSDUCER):
-        """(env, model folder, Silero VAD file, kw log) with the fake sherpa_onnx on PYTHONPATH."""
+    def sherpa(self, folder="bark", parts=TRANSDUCER, pieces=None):
+        """(env, model folder, Silero VAD file, kw log) with the fake sherpa_onnx on PYTHONPATH;
+        pieces, given, replaces the fake's PIECES line (its tokens and their times per piece)."""
         model = os.path.join(self.dir, folder)
         os.makedirs(model)
         for name in parts:
             ggml_file(model, name)
         vad = ggml_file(self.dir, "silero_vad.onnx")
-        fakes = install_packages(os.path.join(self.dir, "fake-packages"), {"sherpa_onnx": FAKE_SHERPA})
+        fake = FAKE_SHERPA
+        if pieces is not None:
+            first = fake.index("PIECES = ")
+            fake = fake[:first] + "PIECES = %r\n" % (pieces,) + fake[fake.index("LOADED = {}"):]
+        fakes = install_packages(os.path.join(self.dir, "fake-packages"), {"sherpa_onnx": fake})
         log = os.path.join(self.dir, "kw.json")
         return {"PYTHONPATH": fakes, "FAKE_KW_LOG": log}, model, vad, log
 
@@ -1225,6 +1230,14 @@ class SherpaOnnxEngineTest(RegionBase):
         self.assertIn("\n- VAD model: silero_vad.onnx\n", text)
         self.assertEqual(self.loaded(log)["num_threads"], 3)
 
+    def test_word_times_drop_the_quarter_second_of_silence_put_before_each_piece(self):
+        # The fake reports times on the padded audio, 0.25 s of lead plus 0.9 s: the word starts
+        # 0.9 s into its piece at 1 s, so 0:00:01; without the lead taken off it would be 0:00:02.
+        env, model, vad, _ = self.sherpa(pieces=((("\u2581delta", 0.9),), (("\u2581omega", 0.1),)))
+        _, lines = self.digest(self.pair, "--engine", "sherpa-onnx", "--model", model,
+                               "--vad-model", vad, "--language", "en", env=env)
+        self.assertEqual(lines[0], ("0:00:01", "me", "delta"))
+
     def test_a_folder_without_the_four_files_is_refused_and_plain_onnx_parts_are_taken(self):
         env, model, vad, log = self.sherpa(parts=TRANSDUCER[:2] + TRANSDUCER[3:])
         res = run_tool(self.single, "--no-frames", "--engine", "sherpa-onnx", "--model", model,
@@ -1241,7 +1254,7 @@ class SherpaOnnxEngineTest(RegionBase):
     def test_english_unless_the_folder_is_parakeet_and_a_silero_onnx_vad_is_needed(self):
         env, model, vad, _ = self.sherpa()
         cases = ((("--vad-model", vad), "takes --language en"),
-                 (("--vad-model", vad, "--language", "es"), "takes --language en"),
+                 (("--vad-model", vad, "--language", "es"), 'whose name contains "parakeet"'),
                  (("--language", "en"), "needs --vad-model <silero_vad.onnx>"),
                  (("--language", "en", "--vad-model", self.vad), "needs --vad-model <silero_vad.onnx>"))
         for extra, needle in cases:

@@ -1120,7 +1120,8 @@ def parse_args(argv):
     if args.engine == "sherpa-onnx":
         if args.language != "en" and not holds_parakeet(args.model):
             parser.error("--engine sherpa-onnx takes --language en (Bark is English only); another"
-                         " language needs a Parakeet model folder, got --language %s" % args.language)
+                         " language needs a --model folder whose name contains \"parakeet\", got"
+                         " --language %s" % args.language)
         if not (args.vad_model and args.vad_model.lower().endswith(".onnx")
                 and os.path.isfile(args.vad_model)):
             parser.error("--engine sherpa-onnx needs --vad-model <silero_vad.onnx>, the Silero VAD"
