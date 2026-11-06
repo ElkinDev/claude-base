@@ -55,6 +55,22 @@ Office document leaves with its core properties cleared. It covers every kind th
         ffmpeg and ffprobe on PATH. A name written inside the frames is out of a stream copy's
         reach (ffmpeg's own AAC encoder writes one unless the encode took -flags +bitexact, x265
         writes one unless it took -x265-params info=0): such a file is refused and left as it is.
+  .ttf .otf .woff .woff2  in each version record (name ID 5, every platform), what follows "Version" and its
+        number (a build tool's name, such as ";gftools[0.9.28]"), cut; the tables a font tool leaves (FFTM,
+        PfEd, TTFA, DSIG, Debg, the VTT sources TSI0 to TSIB, a meta table with tags beyond dlng and slng) and a
+        WOFF's extended metadata and private blocks, dropped. The credit records (copyright, designer, licence
+        and the like) stay, as the SIL Open Font License asks. A local path, the login or machine name or a
+        line of the optional list ~/.claude/tools/meta-scrub-names.txt in any record or in a CFF table's
+        strings (its Name and String INDEX, never its glyph code; a CFF2 table holds no strings and is not
+        scanned), a font tool or AI program (Claude Code, claude.ai, Anthropic, OpenAI, ChatGPT, Copilot,
+        never a bare Claude, which is also a designer's name) in a record other than a credit, a version record
+        with no number, an image table and a table outside the OpenType set are named and refused, and a CFF
+        table that does not parse is refused as damaged: produce it again from the upstream file. Every
+        other table is copied byte for byte, and before the rename a proof reads the copy back and compares it
+        with the original table by table (run alone: --font-proof). A WOFF2 needs node on PATH, whose built-in
+        zlib does its Brotli; without it a .woff2 is not read. A WOFF2 keeps its head.checksumAdjustment as it
+        was, since the decoder rebuilds glyf and loca and computes it again. A collection (.ttc, .otc) is not
+        read.
 
 Other media, document and model kinds (.gif, .heic, .heif, .tif, .mp3, .doc, .gltf, .obj, .fbx and
 the like) are not read: each one is named as not read and the run exits 2, so a check never passes a file
@@ -63,20 +79,26 @@ it did not open.
     python meta-scrub.py <file or folder>...           # clear in place, one line per file changed
     python meta-scrub.py --check <file or folder>...   # change nothing; one line per file that still
                                                        # names something or could not be read
+    python meta-scrub.py --font-proof <original> <copy>  # exit 0 when the copy is the original but for
+                                                       # what a clear changes; 3 and PROOF REFUSED <tag> <field>
 
 A folder is walked whole, skipping .git, node_modules and .venv. In a folder, a text, code or data file
 (no control byte in its first 8 KB) is ignored, and a binary file of a kind the tool does not know (a
-font, an archive, a model) is named as not read, the same as when it is named directly; UTF-16 text
-holds NUL bytes, so it counts as binary. A file is replaced only through a temporary file in its own
-folder, checked again before a rename, so a run that stops halfway, or a
+font collection, an archive, a model) is named as not read, the same as when it is named directly; UTF-16 text
+holds NUL bytes, so it counts as binary. node, ffprobe and ffmpeg run only from a full path on PATH; one
+found in the folder the tool is started from counts as missing. A file is replaced only through a
+temporary file in its own folder, checked again before a rename, so a run that stops halfway, or a
 clear that would leave a name behind, leaves the original. Exit codes: 0 every file read is clean
 (--check) or cleared; 1 --check found a name; 2 a file was not read, refused or failed, which wins
-over 1. Under --check every line goes to stdout; a clear names its failures on stderr.
+over 1; 3 --font-proof refused the copy. Under --check every line goes to stdout; a clear names its
+failures on stderr.
 """
 import json
 import os
 import re
 import shutil
+import socket
+import struct
 import subprocess
 import sys
 import xml.etree.ElementTree
@@ -85,8 +107,9 @@ import zlib
 
 OFFICE = {".docx", ".xlsx", ".pptx", ".docm", ".xlsm", ".pptm"}
 VIDEO = {".mp4", ".mov", ".m4a", ".m4v", ".webm", ".mkv"}
-KINDS = OFFICE | VIDEO | {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".avif", ".glb", ".ktx2", ".hdr", ".ply", ".sog",
-                          ".spz", ".svg"}
+FONTS = {".ttf", ".otf", ".woff", ".woff2"}
+KINDS = OFFICE | VIDEO | FONTS | {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".avif", ".glb", ".ktx2", ".hdr", ".ply",
+                                  ".sog", ".spz", ".svg"}
 # kinds that can carry a name too, which this tool does not clear: named, never passed in silence
 NOT_READ = {".avi", ".wmv", ".flv", ".gif", ".heic", ".heif", ".tif",
             ".tiff", ".bmp", ".psd", ".mp3", ".wav", ".flac", ".ogg", ".opus", ".aac", ".odt",
@@ -1239,6 +1262,739 @@ def svg_clean(data):
     return data
 
 
+# A font is read table by table and cleared by a splice: the version records lose what follows the version
+# number, the tables a font tool leaves go, and every other table is copied byte for byte. The credit records
+# stay, since the SIL Open Font License asks every copy to keep them. Before the rename a proof reads the copy
+# back and compares it with the original, table by table and field by field.
+SFNT_FLAVORS = {0x00010000, 0x4F54544F, 0x74727565}  # TrueType, CFF ('OTTO'), Apple TrueType ('true')
+SFNT_COLLECTION = 0x74746366  # 'ttcf'
+# the OpenType tables the house's web fonts use; any other tag is named
+FONT_TABLES = {"cmap", "head", "hhea", "hmtx", "maxp", "name", "OS/2", "post", "glyf", "loca", "cvt ", "fpgm", "prep",
+               "gasp", "kern", "GDEF", "GPOS", "GSUB", "CFF ", "CFF2", "VORG", "BASE", "JSTF", "MATH", "STAT", "avar",
+               "fvar", "gvar", "cvar", "HVAR", "MVAR", "VVAR", "vhea", "vmtx", "COLR", "CPAL", "hdmx", "LTSH", "VDMX",
+               "PCLT", "meta"}
+# tables a font tool or an editor leaves and no renderer needs (FontForge, ttfautohint, a signature, the VTT
+# sources): named, and dropped by a clear
+FONT_DROP = {"FFTM", "PfEd", "TTFA", "DSIG", "Debg", "TSI0", "TSI1", "TSI2", "TSI3", "TSI4", "TSI5", "TSIV", "TSIP",
+             "TSIS", "TSID", "TSIJ", "TSIB"}
+# image tables can hold an editor's comments or a PNG's text: named, and refused
+FONT_IMAGES = {"SVG ", "sbix", "CBDT", "CBLC", "EBDT", "EBLC"}
+FONT_META_PLAIN = {"dlng", "slng"}  # meta tags that only list scripts; any other one makes the table go
+# copyright, trademark, manufacturer, designer, vendor and designer URLs, licence and its URL: the foundry's own
+# words, where only a trace of this house is looked for, never a program's name
+FONT_CREDITS = {0, 7, 8, 9, 11, 12, 13, 14}
+FONT_VERSION_ID = 5
+FONT_VERSION = re.compile(r"version +\d+(?:\.\d+)*", re.I)
+# the font tools, and the AI programs only in forms no person or typeface bears (the bare word claude is also
+# Claude Garamond, the designer a Garamond's description cites)
+FONT_PROGRAMS = re.compile(r"\b(?:fonttools|pyftsubset|fontforge|glyphhanger|transfonter|fontsquirrel|ttfautohint|"
+                           r"gftools|woff2_compress|sfnt2woff|claude\s+code|claude\.ai|anthropic|openai|chatgpt|"
+                           r"copilot)\b", re.I)
+FONT_NAMES_FILE = "~/.claude/tools/meta-scrub-names.txt"  # optional, one word a line, never copied to the kit
+WOFF_HEADER = ">4sIIHHIHHIIIII"
+WOFF2_HEADER = ">4sIIHHIIHHIIIII"
+WOFF2_TAGS = ("cmap", "head", "hhea", "hmtx", "maxp", "name", "OS/2", "post", "cvt ", "fpgm", "glyf", "loca", "prep",
+              "CFF ", "VORG", "EBDT", "EBLC", "gasp", "hdmx", "kern", "LTSH", "PCLT", "VDMX", "vhea", "vmtx", "BASE",
+              "GDEF", "GPOS", "GSUB", "EBSC", "JSTF", "MATH", "CBDT", "CBLC", "COLR", "CPAL", "SVG ", "sbix", "acnt",
+              "avar", "bdat", "bloc", "bsln", "cvar", "fdsc", "feat", "fmtx", "fvar", "gvar", "hsty", "just", "lcar",
+              "mort", "morx", "opbd", "prop", "trak", "Zapf", "Silf", "Glat", "Gloc", "Feat", "Sill")
+NODE_BROTLI = ("const z = require('zlib'), k = z.constants, parts = [];"
+               "process.stdin.on('data', d => parts.push(d));"
+               "process.stdin.on('end', () => { const b = Buffer.concat(parts);"
+               " process.stdout.write(process.argv[1] === 'pack'"
+               " ? z.brotliCompressSync(b, {params: {[k.BROTLI_PARAM_MODE]: k.BROTLI_MODE_FONT,"
+               " [k.BROTLI_PARAM_QUALITY]: 11, [k.BROTLI_PARAM_SIZE_HINT]: b.length}})"
+               " : z.brotliDecompressSync(b, {maxOutputLength: Number(process.argv[2])})); });")
+
+
+class FontTable:
+    """A table: its tag, its bytes as the container keeps them, its plain bytes (None while a WOFF2 transform
+    holds them), and the container's own fields for it."""
+
+    def __init__(self, tag, stored, plain, **fields):
+        self.tag, self.stored, self.plain, self.fields = tag, stored, plain, fields
+
+
+class Font:
+    def __init__(self, container, flavor, tables, header, meta=None, private=None):
+        self.container, self.flavor, self.tables, self.header = container, flavor, tables, header
+        self.meta, self.private = meta, private  # a WOFF's extended metadata (decompressed) and private block
+
+    def table(self, tag):
+        return next((t for t in self.tables if t.tag == tag), None)
+
+
+class ProofRefused(Exception):
+    """A copy a clear wrote differs from its original in more than the clear may change."""
+
+    def __init__(self, tag, field, detail=""):
+        Exception.__init__(self, tag, field, detail)
+        self.tag, self.field, self.detail = tag.strip() or tag, field, detail
+
+    def __str__(self):
+        return "PROOF REFUSED %s %s%s" % (self.tag, self.field, " (%s)" % self.detail if self.detail else "")
+
+
+def node_brotli(data, op, size=0):
+    """data packed ('pack') or unpacked ('unpack', to at most size bytes) by node's built-in Brotli. node is
+    found on PATH, the way ffmpeg is (program), and runs with no NODE_OPTIONS or NODE_PATH from this environment."""
+    node = program("node")
+    if not node:
+        raise Refused("needs node on PATH: a WOFF2 is Brotli-compressed and node's built-in zlib reads it")
+    env = {k: v for k, v in os.environ.items() if k.upper() not in ("NODE_OPTIONS", "NODE_PATH")}
+    done = subprocess.run([node, "-e", NODE_BROTLI, op, str(max(size, 1))], input=data, capture_output=True,
+                          env=env, timeout=120)
+    if done.returncode != 0:
+        lines = done.stderr.decode("utf-8", "replace").strip().splitlines() or ["no message"]
+        raise Refused("damaged WOFF2: its Brotli data does not %s (%s)"
+                      % ("pack" if op == "pack" else "decode", next((l for l in lines if "Error" in l), lines[-1])))
+    return done.stdout
+
+
+def font_fields(data, at, layout, what):
+    """The fields of a struct layout at offset at; a font cut short is refused."""
+    if at < 0 or at + struct.calcsize(layout) > len(data):
+        raise Refused("damaged font: %s cut short" % what)
+    return struct.unpack_from(layout, data, at)
+
+
+def font_round(n):
+    return (n + 3) & ~3
+
+
+def font_tag(raw, seen):
+    tag = raw.decode("latin-1")
+    if any(not 32 <= byte <= 126 for byte in raw):
+        raise Refused("damaged font: a table tag %r that is not text" % tag)
+    if tag in seen:
+        raise Refused("damaged font: two %s tables" % tag.strip())
+    seen.add(tag)
+    return tag
+
+
+def font_flavor(flavor, what):
+    if flavor == SFNT_COLLECTION:
+        raise Refused("a font collection, not read")
+    if flavor not in SFNT_FLAVORS:
+        raise Refused("not a %s font" % what)
+
+
+def font_checksum(data):
+    data = bytes(data) + bytes(-len(data) % 4)
+    return sum(struct.unpack(">%dI" % (len(data) // 4), data)) & 0xFFFFFFFF
+
+
+def table_checksum(tag, plain):
+    """A table's checksum; head's is taken with its checksumAdjustment at zero, as the sfnt directory keeps it."""
+    return font_checksum(plain[:8] + bytes(4) + plain[12:] if tag == "head" else plain)
+
+
+def font_inflate(stored, size, what):
+    unpack = zlib.decompressobj()
+    try:
+        plain = unpack.decompress(stored, size + 1)
+    except zlib.error:
+        raise Refused("damaged font: %s does not decompress" % what)
+    if len(plain) != size or not unpack.eof:
+        raise Refused("damaged font: %s decompresses to another size than its directory says" % what)
+    return plain
+
+
+def sfnt_read(data):
+    flavor, count, search, selector, shift = font_fields(data, 0, ">IHHHH", "the sfnt header")
+    font_flavor(flavor, "TrueType or OpenType")
+    tables, seen = [], set()
+    for n in range(count):
+        tag, checksum, offset, length = font_fields(data, 12 + 16 * n, ">4sIII", "the table directory")
+        tag = font_tag(tag, seen)
+        if offset + length > len(data):
+            raise Refused("damaged font: table %s runs past the end of the file" % tag.strip())
+        body = data[offset:offset + length]
+        tables.append(FontTable(tag, body, body, length=length, checksum=checksum, offset=offset))
+    return Font("sfnt", flavor, tables, {"search": (search, selector, shift)})
+
+
+def woff_block(data, offset, length, what):
+    if not length:
+        return None
+    if offset + length > len(data):
+        raise Refused("damaged WOFF: its %s block runs past the end of the file" % what)
+    return data[offset:offset + length]
+
+
+def woff_read(data):
+    (signature, flavor, length, count, reserved, total_sfnt, major, minor, meta_offset, meta_length, meta_size,
+     private_offset, private_length) = font_fields(data, 0, WOFF_HEADER, "the WOFF header")
+    if signature != b"wOFF":
+        raise Refused("not a WOFF font")
+    font_flavor(flavor, "WOFF")
+    if length != len(data) or reserved:
+        raise Refused("damaged WOFF: a header that does not match the file (length %d of %d)" % (length, len(data)))
+    tables, seen = [], set()
+    for n in range(count):
+        tag, offset, comp, orig, checksum = font_fields(data, 44 + 20 * n, ">4sIIII", "the table directory")
+        tag = font_tag(tag, seen)
+        if offset + comp > len(data) or comp > orig:
+            raise Refused("damaged WOFF: table %s does not fit its directory entry" % tag.strip())
+        stored = data[offset:offset + comp]
+        plain = stored if comp == orig else font_inflate(stored, orig, "WOFF table " + tag.strip())
+        tables.append(FontTable(tag, stored, plain, offset=offset, compLength=comp, origLength=orig,
+                                origChecksum=checksum))
+    meta = woff_block(data, meta_offset, meta_length, "metadata")
+    header = {"totalSfntSize": total_sfnt, "version": (major, minor),
+              "blocks": (meta_offset, meta_length, meta_size, private_offset, private_length)}
+    return Font("woff", flavor, tables, header, None if meta is None else font_inflate(meta, meta_size, "WOFF metadata"),
+                woff_block(data, private_offset, private_length, "private"))
+
+
+def woff2_number(data, at):
+    """A UIntBase128 at offset at, read as the reference decoder reads it: (the number, the offset after it)."""
+    value = 0
+    for n in range(5):
+        (byte,) = font_fields(data, at + n, ">B", "the table directory")
+        if (n == 0 and byte == 0x80) or value & 0xFE000000:
+            raise Refused("damaged WOFF2: a malformed number in its table directory")
+        value = value << 7 | byte & 127
+        if not byte & 128:
+            return value, at + n + 1
+    raise Refused("damaged WOFF2: a number longer than five bytes in its table directory")
+
+
+def woff2_encode(value):
+    out = [value & 127]
+    while value > 127:
+        value >>= 7
+        out.append(128 | value & 127)
+    return bytes(reversed(out))
+
+
+def woff2_read(data):
+    (signature, flavor, length, count, reserved, total_sfnt, total_compressed, major, minor, meta_offset, meta_length,
+     meta_size, private_offset, private_length) = font_fields(data, 0, WOFF2_HEADER, "the WOFF2 header")
+    if signature != b"wOF2":
+        raise Refused("not a WOFF2 font")
+    font_flavor(flavor, "WOFF2")
+    if length != len(data) or reserved:
+        raise Refused("damaged WOFF2: a header that does not match the file (length %d of %d)" % (length, len(data)))
+    at, entries, seen = 48, [], set()
+    for _ in range(count):
+        (flags,) = font_fields(data, at, ">B", "the table directory")
+        at += 1
+        if flags & 63 == 63:
+            (raw,) = font_fields(data, at, ">4s", "the table directory")
+            at += 4
+        else:
+            raw = WOFF2_TAGS[flags & 63].encode("latin-1")
+        tag, version = font_tag(raw, seen), flags >> 6
+        orig, at = woff2_number(data, at)
+        # glyf and loca are transformed at version 0 (3 is the null transform); any other table at a version
+        # other than 0, and only hmtx at 1 is a transform the reference decoder knows
+        transformed = version == 0 if tag in ("glyf", "loca") else version != 0
+        transform_length = None
+        if transformed:
+            if tag not in ("glyf", "loca", "hmtx") or (tag == "hmtx" and version != 1):
+                raise Refused("a WOFF2 table %s with a transform this reader does not know, not read" % tag.strip())
+            transform_length, at = woff2_number(data, at)
+            if tag == "loca" and transform_length:
+                raise Refused("damaged WOFF2: a transformed loca with a length")
+        entries.append((tag, flags & 63, version, orig, transform_length))
+    end = at + total_compressed
+    if end > len(data):
+        raise Refused("damaged WOFF2: its compressed tables run past the end of the file")
+    size = sum(orig if transform_length is None else transform_length for _, _, _, orig, transform_length in entries)
+    stream = node_brotli(data[at:end], "unpack", size)
+    if len(stream) != size:
+        raise Refused("damaged WOFF2: its tables decompress to %d bytes, the directory says %d" % (len(stream), size))
+    tables, pos = [], 0
+    for tag, index, version, orig, transform_length in entries:
+        body = stream[pos:pos + (orig if transform_length is None else transform_length)]
+        pos += len(body)
+        tables.append(FontTable(tag, body, body if transform_length is None else None, index=index, transform=version,
+                                origLength=orig, transformLength=transform_length))
+    # the blocks lie where the reference decoder looks: each on the four byte boundary after the one before
+    after, meta, private = font_round(end), None, None
+    if meta_offset:
+        if meta_offset != after or meta_offset + meta_length > len(data):
+            raise Refused("damaged WOFF2: its metadata block is not where its header says")
+        meta = node_brotli(data[meta_offset:meta_offset + meta_length], "unpack", meta_size)
+        if len(meta) != meta_size:
+            raise Refused("damaged WOFF2: its metadata decompresses to another size than its header says")
+        after = font_round(meta_offset + meta_length)
+    if private_offset:
+        if private_offset != after or private_offset + private_length > len(data):
+            raise Refused("damaged WOFF2: its private block is not where its header says")
+        private = data[private_offset:private_offset + private_length]
+        after = font_round(private_offset + private_length)
+    if after != font_round(len(data)):
+        raise Refused("damaged WOFF2: bytes after its last block")
+    header = {"totalSfntSize": total_sfnt, "totalCompressedSize": total_compressed, "start": at,
+              "version": (major, minor), "blocks": (meta_offset, meta_length, meta_size, private_offset, private_length)}
+    return Font("woff2", flavor, tables, header, meta, private)
+
+
+def font_read(data, ext):
+    return {".woff2": woff2_read, ".woff": woff_read}.get(ext, sfnt_read)(data)
+
+
+def name_records(table):
+    """(format, records as (platform, encoding, language, name id, bytes), language tags as bytes) of a name table."""
+    form, count, storage = font_fields(table, 0, ">HHH", "the name table")
+    if form not in (0, 1):
+        raise Refused("a name table of format %d, not read" % form)
+
+    def string(length, offset, what):
+        if storage + offset + length > len(table):
+            raise Refused("damaged font: %s runs past the name table" % what)
+        return table[storage + offset:storage + offset + length]
+    records = []
+    for n in range(count):
+        platform, encoding, language, name_id, length, offset = font_fields(table, 6 + 12 * n, ">6H", "a name record")
+        records.append((platform, encoding, language, name_id, string(length, offset, "name record %d" % name_id)))
+    tags = []
+    if form == 1:
+        (tag_count,) = font_fields(table, 6 + 12 * count, ">H", "the name table's language tags")
+        for n in range(tag_count):
+            length, offset = font_fields(table, 8 + 12 * count + 4 * n, ">HH", "a language tag")
+            tags.append(string(length, offset, "a language tag"))
+    return form, records, tags
+
+
+def name_table(form, records, tags):
+    """A name table again: the records in their order, each string once in the storage, nothing else kept."""
+    storage, placed = bytearray(), {}
+
+    def place(raw):
+        if raw not in placed:
+            placed[raw] = len(storage)
+            storage.extend(raw)
+        return placed[raw]
+    entries = b"".join(struct.pack(">6H", p, e, l, i, len(raw), place(raw)) for p, e, l, i, raw in records)
+    tail = b""
+    if form == 1:
+        tail = struct.pack(">H", len(tags)) + b"".join(struct.pack(">HH", len(raw), place(raw)) for raw in tags)
+    if len(storage) > 0xFFFF:
+        raise Refused("a name table whose strings pass 64 KB, not read")
+    return struct.pack(">HHH", form, len(records), 6 + len(entries) + len(tail)) + entries + tail + bytes(storage)
+
+
+def name_text(platform, encoding, raw):
+    """(the text of a name record, the bytes a character of its ASCII prefix takes): UTF-16 on the Unicode and
+    Windows platforms, Mac Roman on the Mac's, one byte a character on any other."""
+    if platform in (0, 3) or (platform == 2 and encoding == 1):
+        return raw.decode("utf-16-be", "replace"), 2
+    return raw.decode("mac_roman" if platform == 1 and encoding == 0 else "latin-1"), 1
+
+
+def font_quote(text, at=0):
+    """A record's text for a message, in ASCII, a long one cut to the part around offset at."""
+    if len(text) > 100:
+        start = max(0, min(at - 40, len(text) - 100))
+        text = ("..." if start else "") + text[start:start + 100] + ("..." if start + 100 < len(text) else "")
+    text = text.encode("ascii", "backslashreplace").decode("ascii")
+    return '"%s"' % text.replace("\r", "\\r").replace("\n", "\\n")
+
+
+def house_traces():
+    """(what, pattern) for each trace of this house: a local path, the login and machine names (three letters or
+    more, as whole words), and each line of the optional private list."""
+    traces = [("a local path", LOCAL_PATH)]
+    try:
+        login = os.getlogin()
+    except OSError:
+        login = os.environ.get("USERNAME", "")
+    for what, word in (("the login name", login), ("the machine name", socket.gethostname())):
+        if len(word) >= 3:
+            traces.append((what, re.compile(r"(?<!\w)%s(?!\w)" % re.escape(word), re.I)))
+    try:
+        with open(os.path.expanduser(FONT_NAMES_FILE), encoding="utf-8-sig") as f:
+            words = [line.strip() for line in f if line.strip()]
+    except FileNotFoundError:
+        words = []
+    return traces + [("a listed word", re.compile(re.escape(word), re.I)) for word in words]
+
+
+def font_hits(text, traces, programs):
+    """(what the text holds, in order, where the first one starts)."""
+    hits = [(m.start(), what) for what, pattern in traces for m in [pattern.search(text)] if m]
+    if programs:
+        hits += [(m.start(), "the program " + m.group(0).lower()) for m in FONT_PROGRAMS.finditer(text)]
+    hits.sort()
+    found = []
+    for _, what in hits:
+        if what not in found:
+            found.append(what)
+    return found, hits[0][0] if hits else 0
+
+
+def cff_index(table, at, what):
+    """The entries of the CFF INDEX at offset at, and the offset just past it; one that does not hold together
+    is refused."""
+    count, = font_fields(table, at, ">H", what)
+    if not count:
+        return [], at + 2
+    size, = font_fields(table, at + 2, ">B", what)
+    start, base = at + 3, at + 2 + (count + 1) * size
+    if not 1 <= size <= 4 or base + 1 > len(table):
+        raise Refused("damaged font: %s %s" % (what, "cut short" if 1 <= size <= 4 else "with offset size %d" % size))
+    offsets = [int.from_bytes(table[start + n * size:start + (n + 1) * size], "big") for n in range(count + 1)]
+    if offsets[0] != 1 or any(b < a for a, b in zip(offsets, offsets[1:])) or base + offsets[-1] > len(table):
+        raise Refused("damaged font: %s whose offsets are out of order or run past its table" % what)
+    return [table[base + a:base + b] for a, b in zip(offsets, offsets[1:])], base + offsets[-1]
+
+
+def cff_strings(table):
+    """The text a CFF table holds: its Name INDEX (the font names) and its String INDEX, where the Top DICT's
+    Notice, Copyright, FullName, FamilyName and Weight point, with the glyph names and every other custom string.
+    The charstrings and subroutines are glyph code, not text, and are not read. A CFF table that does not parse
+    is refused as damaged."""
+    major, _, size, offsize = font_fields(table, 0, ">4B", "the CFF header")
+    if major != 1 or size < 4 or not 1 <= offsize <= 4:
+        raise Refused("damaged font: a CFF table whose header is not CFF 1 (version %d, size %d, offset size %d)"
+                      % (major, size, offsize))
+    names, at = cff_index(table, size, "the CFF Name INDEX")
+    tops, at = cff_index(table, at, "the CFF Top DICT INDEX")
+    if not names or len(tops) != len(names):
+        raise Refused("damaged font: a CFF table with %d names and %d Top DICTs" % (len(names), len(tops)))
+    return names + cff_index(table, at, "the CFF String INDEX")[0]
+
+
+def meta_tags(table):
+    _, _, _, count = font_fields(table, 0, ">IIII", "the meta table")
+    tags = set()
+    for n in range(count):
+        tag, offset, length = font_fields(table, 16 + 12 * n, ">4sII", "the meta table")
+        if offset + length > len(table):
+            raise Refused("damaged font: a meta table entry runs past its table")
+        tags.add(tag.decode("latin-1"))
+    return tags
+
+
+def version_kept(platform, encoding, raw):
+    """The bytes of a version record a clear keeps: "Version" and its number, as the record writes them."""
+    text, width = name_text(platform, encoding, raw)
+    found = FONT_VERSION.match(text)
+    if not found:
+        raise Refused("a version record (name 5) with no leading version number, %s: produce it again from the "
+                      "upstream file" % font_quote(text))
+    return raw[:found.end() * width]
+
+
+def font_review(font):
+    """What a font names, as (named, refused, cuts, dropped): every finding in order, the ones a clear refuses, the
+    version records a clear cuts as {record number: the bytes kept}, and the tables a clear drops."""
+    traces = house_traces()
+    named, refused, cuts, dropped = [], [], {}, set()
+
+    def refuse(item):
+        named.append(item)
+        refused.append(item)
+    for table in font.tables:
+        tag, label = table.tag, "table " + table.tag.strip()
+        if tag in FONT_DROP:
+            named.append(label)
+            dropped.add(tag)
+        elif tag in FONT_IMAGES:
+            refuse(label + " (an image table)")
+        elif tag not in FONT_TABLES:
+            refuse(label + " (outside the OpenType set)")
+        elif tag == "meta":
+            other = sorted(meta_tags(table.plain) - FONT_META_PLAIN)
+            if other:
+                named.append("%s (%s)" % (label, ", ".join(other)))
+                dropped.add(tag)
+        elif tag == "CFF ":  # a CFF2 table has no Name or String INDEX and holds no text, so it is not scanned
+            found = []
+            for raw in cff_strings(table.plain):
+                found += [what for what in font_hits(raw.decode("latin-1"), traces, False)[0] if what not in found]
+            if found:
+                refuse("%s holds %s" % (label, ", ".join(found)))
+    name = font.table("name")
+    for number, (platform, encoding, language, name_id, raw) in enumerate(name_records(name.plain)[1] if name else []):
+        text = name_text(platform, encoding, raw)[0]
+        where = "name %d [%d/%d/0x%X]" % (name_id, platform, encoding, language)
+        if name_id == FONT_VERSION_ID:
+            kept = version_kept(platform, encoding, raw)
+            if kept != raw:
+                named.append("%s %s" % (where, font_quote(text)))
+                cuts[number] = kept
+            continue
+        found, at = font_hits(text, traces, name_id not in FONT_CREDITS)
+        if found:
+            refuse("%s %s holds %s" % (where, font_quote(text, at), ", ".join(found)))
+    if font.meta is not None:
+        found, _ = font_hits(font.meta.decode("utf-8", "replace"), traces, False)
+        named.append("metadata block" + (" holding %s" % ", ".join(found) if found else ""))
+    if font.private is not None:
+        named.append("private block")
+    return named, refused, cuts, dropped
+
+
+def sfnt_build(flavor, tables):
+    """An sfnt from (tag, bytes) pairs laid out in the order given, its directory sorted by tag, every checksum
+    and head's checksumAdjustment computed over the bytes written."""
+    count = len(tables)
+    if not count:
+        raise Refused("a font with no tables, not read")
+    power = 1 << (count.bit_length() - 1)
+    header = struct.pack(">IHHHH", flavor, count, power * 16, count.bit_length() - 1, count * 16 - power * 16)
+    body, placed = bytearray(), {}
+    for tag, raw in tables:
+        if tag == "head":
+            raw = raw[:8] + bytes(4) + raw[12:]
+        placed[tag] = (12 + 16 * count + len(body), raw)
+        body += raw + bytes(-len(raw) % 4)
+    directory = b"".join(struct.pack(">4sIII", tag.encode("latin-1"), font_checksum(raw), at, len(raw))
+                         for tag, (at, raw) in sorted(placed.items()))
+    out = bytearray(header + directory + body)
+    if "head" in placed:
+        at = placed["head"][0]
+        out[at + 8:at + 12] = struct.pack(">I", (0xB1B0AFBA - font_checksum(out)) & 0xFFFFFFFF)
+    return bytes(out)
+
+
+def sfnt_write(font, kept, name):
+    return sfnt_build(font.flavor, [(t.tag, name if t.tag == "name" and name is not None else t.plain)
+                                    for t in sorted(kept, key=lambda t: t.fields["offset"])])
+
+
+def woff_head(flavor, plains):
+    """head with the checksumAdjustment of the sfnt a WOFF decodes to, its tables laid out in tag order."""
+    if "head" not in plains:
+        return None
+    return sfnt_read(sfnt_build(flavor, sorted(plains.items()))).table("head").plain
+
+
+def woff_write(font, kept, name):
+    plains = {t.tag: name if t.tag == "name" and name is not None else t.plain for t in kept}
+    head = woff_head(font.flavor, plains)
+    if head is not None:
+        plains["head"] = head
+    start = 44 + 20 * len(kept)
+    body, directory = bytearray(), []
+    for table in sorted(kept, key=lambda t: t.fields["offset"]):
+        plain = plains[table.tag]
+        stored = table.stored  # the kept tables' compressed bytes, as they were
+        if plain != table.plain:
+            packed = zlib.compress(plain, 9)
+            stored = packed if len(packed) < len(plain) else plain
+        directory.append(struct.pack(">4sIIII", table.tag.encode("latin-1"), start + len(body), len(stored), len(plain),
+                                     table_checksum(table.tag, plain)))
+        body += stored + bytes(-len(stored) % 4)
+    total = 12 + 16 * len(kept) + sum(font_round(len(p)) for p in plains.values())
+    header = struct.pack(WOFF_HEADER, b"wOFF", font.flavor, start + len(body), len(kept), 0, total,
+                         *font.header["version"], 0, 0, 0, 0, 0)
+    return header + b"".join(sorted(directory)) + bytes(body)
+
+
+def woff2_write(font, kept, name):
+    directory, stream, sizes = bytearray(), [], []
+    for table in kept:
+        fields, raw, orig = table.fields, table.stored, table.fields["origLength"]
+        if table.tag == "name" and name is not None:
+            raw, orig = name, len(name)
+        directory.append(fields["transform"] << 6 | fields["index"])
+        if fields["index"] == 63:
+            directory += table.tag.encode("latin-1")
+        directory += woff2_encode(orig)
+        if fields["transformLength"] is not None:
+            directory += woff2_encode(fields["transformLength"])
+        stream.append(raw)
+        sizes.append(orig)
+    packed = node_brotli(b"".join(stream), "pack")
+    start = 48 + len(directory)
+    length = font_round(start + len(packed))
+    total = 12 + 16 * len(kept) + sum(font_round(size) for size in sizes)
+    # head.checksumAdjustment stays as it was: the reference decoder rebuilds glyf and loca and recomputes it
+    header = struct.pack(WOFF2_HEADER, b"wOF2", font.flavor, length, len(kept), 0, total, len(packed),
+                         *font.header["version"], 0, 0, 0, 0, 0)
+    return header + bytes(directory) + packed + bytes(length - start - len(packed))
+
+
+def font_clean(data, ext):
+    font = font_read(data, ext)
+    _, refused, cuts, dropped = font_review(font)
+    if refused:
+        raise Refused("%s: a clear cuts only the version records and drops only tool tables, so produce it again "
+                      "from the upstream file" % "; ".join(refused))
+    head = font.table("head")
+    if head is not None and len(head.plain) < 54:
+        raise Refused("damaged font: a head table shorter than 54 bytes")
+    name = None
+    if cuts:
+        form, records, tags = name_records(font.table("name").plain)
+        name = name_table(form, [r[:4] + (cuts.get(n, r[4]),) for n, r in enumerate(records)], tags)
+    kept = [t for t in font.tables if t.tag not in dropped]
+    return {"sfnt": sfnt_write, "woff": woff_write, "woff2": woff2_write}[font.container](font, kept, name)
+
+
+def proof_name(old, new, cuts):
+    old_form, old_records, old_tags = name_records(old.plain)
+    try:
+        form, records, tags = name_records(new.plain)
+    except Refused as e:
+        raise ProofRefused("name", "unreadable", str(e))
+    if form != old_form:
+        raise ProofRefused("name", "format")
+    if len(records) != len(old_records):
+        raise ProofRefused("name", "count")
+    for number, (before, after) in enumerate(zip(old_records, records)):
+        if before[:4] != after[:4] or after[4] != cuts.get(number, before[4]):
+            raise ProofRefused("name", "record", "%d, name %d [%d/%d/0x%X]" % ((number, before[3]) + before[:3]))
+    if tags != old_tags:
+        raise ProofRefused("name", "langTag")
+
+
+def proof_table(container, old, new, cuts):
+    """The container's fields and the bytes of one kept table, against the original's."""
+    tag = new.tag
+    fields = {"sfnt": ("length",), "woff": ("compLength", "origLength"),
+              "woff2": ("index", "transform", "origLength", "transformLength")}[container]
+    for field in fields:
+        if (tag == "name" and field in ("length", "compLength", "origLength")) \
+                or (tag == "head" and container == "woff" and field == "compLength"):
+            continue  # the cut name changes its lengths; a WOFF's head is compressed again
+        if old.fields[field] != new.fields[field]:
+            raise ProofRefused(tag, "flags" if field == "index" else field)
+    if tag == "name":
+        proof_name(old, new, cuts)
+    elif tag == "head" and container != "woff2":
+        if len(old.plain) != len(new.plain) or old.plain[:8] + old.plain[12:] != new.plain[:8] + new.plain[12:]:
+            raise ProofRefused(tag, "bytes")
+    elif (old.stored != new.stored) if container == "woff2" else (old.plain != new.plain):
+        raise ProofRefused(tag, "bytes")
+
+
+def proof_layout(tables, start, length_field, data):
+    """Each table starts where the one before ends, on a four byte boundary, with zero padding, and the file ends
+    after the last one."""
+    at = start
+    for table in sorted(tables, key=lambda t: t.fields["offset"]):
+        if table.fields["offset"] != at:
+            raise ProofRefused(table.tag, "offset")
+        end = at + table.fields[length_field]
+        if data[end:font_round(end)].strip(b"\x00"):
+            raise ProofRefused(table.tag, "padding")
+        at = font_round(end)
+    if len(data) != at:
+        raise ProofRefused("header", "length")
+
+
+def proof_header(font, new, data):
+    """The copy's header, directory and checksums, computed again from the bytes it holds."""
+    count = len(new.tables)
+    if count != len(font.tables) - len({t.tag for t in font.tables} - {t.tag for t in new.tables}):
+        raise ProofRefused("header", "numTables")
+    if new.container == "sfnt":
+        power = 1 << (count.bit_length() - 1)
+        if new.header["search"] != (power * 16, count.bit_length() - 1, count * 16 - power * 16):
+            raise ProofRefused("header", "searchRange")
+        for table in new.tables:
+            if table.fields["checksum"] != table_checksum(table.tag, table.plain):
+                raise ProofRefused(table.tag, "checksum")
+        proof_layout(new.tables, 12 + 16 * count, "length", data)
+        head = new.table("head")
+        if head is not None:
+            at = head.fields["offset"]
+            zeroed = data[:at + 8] + bytes(4) + data[at + 12:]
+            if struct.unpack(">I", head.plain[8:12])[0] != (0xB1B0AFBA - font_checksum(zeroed)) & 0xFFFFFFFF:
+                raise ProofRefused("head", "checksumAdjustment")
+        return
+    if new.header["version"] != font.header["version"]:
+        raise ProofRefused("header", "version")
+    if new.header["blocks"][:3] != (0, 0, 0):
+        raise ProofRefused("header", "metaOffset")
+    if new.header["blocks"][3:] != (0, 0):
+        raise ProofRefused("header", "privOffset")
+    if new.header["totalSfntSize"] != 12 + 16 * count + sum(font_round(t.fields["origLength"]) for t in new.tables):
+        raise ProofRefused("header", "totalSfntSize")
+    if new.container == "woff":
+        if [t.tag for t in new.tables] != sorted(t.tag for t in new.tables):
+            raise ProofRefused("header", "directoryOrder")
+        for table in new.tables:
+            if table.fields["origChecksum"] != table_checksum(table.tag, table.plain):
+                raise ProofRefused(table.tag, "origChecksum")
+        proof_layout(new.tables, 44 + 20 * count, "compLength", data)
+        head = new.table("head")
+        if head is not None and head.plain != woff_head(new.flavor, {t.tag: t.plain for t in new.tables}):
+            raise ProofRefused("head", "checksumAdjustment")
+        return
+    end = new.header["start"] + new.header["totalCompressedSize"]
+    if len(data) % 4 or len(data) != font_round(end) or data[end:].strip(b"\x00"):
+        raise ProofRefused("header", "totalCompressedSize")
+
+
+def font_proof(original, copy, ext):
+    """Raise ProofRefused unless copy is original with only its version records cut and its dropped tables and
+    blocks left out: every other table byte for byte, its container fields equal, head's other bytes equal, and
+    the copy's header, directory and checksums right for the bytes it holds. An original it cannot read is
+    Refused."""
+    font = font_read(original, ext)
+    _, _, cuts, dropped = font_review(font)
+    try:
+        new = font_read(copy, ext)
+    except Refused as e:
+        raise ProofRefused("file", "unreadable", str(e))
+    if new.flavor != font.flavor:
+        raise ProofRefused("header", "flavor")
+    want = [t.tag for t in font.tables if t.tag not in dropped]
+    got = [t.tag for t in new.tables]
+    for tag in want:
+        if tag not in got:
+            raise ProofRefused(tag, "missing")
+    for tag in got:
+        if tag not in want:
+            raise ProofRefused(tag, "extra")
+    if font.container == "woff2" and got != want:  # a WOFF2 stream holds its tables in directory order
+        raise ProofRefused(next(g for g, w in zip(got, want) if g != w), "order")
+    old = {t.tag: t for t in font.tables}
+    for table in new.tables:
+        proof_table(font.container, old[table.tag], table, cuts)
+    proof_header(font, new, copy)
+
+
+def font_write(path, data):
+    """The one writer a font clear uses (a test replaces it to show the proof refuses a damaged copy)."""
+    with open(path, "wb") as f:
+        f.write(data)
+
+
+def font_check(path):
+    with open(path, "rb") as f:
+        return font_review(font_read(f.read(), kind(path)))[0]
+
+
+def font_scrub(path, tmp):
+    with open(path, "rb") as f:
+        data = f.read()
+    font_write(tmp, font_clean(data, kind(path)))
+    with open(tmp, "rb") as f:
+        copy = f.read()
+    try:
+        font_proof(data, copy, kind(path))
+    except ProofRefused as e:
+        raise Refused("the cleared copy failed its proof (%s), so the original is left as it is" % e)
+
+
+def font_proof_main(paths):
+    if len(paths) != 2 or kind(paths[0]) not in FONTS:
+        sys.stderr.write("usage: meta-scrub.py --font-proof <original .ttf .otf .woff or .woff2> <its cleared copy>\n")
+        return 2
+    try:
+        with open(paths[0], "rb") as f:
+            original = f.read()
+        with open(paths[1], "rb") as f:
+            copy = f.read()
+        font_proof(original, copy, kind(paths[0]))
+    except ProofRefused as e:
+        print(e)
+        return 3
+    except Exception as e:  # the original or the copy cannot be opened, or node is missing: no proof either way
+        sys.stderr.write("meta-scrub: %s: %s\n" % (paths[0], e))
+        return 2
+    print("PROOF HOLDS")
+    return 0
+
+
 def bytes_check(names):
     def check(path):
         with open(path, "rb") as f:
@@ -1255,8 +2011,23 @@ def bytes_scrub(clean):
     return scrub_to
 
 
-def tool(name):
+def program(name):
+    """The full path of the program name on PATH, or None. A match that is not an absolute path, or that sits in
+    the folder the tool runs from, counts as missing: Windows looks in that folder before PATH (unless
+    NoDefaultCurrentDirectoryInExePath is set) and a PATH entry can be ".", so a node.cmd or an ffmpeg.cmd left
+    in the folder being shared would run otherwise."""
     found = shutil.which(name)
+    if not found or not os.path.isabs(found):
+        return None
+    here, folder = os.getcwd(), os.path.dirname(found)
+    if any(os.path.normcase(form(here)) == os.path.normcase(form(folder)) for form in (os.path.normpath,
+                                                                                       os.path.realpath)):
+        return None
+    return found
+
+
+def tool(name):
+    found = program(name)
     if not found:
         raise Refused("needs %s on PATH" % name)
     return found
@@ -1327,6 +2098,7 @@ HANDLERS.update({ext: (bytes_check(names), bytes_scrub(clean)) for ext, names, c
 HANDLERS[".sog"] = (sog_check, sog_scrub)
 HANDLERS.update({ext: (office_check, office_scrub) for ext in OFFICE})
 HANDLERS.update({ext: (video_check, video_scrub) for ext in VIDEO})
+HANDLERS.update({ext: (font_check, font_scrub) for ext in FONTS})
 
 
 def kind(path):
@@ -1386,6 +2158,8 @@ def scrub(path):
 
 
 def main(argv):
+    if argv[:1] == ["--font-proof"]:
+        return font_proof_main(argv[1:])
     check_only = "--check" in argv
     targets = [a for a in argv if a != "--check"]
     if not targets or any(a.startswith("-") for a in targets):

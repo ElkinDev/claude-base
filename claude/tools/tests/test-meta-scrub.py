@@ -1,18 +1,25 @@
 """Tests for meta-scrub.py. Every case builds its files in a fresh temporary directory and runs the tool the
-way a caller runs it, as a subprocess. Cases that need pypdf, Pillow or ffmpeg skip when the machine lacks
-them, and say so.
+way a caller runs it, as a subprocess under -I. Cases that need pypdf, Pillow or ffmpeg skip when the machine
+lacks them, and say so; the WOFF2 font cases need node on PATH and skip the same way.
 
-    python test-meta-scrub.py
+    python -I test-meta-scrub.py
 """
+import base64
+import contextlib
 import gzip
+import importlib.util
 import io
 import json
 import os
+import random
 import shutil
+import socket
+import struct
 import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 import xml.etree.ElementTree as ET
 import zipfile
 import zlib
@@ -54,7 +61,7 @@ def read(path):
 
 
 def run(*args):
-    return subprocess.run([sys.executable, TOOL] + list(args), capture_output=True, text=True)
+    return subprocess.run([sys.executable, "-I", TOOL] + list(args), capture_output=True, text=True)
 
 
 def office(path, core=CORE, app=APP, extra=()):
@@ -1256,6 +1263,830 @@ class Walk(Base):
     def test_the_tool_holds_no_em_dash(self):
         with io.open(TOOL, encoding="utf-8") as f:
             self.assertNotIn("\u2014", f.read())
+
+
+# Fonts. Every fixture is built here with struct: a small TrueType with one square glyph mapped from "A", OFL-style
+# name records and a 64-byte seeded random gvar blob (zlib cannot shrink it, so a WOFF stores it raw). The test
+# writes the sfnt and the WOFF itself; a WOFF2 is written by the node helper below (glyf and loca under the null
+# transform), which also packs and unpacks Brotli for the corruptions a case makes. None of it is the tool's code.
+NODE = shutil.which("node")
+NEEDS_NODE = "needs node on PATH (the WOFF2 cases)"
+TRUETYPE, CFF_FLAVOR = 0x00010000, 0x4F54544F
+WOFF2_KNOWN = ("cmap", "head", "hhea", "hmtx", "maxp", "name", "OS/2", "post", "cvt ", "fpgm", "glyf", "loca", "prep",
+               "CFF ", "VORG", "EBDT", "EBLC", "gasp", "hdmx", "kern", "LTSH", "PCLT", "VDMX", "vhea", "vmtx", "BASE",
+               "GDEF", "GPOS", "GSUB", "EBSC", "JSTF", "MATH", "CBDT", "CBLC", "COLR", "CPAL", "SVG ", "sbix", "acnt",
+               "avar", "bdat", "bloc", "bsln", "cvar", "fdsc", "feat", "fmtx", "fvar", "gvar", "hsty", "just", "lcar",
+               "mort", "morx", "opbd", "prop", "trak", "Zapf", "Silf", "Glat", "Gloc", "Feat", "Sill")
+NODE_FONT = r"""
+const z = require('zlib'), k = z.constants, op = process.argv[1], parts = [];
+const KNOWN = %s;
+const pack = b => z.brotliCompressSync(b, {params: {[k.BROTLI_PARAM_MODE]: k.BROTLI_MODE_FONT,
+                                                    [k.BROTLI_PARAM_QUALITY]: 11}});
+const round = n => (n + 3) & ~3;
+const b128 = n => { const out = [n & 127]; for (n = Math.floor(n / 128); n > 0; n = Math.floor(n / 128))
+                      out.unshift(128 | (n & 127)); return Buffer.from(out); };
+process.stdin.on('data', d => parts.push(d));
+process.stdin.on('end', () => {
+  const input = Buffer.concat(parts);
+  if (op === 'brotli') return process.stdout.write(pack(input));
+  if (op === 'unbrotli') return process.stdout.write(z.brotliDecompressSync(input));
+  const spec = JSON.parse(input.toString('utf8')), dir = [], data = [];
+  let sfnt = 12 + 16 * spec.tables.length;
+  for (const t of spec.tables) {
+    const raw = Buffer.from(t.data, 'base64'), index = KNOWN.indexOf(t.tag);
+    const version = t.tag === 'glyf' || t.tag === 'loca' ? 3 : 0;
+    dir.push(Buffer.from([version << 6 | (index < 0 ? 63 : index)]));
+    if (index < 0) dir.push(Buffer.from(t.tag, 'latin1'));
+    dir.push(b128(raw.length));
+    data.push(raw);
+    sfnt += round(raw.length);
+  }
+  const directory = Buffer.concat(dir), packed = pack(Buffer.concat(data)), tail = [], blocks = [0, 0, 0, 0, 0];
+  let end = 48 + directory.length + packed.length;
+  const put = b => { tail.push(Buffer.alloc(round(end) - end), b); end = round(end) + b.length; return end - b.length; };
+  if (spec.meta) { const m = Buffer.from(spec.meta, 'base64'), c = pack(m);
+                   blocks[0] = put(c); blocks[1] = c.length; blocks[2] = m.length; }
+  if (spec.private) { const p = Buffer.from(spec.private, 'base64'); blocks[3] = put(p); blocks[4] = p.length; }
+  tail.push(Buffer.alloc(round(end) - end));
+  end = round(end);
+  const h = Buffer.alloc(48);
+  h.write('wOF2', 0, 'latin1'); h.writeUInt32BE(spec.flavor, 4); h.writeUInt32BE(end, 8);
+  h.writeUInt16BE(spec.tables.length, 12); h.writeUInt32BE(sfnt, 16); h.writeUInt32BE(packed.length, 20);
+  h.writeUInt16BE(1, 24);
+  blocks.forEach((v, i) => h.writeUInt32BE(v, 28 + 4 * i));
+  process.stdout.write(Buffer.concat([h, directory, packed, ...tail]));
+});
+""" % json.dumps(list(WOFF2_KNOWN))
+
+OFL_RECORDS = ((0, "Copyright 2026 The Sample Project Authors (https://example.org/sample)"), (1, "Sample"),
+               (2, "Regular"), (3, "1.000;SMPL;Sample-Regular"), (4, "Sample Regular"), (5, "Version 1.000"),
+               (6, "Sample-Regular"), (9, "Jean-Claude Sample"),
+               (13, "This Font Software is licensed under the SIL Open Font License, Version 1.1."),
+               (14, "https://openfontlicense.org"))
+# one square glyph: a single contour of four on-curve points, (50,0) (50,700) (550,700) (550,0), padded to 36 bytes
+GLYPH = (struct.pack(">5h", 1, 50, 0, 550, 700) + struct.pack(">HH", 3, 0) + bytes([1, 1, 1, 1])
+         + struct.pack(">4h", 50, 0, 500, 0) + struct.pack(">4h", 0, 700, 0, -700) + bytes(2))
+
+
+def node_font(op, data):
+    env = {k: v for k, v in os.environ.items() if k.upper() not in ("NODE_OPTIONS", "NODE_PATH")}
+    done = subprocess.run([NODE, "-e", NODE_FONT, op], input=data, capture_output=True, env=env, timeout=60)
+    if done.returncode:
+        raise AssertionError("the node helper failed: " + done.stderr.decode("utf-8", "replace"))
+    return done.stdout
+
+
+def records_with(*changes):
+    """OFL_RECORDS with (name id, text) pairs set, added or (text None) removed."""
+    out = dict(OFL_RECORDS)
+    for name_id, text in changes:
+        if text is None:
+            out.pop(name_id, None)
+        else:
+            out[name_id] = text
+    return tuple(sorted(out.items()))
+
+
+def font_name_table(records=OFL_RECORDS, mac_version="Version 1.000"):
+    """A format 0 name table: the version record on the Mac platform (1/0/0) when given, every record on Windows
+    (3/1/0x409), sorted as the spec asks, each string stored once in record order."""
+    rows = [(1, 0, 0, 5, mac_version.encode("mac_roman"))] if mac_version is not None else []
+    rows = sorted(rows + [(3, 1, 0x409, i, t.encode("utf-16-be")) for i, t in records])
+    entries, storage = b"", b""
+    for platform, encoding, language, name_id, raw in rows:
+        entries += struct.pack(">6H", platform, encoding, language, name_id, len(raw), len(storage))
+        storage += raw
+    return struct.pack(">3H", 0, len(rows), 6 + 12 * len(rows)) + entries + storage
+
+
+def font_names(table):
+    """[(platform, encoding, language, name id, text)] of a name table."""
+    _, count, storage = struct.unpack_from(">3H", table)
+    out = []
+    for n in range(count):
+        platform, encoding, language, name_id, length, offset = struct.unpack_from(">6H", table, 6 + 12 * n)
+        raw = table[storage + offset:storage + offset + length]
+        out.append((platform, encoding, language, name_id,
+                    raw.decode("mac_roman") if platform == 1 else raw.decode("utf-16-be")))
+    return out
+
+
+def meta_table(*maps):
+    """A meta table holding (tag, data) maps."""
+    at = 16 + 12 * len(maps)
+    head, body = b"", b""
+    for tag, data in maps:
+        head += struct.pack(">4sII", tag, at + len(body), len(data))
+        body += data
+    return struct.pack(">IIII", 1, 0, at, len(maps)) + head + body
+
+
+def cff_index(items):
+    """A CFF INDEX of the byte strings given."""
+    if not items:
+        return b"\x00\x00"
+    offsets = [1]
+    for item in items:
+        offsets.append(offsets[-1] + len(item))
+    size = next(n for n in (1, 2, 3, 4) if offsets[-1] < 1 << 8 * n)
+    return struct.pack(">HB", len(items), size) + b"".join(o.to_bytes(size, "big") for o in offsets) + b"".join(items)
+
+
+def cff_table(notice="Copyright 2026 The Sample Project Authors", glyph=b"\x8b\x8b\x15\x0e"):
+    """A CFF 1 table of one font: the Top DICT's Notice, FullName and FamilyName are custom strings (SID 391 on) in
+    the String INDEX, and two charstrings follow, .notdef and glyph. Every DICT number takes the five-byte form, so
+    the Top DICT's size does not move with the offsets it holds."""
+    def number(value):
+        return b"\x1d" + struct.pack(">i", value)
+    strings = cff_index([text.encode("latin-1") for text in (notice, "Sample Regular", "Sample")])
+    charstrings, private = cff_index([b"\x0e", glyph]), number(0) + b"\x14"  # defaultWidthX 0
+
+    def top(at):
+        return (number(391) + b"\x01" + number(392) + b"\x02" + number(393) + b"\x03" + number(at) + b"\x11"
+                + number(len(private)) + number(at + len(charstrings)) + b"\x12")
+    head, names, subrs = b"\x01\x00\x04\x04", cff_index([b"Sample-Regular"]), cff_index([])
+    at = len(head) + len(names) + len(cff_index([top(0)])) + len(strings) + len(subrs)
+    return head + names + cff_index([top(at)]) + strings + subrs + charstrings + private
+
+
+def font_tables(records=OFL_RECORDS, mac_version="Version 1.000", extra=None):
+    rng = random.Random(1106)
+    tables = {
+        "head": struct.pack(">IIIIHHqqhhhhHHhhh", 0x10000, 0x10000, 0, 0x5F0F3CF5, 0x000B, 1000, 0, 0, 50, 0, 550, 700,
+                            0, 8, 2, 0, 0),
+        "hhea": struct.pack(">I10h4hhH", 0x10000, 800, -200, 0, 600, 50, 50, 550, 1, 0, 0, 0, 0, 0, 0, 0, 2),
+        "maxp": struct.pack(">I14H", 0x10000, 2, 4, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0),
+        "OS/2": struct.pack(">HhHHH10hh10s4I4sHHHhhhHH2IhhHHH", 4, 550, 400, 5, 0, 650, 600, 0, 75, 650, 600, 0, 350,
+                            50, 300, 0, bytes(10), 1, 0, 0, 0, b"SMPL", 0x40, 0x41, 0x41, 800, -200, 0, 1000, 200, 1,
+                            0, 500, 700, 0, 32, 1),
+        "hmtx": struct.pack(">HhHh", 500, 0, 600, 50),
+        "cmap": struct.pack(">HHHHI", 0, 1, 3, 1, 12) + struct.pack(">7H", 4, 32, 0, 4, 4, 1, 0)
+        + struct.pack(">2H", 0x41, 0xFFFF) + bytes(2) + struct.pack(">2H", 0x41, 0xFFFF)
+        + struct.pack(">2h", 1 - 0x41, 1) + struct.pack(">2H", 0, 0),
+        "loca": struct.pack(">3H", 0, 0, len(GLYPH) // 2),
+        "glyf": GLYPH,
+        "post": struct.pack(">Iihh5I", 0x30000, 0, -100, 50, 0, 0, 0, 0, 0),
+        "name": font_name_table(records, mac_version),
+        "gvar": bytes(rng.getrandbits(8) for _ in range(64)),
+    }
+    assert len(tables["head"]) == 54 and len(tables["hhea"]) == 36 and len(tables["OS/2"]) == 96
+    tables.update(extra or {})
+    return tables
+
+
+def font_checksum(raw):
+    raw = raw + bytes(-len(raw) % 4)
+    return sum(struct.unpack(">%dI" % (len(raw) // 4), raw)) & 0xFFFFFFFF
+
+
+def font_sfnt(tables, flavor=TRUETYPE):
+    """An sfnt, its tables in tag order, every checksum and head's checksumAdjustment set."""
+    tags = sorted(tables)
+    shift = len(tags).bit_length() - 1
+    header = struct.pack(">IHHHH", flavor, len(tags), 16 << shift, shift, 16 * len(tags) - (16 << shift))
+    directory, body, at, head = b"", b"", 12 + 16 * len(tags), None
+    for tag in tags:
+        raw = tables[tag] if tag != "head" else tables[tag][:8] + bytes(4) + tables[tag][12:]
+        if tag == "head":
+            head = at + len(body)
+        directory += struct.pack(">4sIII", tag.encode("latin-1"), font_checksum(raw), at + len(body), len(raw))
+        body += raw + bytes(-len(raw) % 4)
+    data = bytearray(header + directory + body)
+    if head is not None:
+        data[head + 8:head + 12] = struct.pack(">I", (0xB1B0AFBA - font_checksum(bytes(data))) & 0xFFFFFFFF)
+    return bytes(data)
+
+
+def sfnt_tables(data):
+    out = {}
+    for n in range(struct.unpack_from(">H", data, 4)[0]):
+        tag, _, offset, length = struct.unpack_from(">4sIII", data, 12 + 16 * n)
+        out[tag.decode("latin-1")] = data[offset:offset + length]
+    return out
+
+
+def font_woff(tables, flavor=TRUETYPE, meta=None, private=None):
+    """A WOFF 1.0: head as the sfnt in tag order has it, each table zlib-compressed when that is smaller."""
+    plain = sfnt_tables(font_sfnt(tables, flavor))
+    tags = sorted(plain)
+    start = 44 + 20 * len(tags)
+    directory, body = b"", b""
+    for tag in tags:
+        raw = plain[tag]
+        packed = zlib.compress(raw, 9)
+        stored = packed if len(packed) < len(raw) else raw
+        summed = raw if tag != "head" else raw[:8] + bytes(4) + raw[12:]
+        directory += struct.pack(">4sIIII", tag.encode("latin-1"), start + len(body), len(stored), len(raw),
+                                 font_checksum(summed))
+        body += stored + bytes(-len(stored) % 4)
+    end, blocks, fields = start + len(body), b"", [0, 0, 0, 0, 0]
+    if meta is not None:
+        packed = zlib.compress(meta, 9)
+        fields[:3] = end, len(packed), len(meta)
+        blocks += packed
+        end += len(packed)
+    if private is not None:
+        blocks += bytes(-end % 4)
+        end += -end % 4
+        fields[3:] = end, len(private)
+        blocks += private
+        end += len(private)
+    total = 12 + 16 * len(tags) + sum((len(plain[t]) + 3) & ~3 for t in tags)
+    return struct.pack(">4sIIHHIHHIIIII", b"wOFF", flavor, end, len(tags), 0, total, 1, 0, *fields) + directory + body \
+        + blocks
+
+
+def woff_tables(data):
+    out = {}
+    for n in range(struct.unpack_from(">H", data, 12)[0]):
+        tag, offset, comp, orig, _ = struct.unpack_from(">4sIIII", data, 44 + 20 * n)
+        stored = data[offset:offset + comp]
+        out[tag.decode("latin-1")] = stored if comp == orig else zlib.decompress(stored)
+    return out
+
+
+def font_woff2(tables, flavor=TRUETYPE, meta=None, private=None):
+    spec = {"flavor": flavor, "tables": [{"tag": t, "data": base64.b64encode(tables[t]).decode("ascii")}
+                                         for t in sorted(tables)]}
+    if meta is not None:
+        spec["meta"] = base64.b64encode(meta).decode("ascii")
+    if private is not None:
+        spec["private"] = base64.b64encode(private).decode("ascii")
+    return node_font("woff2", json.dumps(spec).encode("utf-8"))
+
+
+class Woff2Entry:
+    def __init__(self, tag, raw, stored, orig):
+        self.tag, self.raw, self.stored, self.orig = tag, raw, stored, orig  # raw: the directory entry's bytes
+
+
+def woff2_b128(data, at):
+    value = 0
+    while True:
+        value, at = value << 7 | data[at] & 127, at + 1
+        if not data[at - 1] & 128:
+            return value, at
+
+
+def woff2_parts(data):
+    """(header fields, [Woff2Entry], the decompressed table stream) of a WOFF2 that has no metadata or private
+    block. glyf and loca are transformed at version 0, any other table at a version other than 0."""
+    header = list(struct.unpack_from(">4sIIHHIIHHIIIII", data))
+    at, entries = 48, []
+    for _ in range(header[3]):
+        begin, flags = at, data[at]
+        at += 1
+        if flags & 63 == 63:
+            tag, at = data[at:at + 4].decode("latin-1"), at + 4
+        else:
+            tag = WOFF2_KNOWN[flags & 63]
+        orig, at = woff2_b128(data, at)
+        stored = orig
+        if (flags >> 6 == 0) == (tag in ("glyf", "loca")):
+            stored, at = woff2_b128(data, at)
+        entries.append(Woff2Entry(tag, data[begin:at], stored, orig))
+    return header, entries, node_font("unbrotli", data[at:at + header[6]])
+
+
+def woff2_slices(entries, stream):
+    out, at = {}, 0
+    for entry in entries:
+        out[entry.tag] = stream[at:at + entry.stored]
+        at += entry.stored
+    return out
+
+
+def woff2_join(header, entries, stream):
+    """A WOFF2 again from its parts, its lengths and totalSfntSize computed for them."""
+    directory = b"".join(e.raw for e in entries)
+    packed = node_font("brotli", stream)
+    end = 48 + len(directory) + len(packed)
+    header = list(header)
+    header[2], header[3], header[6] = (end + 3) & ~3, len(entries), len(packed)
+    header[5] = 12 + 16 * len(entries) + sum((e.orig + 3) & ~3 for e in entries)
+    header[9:] = [0, 0, 0, 0, 0]
+    return struct.pack(">4sIIHHIIHHIIIII", *header) + directory + packed + bytes(-end % 4)
+
+
+def font_bytes(tables, ext, flavor=TRUETYPE, meta=None, private=None):
+    if ext in (".ttf", ".otf"):
+        return font_sfnt(tables, flavor)
+    return (font_woff if ext == ".woff" else font_woff2)(tables, flavor, meta, private)
+
+
+def font_read_tables(data, ext):
+    """{tag: bytes} as the container keeps them plain (a WOFF2's stream slices)."""
+    if ext in (".ttf", ".otf"):
+        return sfnt_tables(data)
+    if ext == ".woff":
+        return woff_tables(data)
+    header, entries, stream = woff2_parts(data)
+    return woff2_slices(entries, stream)
+
+
+def gvar_flipped(data, ext):
+    """The font with one byte of its gvar table changed."""
+    data = bytearray(data)
+    if ext == ".ttf":
+        for n in range(struct.unpack_from(">H", data, 4)[0]):
+            tag, _, offset, _ = struct.unpack_from(">4sIII", data, 12 + 16 * n)
+            if tag == b"gvar":
+                data[offset + 7] ^= 1
+                return bytes(data)
+    elif ext == ".woff":
+        for n in range(struct.unpack_from(">H", data, 12)[0]):
+            tag, offset, comp, orig, _ = struct.unpack_from(">4sIIII", data, 44 + 20 * n)
+            if tag == b"gvar":
+                assert comp == orig, "gvar is stored raw, so one byte of the file is one byte of the table"
+                data[offset + 7] ^= 1
+                return bytes(data)
+    else:
+        header, entries, stream = woff2_parts(bytes(data))
+        at = 0
+        for entry in entries:
+            if entry.tag == "gvar":
+                stream = stream[:at + 7] + bytes([stream[at + 7] ^ 1]) + stream[at + 8:]
+                return woff2_join(header, entries, stream)
+            at += entry.stored
+    raise AssertionError("no gvar table")
+
+
+def gvar_removed(data, ext):
+    if ext == ".ttf":
+        tables = sfnt_tables(data)
+        del tables["gvar"]
+        return font_sfnt(tables, struct.unpack_from(">I", data)[0])
+    if ext == ".woff":
+        tables = woff_tables(data)
+        del tables["gvar"]
+        return font_woff(tables, struct.unpack_from(">I", data, 4)[0])
+    header, entries, stream = woff2_parts(data)
+    slices = woff2_slices(entries, stream)
+    kept = [e for e in entries if e.tag != "gvar"]
+    return woff2_join(header, kept, b"".join(slices[e.tag] for e in kept))
+
+
+def glyf_transform_flipped(data):
+    """A WOFF2 whose glyf entry has bit 6 of its flags flipped (the null transform 3 read as 2)."""
+    header, entries, stream = woff2_parts(data)
+    for entry in entries:
+        if entry.tag == "glyf":
+            entry.raw = bytes([entry.raw[0] ^ 0x40]) + entry.raw[1:]
+    return woff2_join(header, entries, stream)
+
+
+def staged_tool():
+    spec = importlib.util.spec_from_file_location("meta_scrub_under_test", TOOL)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def house_login():
+    try:
+        return os.getlogin()
+    except OSError:
+        return os.environ.get("USERNAME", "")
+
+
+class FontFiles(Base):
+    CONTAINERS = (".ttf", ".woff", ".woff2")
+
+    def setUp(self):
+        Base.setUp(self)
+        self.home = self.path("home")
+        os.makedirs(os.path.join(self.home, ".claude", "tools"))
+        # the private list is read from the home the test gives the tool, so a case controls it
+        self.env = dict(os.environ, USERPROFILE=self.home, HOME=self.home)
+
+    def run_font(self, *args, env=None):
+        return subprocess.run([sys.executable, "-I", TOOL] + list(args), capture_output=True, text=True,
+                              env=env or self.env, timeout=120)
+
+    def font(self, name, tables, ext, **kw):
+        p = self.path(name + ext)
+        with open(p, "wb") as f:
+            f.write(font_bytes(tables, ext, **kw))
+        return p
+
+    def write(self, name, data):
+        p = self.path(name)
+        with open(p, "wb") as f:
+            f.write(data)
+        return p
+
+    def need(self, ext):
+        if ext == ".woff2" and not NODE:
+            self.skipTest(NEEDS_NODE)
+
+    def assert_cleared(self, before, after, ext, dropped=(), version="Version 1.000"):
+        """after is before with the version records cut to version and the dropped tables gone, every other
+        table byte for byte (head but for its checksumAdjustment outside a WOFF2)."""
+        old, new = font_read_tables(before, ext), font_read_tables(after, ext)
+        self.assertEqual(sorted(set(old) - set(dropped)), sorted(new))
+        for tag in new:
+            if tag == "name":
+                want = [r[:4] + ((version,) if r[3] == 5 else r[4:]) for r in font_names(old[tag])]
+                self.assertEqual(want, font_names(new[tag]))
+            elif tag == "head" and ext != ".woff2":
+                self.assertEqual(old[tag][:8] + old[tag][12:], new[tag][:8] + new[tag][12:])
+            else:
+                self.assertEqual(old[tag], new[tag], tag)
+
+    def test_a_clean_font_passes_a_clear_leaves_it_byte_for_byte_and_its_copy_proves(self):
+        # the credits stay unnamed: a URL in record 14, a designer called Jean-Claude in record 9
+        for ext in self.CONTAINERS:
+            with self.subTest(ext):
+                self.need(ext)
+                p = self.font("clean", font_tables(), ext)
+                before = read(p)
+                done = self.run_font("--check", p)
+                self.assertEqual((0, ""), (done.returncode, done.stdout), done.stderr)
+                done = self.run_font(p)
+                self.assertEqual((0, "", ""), (done.returncode, done.stdout, done.stderr))
+                self.assertEqual(before, read(p))
+                copy = self.write("copy" + ext, before)
+                done = self.run_font("--font-proof", p, copy)
+                self.assertEqual((0, "PROOF HOLDS"), (done.returncode, done.stdout.strip()), done.stderr)
+
+    def test_a_tagged_version_record_is_named_cut_on_every_platform_and_proved(self):
+        tagged = "Version 1.000;gftools[0.9.28]"
+        for ext in self.CONTAINERS:
+            with self.subTest(ext):
+                self.need(ext)
+                p = self.font("tagged", font_tables(records_with((5, tagged)), mac_version=tagged), ext)
+                before = read(p)
+                original = self.write("original" + ext, before)
+                done = self.run_font("--check", p)
+                self.assertEqual(1, done.returncode, done.stdout + done.stderr)
+                self.assertIn("name 5 [1/0/0x0]", done.stdout)
+                self.assertIn("name 5 [3/1/0x409]", done.stdout)
+                self.assertIn("gftools", done.stdout)
+                self.assertEqual(before, read(p))
+                done = self.run_font(p)
+                self.assertEqual(0, done.returncode, done.stderr)
+                self.assertIn("cleared", done.stdout)
+                after = read(p)
+                self.assert_cleared(before, after, ext)
+                if ext == ".ttf":
+                    self.assertEqual(0xB1B0AFBA, font_checksum(after))
+                done = self.run_font("--font-proof", original, p)
+                self.assertEqual((0, "PROOF HOLDS"), (done.returncode, done.stdout.strip()), done.stderr)
+                done = self.run_font("--check", p)
+                self.assertEqual((0, ""), (done.returncode, done.stdout))
+
+    def test_the_proof_refuses_a_changed_or_missing_table_and_a_changed_transform(self):
+        tagged = "Version 1.000; ttfautohint (v1.8.4.7-5d5b)"
+        for ext in self.CONTAINERS:
+            with self.subTest(ext):
+                self.need(ext)
+                original = self.font("original", font_tables(records_with((5, tagged)), mac_version=tagged), ext)
+                cleared = self.write("cleared" + ext, read(original))
+                self.assertEqual(0, self.run_font(cleared).returncode)
+                good = read(cleared)
+                cases = [("gvar-byte", gvar_flipped(good, ext), "PROOF REFUSED gvar bytes"),
+                         ("gvar-gone", gvar_removed(good, ext), "PROOF REFUSED gvar missing")]
+                if ext == ".woff2":
+                    cases.append(("glyf-bit", glyf_transform_flipped(good), "PROOF REFUSED glyf transform"))
+                for label, data, line in cases:
+                    copy = self.write(label + ext, data)
+                    done = self.run_font("--font-proof", original, copy)
+                    self.assertEqual((3, line), (done.returncode, done.stdout.strip()), label + done.stderr)
+                done = self.run_font("--font-proof", original, cleared)
+                self.assertEqual((0, "PROOF HOLDS"), (done.returncode, done.stdout.strip()))
+        self.assertEqual(2, self.run_font("--font-proof", original).returncode)
+
+    def test_in_process_a_copy_the_proof_refuses_leaves_the_original_and_no_temporary_file(self):
+        tool = staged_tool()
+        tagged = "Version 1.000;gftools[0.9.27]"
+        for ext in (".ttf", ".woff", ".woff2"):
+            with self.subTest(ext):
+                self.need(ext)
+                folder = self.path("in-process" + ext)
+                os.makedirs(folder)
+                p = os.path.join(folder, "font" + ext)
+                with open(p, "wb") as f:
+                    f.write(font_bytes(font_tables(records_with((5, tagged))), ext))
+                before = read(p)
+
+                def corrupt(path, data):
+                    with open(path, "wb") as f:
+                        f.write(gvar_flipped(data, ext))
+                err = io.StringIO()
+                with unittest.mock.patch.object(tool, "font_write", corrupt), \
+                        unittest.mock.patch.dict(os.environ, {"USERPROFILE": self.home, "HOME": self.home}), \
+                        contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                    code = tool.main([p])
+                self.assertEqual(2, code)
+                self.assertIn("failed its proof (PROOF REFUSED gvar bytes)", err.getvalue())
+                self.assertEqual(before, read(p))
+                self.assertEqual(["font" + ext], os.listdir(folder))
+
+    def test_a_house_trace_in_a_record_is_named_and_the_clear_refuses_naming_the_record(self):
+        with open(os.path.join(self.home, ".claude", "tools", "meta-scrub-names.txt"), "w", encoding="utf-8") as f:
+            f.write("\n  Zorblatt Studio  \n\n")
+        traces = [("a local path", "C:\\Users\\username\\fonts"), ("a listed word", "zorblatt studio"),
+                  ("the machine name", socket.gethostname())]
+        if len(house_login()) >= 3:
+            traces.append(("the login name", house_login()))
+        cases = [(what, ".ttf", 10, "Built in %s for the page" % word) for what, word in traces]
+        cases += [("a local path", ext, 10, "Built in C:\\Users\\username\\fonts for the page") for ext in (".woff", ".woff2")]
+        cases.append(("a local path", ".ttf", 13, "OFL, kept in /home/username/fonts"))  # a credit gets the scan too
+        for what, ext, name_id, text in cases:
+            with self.subTest(what=what, ext=ext, name_id=name_id):
+                self.need(ext)
+                p = self.font("trace-%d" % len(what), font_tables(records_with((name_id, text))), ext)
+                before = read(p)
+                done = self.run_font("--check", p)
+                self.assertEqual(1, done.returncode, done.stdout + done.stderr)
+                self.assertIn("name %d [3/1/0x409]" % name_id, done.stdout)
+                self.assertIn("holds " + what, done.stdout)
+                done = self.run_font(p)
+                self.assertEqual(2, done.returncode)
+                self.assertIn("name %d [3/1/0x409] \"%s\"" % (name_id, text), done.stderr)
+                self.assertIn("produce it again from the upstream file", done.stderr)
+                self.assertEqual(before, read(p))
+
+    def test_a_program_name_outside_the_credits_is_refused_and_one_in_a_credit_passes(self):
+        # record 9, a credit, names a program too and stays unnamed: the credits get the house scan only
+        designer = (9, "Jean-Claude Sample, drawn in FontForge with Claude Code")
+        for name_id, text, program in ((3, "1.000;FontForge;Sample-Regular", "fontforge"),
+                                       (10, "Made with Claude Code", "claude code"),
+                                       (10, "Drawn at claude.ai", "claude.ai"),
+                                       (4, "Sample Regular pyftsubset", "pyftsubset")):
+            with self.subTest(name_id=name_id, program=program):
+                p = self.font("program", font_tables(records_with(designer, (name_id, text))), ".ttf")
+                before = read(p)
+                done = self.run_font("--check", p)
+                self.assertEqual(1, done.returncode, done.stdout + done.stderr)
+                self.assertIn("name %d [3/1/0x409]" % name_id, done.stdout)
+                self.assertIn("the program " + program, done.stdout)
+                self.assertNotIn("name 9", done.stdout)  # Jean-Claude Sample, a credit
+                done = self.run_font(p)
+                self.assertEqual(2, done.returncode)
+                self.assertIn("name %d [3/1/0x409] \"%s\"" % (name_id, text), done.stderr)
+                self.assertEqual(before, read(p))
+
+    def test_a_type_designer_or_a_typeface_cited_in_a_description_is_not_named(self):
+        # a bare Claude or Gemini is a person's or a typeface's name, never read as an AI program
+        for text in ("A revival after Claude Garamond", "Gemini Sans, the twin of Sample"):
+            with self.subTest(text=text):
+                p = self.font("garamond", font_tables(records_with((10, text))), ".ttf")
+                before = read(p)
+                done = self.run_font("--check", p)
+                self.assertEqual((0, ""), (done.returncode, done.stdout), done.stderr)
+                done = self.run_font(p)
+                self.assertEqual((0, "", ""), (done.returncode, done.stdout, done.stderr))
+                self.assertEqual(before, read(p))
+
+    def test_a_version_record_with_no_number_is_refused(self):
+        p = self.font("bare", font_tables(records_with((5, "Sample build")), mac_version=None), ".ttf")
+        before = read(p)
+        done = self.run_font("--check", p)
+        self.assertEqual(2, done.returncode)
+        self.assertIn("not read", done.stdout)
+        self.assertIn("no leading version number", done.stdout)
+        self.assertEqual(2, self.run_font(p).returncode)
+        self.assertEqual(before, read(p))
+
+    def test_tool_tables_are_dropped_and_every_other_table_stays_byte_for_byte(self):
+        extra = {"FFTM": struct.pack(">Iqqq", 1, 3800000000, 3800000000, 3800000000),
+                 "DSIG": struct.pack(">IHH", 1, 0, 0), "TSI1": b"VTT source of glyph A\x00"}
+        for ext in self.CONTAINERS:
+            with self.subTest(ext):
+                self.need(ext)
+                p = self.font("tools", font_tables(extra=extra), ext)
+                before = read(p)
+                original = self.write("original" + ext, before)
+                done = self.run_font("--check", p)
+                self.assertEqual(1, done.returncode, done.stdout + done.stderr)
+                for tag in extra:
+                    self.assertIn("table " + tag, done.stdout)
+                done = self.run_font(p)
+                self.assertEqual(0, done.returncode, done.stderr)
+                self.assert_cleared(before, read(p), ext, dropped=extra)
+                done = self.run_font("--font-proof", original, p)
+                self.assertEqual((0, "PROOF HOLDS"), (done.returncode, done.stdout.strip()), done.stderr)
+                self.assertEqual(0, self.run_font("--check", p).returncode)
+
+    def test_an_image_table_or_a_table_outside_the_opentype_set_is_named_and_refused(self):
+        for ext, tag, why in ((".ttf", "SVG ", "an image table"), (".woff2", "SVG ", "an image table"),
+                              (".ttf", "zzzz", "outside the OpenType set"), (".woff", "sbix", "an image table")):
+            with self.subTest(ext=ext, tag=tag):
+                self.need(ext)
+                p = self.font("image", font_tables(extra={tag: b"<svg><!-- made by someone --></svg>"}), ext)
+                before = read(p)
+                done = self.run_font("--check", p)
+                self.assertEqual(1, done.returncode, done.stdout + done.stderr)
+                self.assertIn("table %s (%s)" % (tag.strip(), why), done.stdout)
+                done = self.run_font(p)
+                self.assertEqual(2, done.returncode)
+                self.assertIn(why, done.stderr)
+                self.assertEqual(before, read(p))
+
+    def test_woff_metadata_and_private_blocks_are_named_and_dropped(self):
+        meta = b'<?xml version="1.0" encoding="UTF-8"?><metadata version="1.0"><vendor name="Sample"/></metadata>'
+        for ext, meta_text, private, said in (
+                (".woff", meta, b"\x01\x02opaque", ("metadata block", "private block")),
+                (".woff", meta.replace(b"Sample", b"C:\\Users\\username"), None, ("metadata block holding a local path",)),
+                (".woff2", meta, b"\x01\x02opaque", ("metadata block", "private block")),
+                (".woff2", None, b"\x07", ("private block",))):
+            with self.subTest(ext=ext, said=said):
+                self.need(ext)
+                p = self.font("blocks", font_tables(), ext, meta=meta_text, private=private)
+                before = read(p)
+                original = self.write("original" + ext, before)
+                done = self.run_font("--check", p)
+                self.assertEqual(1, done.returncode, done.stdout + done.stderr)
+                for item in said:
+                    self.assertIn(item, done.stdout)
+                done = self.run_font(p)
+                self.assertEqual(0, done.returncode, done.stderr)
+                after = read(p)
+                layout = ">4sIIHHIHHIIIII" if ext == ".woff" else ">4sIIHHIIHHIIIII"
+                self.assertEqual((0, 0, 0, 0, 0), struct.unpack_from(layout, after)[-5:])
+                self.assert_cleared(before, after, ext)
+                done = self.run_font("--font-proof", original, p)
+                self.assertEqual((0, "PROOF HOLDS"), (done.returncode, done.stdout.strip()), done.stderr)
+                self.assertEqual(0, self.run_font("--check", p).returncode)
+
+    def test_a_meta_table_with_only_dlng_stays_and_one_with_another_tag_goes(self):
+        p = self.font("dlng", font_tables(extra={"meta": meta_table((b"dlng", b"Latn"))}), ".ttf")
+        before = read(p)
+        self.assertEqual((0, ""), (self.run_font("--check", p).returncode, self.run_font("--check", p).stdout))
+        self.assertEqual(0, self.run_font(p).returncode)
+        self.assertEqual(before, read(p))
+        p = self.font("bild", font_tables(extra={"meta": meta_table((b"dlng", b"Latn"), (b"bild", b"x"))}), ".ttf")
+        before = read(p)
+        done = self.run_font("--check", p)
+        self.assertEqual(1, done.returncode)
+        self.assertIn("table meta (bild)", done.stdout)
+        self.assertEqual(0, self.run_font(p).returncode)
+        self.assert_cleared(before, read(p), ".ttf", dropped=("meta",))
+
+    def otf(self, name, blob, tag="CFF "):
+        tables = font_tables()
+        for drop in ("glyf", "loca", "gvar"):
+            del tables[drop]
+        tables[tag] = blob
+        return self.font(name, tables, ".otf", flavor=CFF_FLAVOR)
+
+    def test_a_cff_string_with_a_house_trace_is_refused_and_one_in_the_glyph_code_is_not_named(self):
+        p = self.otf("traced", cff_table(notice="Built in C:\\Users\\username\\fonts"))
+        before = read(p)
+        done = self.run_font("--check", p)
+        self.assertEqual(1, done.returncode, done.stdout + done.stderr)
+        self.assertIn("table CFF holds a local path", done.stdout)
+        done = self.run_font(p)
+        self.assertEqual(2, done.returncode)
+        self.assertIn("table CFF holds a local path", done.stderr)
+        self.assertEqual(before, read(p))
+        # rmoveto with a width and rlineto, whose operand bytes read "C:/" and "~/" as Latin-1
+        glyph = b"C:/\x15~/\x05\x0e"
+        table = cff_table(glyph=glyph)
+        self.assertIn(b"\x0eC:/\x15~/", table)  # word-bounded as a whole-table scan would read it
+        p = self.otf("glyph-code", table)
+        before = read(p)
+        done = self.run_font("--check", p)
+        self.assertEqual((0, ""), (done.returncode, done.stdout), done.stderr)
+        done = self.run_font(p)
+        self.assertEqual((0, "", ""), (done.returncode, done.stdout, done.stderr))
+        self.assertEqual(before, read(p))
+
+    def test_a_cff_table_that_does_not_parse_is_refused_and_a_cff2_table_is_not_scanned(self):
+        whole = cff_table()
+        damaged = (("cut", whole[:20]), ("cff2 header", b"\x02" + whole[1:]),
+                   ("string index past its table", whole[:-len(whole) // 3]),
+                   ("no top dict", whole[:4] + cff_index([b"Sample-Regular"]) + cff_index([]) + cff_index([])))
+        for label, blob in damaged:
+            with self.subTest(label):
+                p = self.otf("damaged", blob)
+                before = read(p)
+                done = self.run_font("--check", p)
+                self.assertEqual(2, done.returncode, done.stdout + done.stderr)
+                self.assertIn("not read", done.stdout)
+                self.assertIn("damaged font", done.stdout)
+                self.assertEqual(2, self.run_font(p).returncode)
+                self.assertEqual(before, read(p))
+        # a CFF2 table holds no strings: a path in its bytes is glyph code and the font passes
+        p = self.otf("cff2", b"\x02\x00\x05\x00\x00" + b"\x00\x00\x00\x00" + b"C:\\Users\\username\\src ~/", tag="CFF2")
+        before = read(p)
+        done = self.run_font("--check", p)
+        self.assertEqual((0, ""), (done.returncode, done.stdout), done.stderr)
+        self.assertEqual(0, self.run_font(p).returncode)
+        self.assertEqual(before, read(p))
+
+    def test_a_damaged_font_or_a_collection_is_refused_and_left_as_it_is(self):
+        for ext in self.CONTAINERS:
+            with self.subTest(ext):
+                self.need(ext)
+                whole = font_bytes(font_tables(), ext)
+                p = self.write("cut" + ext, whole[:len(whole) // 2])
+                before = read(p)
+                done = self.run_font("--check", p)
+                self.assertEqual(2, done.returncode)
+                self.assertIn("not read", done.stdout)
+                self.assertEqual(2, self.run_font(p).returncode)
+                self.assertEqual(before, read(p))
+        collection = b"ttcf" + struct.pack(">HHI", 1, 0, 1) + struct.pack(">I", 16) + font_sfnt(font_tables())
+        for name, said in (("fonts.ttc", "does not handle .ttc files"), ("fonts.ttf", "a font collection, not read")):
+            with self.subTest(name):
+                p = self.write(name, collection)
+                done = self.run_font("--check", p)
+                self.assertEqual(2, done.returncode)
+                self.assertIn(said, done.stdout)
+                self.assertEqual(2, self.run_font(p).returncode)
+                self.assertEqual(collection, read(p))
+
+    @unittest.skipUnless(NODE, NEEDS_NODE)
+    def test_without_node_on_path_a_woff2_is_not_read(self):
+        p = self.font("tagged", font_tables(records_with((5, "Version 1.000;gftools[0.9.28]"))), ".woff2")
+        before = read(p)
+        system = os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "System32")
+        env = dict(self.env, PATH=os.pathsep.join((os.path.dirname(sys.executable), system)))
+        done = self.run_font("--check", p, env=env)
+        self.assertEqual(2, done.returncode)
+        self.assertIn("not read, needs node on PATH", done.stdout)
+        self.assertEqual(2, self.run_font(p, env=env).returncode)
+        self.assertEqual(2, self.run_font("--font-proof", p, p, env=env).returncode)
+        self.assertEqual(before, read(p))
+
+
+class ProgramsFromPath(Base):
+    """node, ffprobe and ffmpeg run from PATH only. A program of that name in the folder the tool is started from
+    (Windows looks there first, and a PATH entry can be ".") counts as missing and never runs."""
+
+    def plant(self, folder, name):
+        # the planted program writes a marker beside itself and exits 0
+        if sys.platform == "win32":
+            path, body = os.path.join(folder, name + ".cmd"), '@echo off\r\necho ran> "%~dp0' + name + '-ran.txt"\r\n'
+        else:
+            path, body = os.path.join(folder, name), '#!/bin/sh\necho ran > "$(dirname "$0")/' + name + '-ran.txt"\n'
+        with open(path, "w", newline="") as f:
+            f.write(body)
+        os.chmod(path, 0o755)
+        subprocess.run([path], capture_output=True, timeout=30)  # it runs when called, so the case can fail
+        marker = os.path.join(folder, name + "-ran.txt")
+        self.assertTrue(os.path.isfile(marker), "the planted %s did not run" % name)
+        os.remove(marker)
+
+    def lookups(self, folder):
+        """(label, environment) for each way a lookup reaches the folder: the folder first (Windows' default),
+        "." on PATH, and the folder's own path on PATH, in capitals on Windows."""
+        plain = {k: v for k, v in os.environ.items() if k.upper() != "NODEFAULTCURRENTDIRECTORYINEXEPATH"}
+        path = os.environ.get("PATH", "")
+        own = folder.upper() if sys.platform == "win32" else folder
+        ways = [("dot on PATH", dict(plain, PATH=os.pathsep.join((".", path)), NoDefaultCurrentDirectoryInExePath="1")),
+                ("the folder on PATH", dict(plain, PATH=os.pathsep.join((own, path)),
+                                            NoDefaultCurrentDirectoryInExePath="1"))]
+        if sys.platform == "win32":
+            ways.insert(0, ("the folder first", plain))
+        return ways
+
+    def assert_refused(self, folder, args, stream, said):
+        for label, env in self.lookups(folder):
+            with self.subTest(args=args, lookup=label):
+                done = subprocess.run([sys.executable, "-I", TOOL] + list(args), capture_output=True, text=True,
+                                      env=env, cwd=folder, timeout=120)
+                ran = sorted(n for n in os.listdir(folder) if n.endswith("-ran.txt"))
+                for name in ran:  # gone again, so each lookup is judged on its own run
+                    os.remove(os.path.join(folder, name))
+                self.assertEqual([], ran, "a planted program ran")
+                self.assertEqual(2, done.returncode, done.stdout + done.stderr)
+                self.assertIn(said, getattr(done, stream))
+
+    def test_a_node_or_an_ffmpeg_in_the_folder_the_tool_runs_from_never_runs(self):
+        folder = self.path("shared")
+        os.makedirs(folder)
+        files = {}
+        if NODE:
+            files["font.woff2"] = font_bytes(font_tables(records_with((5, "Version 1.000;gftools[0.9.28]"))),
+                                             ".woff2")
+        video = shutil.which("ffmpeg") and shutil.which("ffprobe")
+        if video:
+            clip = os.path.join(folder, "clip.mp4")
+            made = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                                   "testsrc=size=64x64:rate=10:duration=1", "-c:v", "mpeg4", "-metadata", "title=draft",
+                                   clip], capture_output=True, text=True, timeout=60)
+            self.assertEqual(0, made.returncode, made.stderr)
+            files["clip.mp4"] = read(clip)
+        if not files:
+            self.skipTest("needs node, or ffmpeg and ffprobe")
+        for name, data in files.items():
+            with open(os.path.join(folder, name), "wb") as f:
+                f.write(data)
+        for name in ("node", "ffmpeg"):
+            self.plant(folder, name)
+        if NODE:
+            self.assert_refused(folder, ("--check", "font.woff2"), "stdout", "font.woff2: not read, needs node on PATH")
+            self.assert_refused(folder, ("font.woff2",), "stderr", "needs node on PATH")
+        if video:
+            # a clear probes with the ffprobe on PATH, then reaches for ffmpeg
+            self.assert_refused(folder, ("clip.mp4",), "stderr", "needs ffmpeg on PATH")
+            self.plant(folder, "ffprobe")
+            self.assert_refused(folder, ("--check", "clip.mp4"), "stdout", "clip.mp4: not read, needs ffprobe on PATH")
+        for name, data in files.items():
+            self.assertEqual(data, read(os.path.join(folder, name)))
 
 
 if __name__ == "__main__":
