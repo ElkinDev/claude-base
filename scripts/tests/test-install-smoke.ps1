@@ -66,6 +66,31 @@ try {
     }
     Assert-True (Test-Path -LiteralPath (Join-Path $kitHome 'skills\decision-rounds\SKILL.md')) `
         'the skill the analyst preloads still comes through the installer'
+    # The design skills the designer agent reads from disk come through the installer as well, each
+    # folder whole. The names are written here on purpose: a skill dropped from the kit fails this
+    # list, and a folder that lost a reference, a script or the font index fails the file walk.
+    $designSkills = @('impeccable', 'taste-skill', 'emil-design-eng', 'soft-skill', 'redesign-skill',
+                      'brandkit', 'animation-vocabulary', 'review-animations', 'apple-design')
+    foreach ($name in $designSkills) {
+        $src = Join-Path $script:RepoRoot "claude\skills\$name"
+        Assert-True (Test-Path -LiteralPath (Join-Path $src 'SKILL.md')) "the kit carries the design skill $name"
+        Assert-True (Test-Path -LiteralPath (Join-Path $kitHome "skills\$name\SKILL.md")) "the design skill $name landed"
+        $missing = @(Get-ChildItem -LiteralPath $src -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+            -not (Test-Path -LiteralPath (Join-Path $kitHome ("skills\$name" + $_.FullName.Substring($src.Length))))
+        } | ForEach-Object { $_.FullName.Substring($src.Length + 1) })
+        Assert-True ($missing.Count -eq 0) ("every file of $name landed, missing: " + ($missing -join ', '))
+    }
+    foreach ($rel in @('reference\craft-floor.md', 'reference\degraded\finish-reviewer.md', 'scripts\impeccable',
+                       'scripts\impeccable.cmd', 'scripts\VERSION', 'scripts\data\font-index.json',
+                       'scripts\live-browser.js')) {
+        Assert-True (Test-Path -LiteralPath (Join-Path $kitHome "skills\impeccable\$rel")) "impeccable carries $rel"
+    }
+    Assert-True (Test-Path -LiteralPath (Join-Path $kitHome 'skills\review-animations\STANDARDS.md')) `
+        'review-animations carries its STANDARDS.md'
+    # The launcher runs under sh: a carriage return after its shebang names an interpreter that does
+    # not exist, so the copy a checkout gives the installer must keep LF (.gitattributes).
+    $launcherBytes = [IO.File]::ReadAllBytes((Join-Path $kitHome 'skills\impeccable\scripts\impeccable'))
+    Assert-True (-not ($launcherBytes -contains 13)) 'the impeccable sh launcher landed with LF line endings'
     Assert-True (Test-Path -LiteralPath (Join-Path $kitHome 'settings.json')) 'settings.json landed'
     # The first three bytes, not Get-Content -Raw: the reader strips a BOM while decoding, so a
     # manifest that carried one would still read clean and the assertion could never fail.

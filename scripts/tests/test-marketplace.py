@@ -358,6 +358,30 @@ class VendoredNotices(unittest.TestCase):
         for skill in skill_dirs(os.path.join(PLUGINS, "groundwork", "skills")):
             self.assertIn("plugins/groundwork/skills/%s/" % skill, root, skill)
 
+    # The design skills are carried whole from their upstream sets, not rewritten, so each one has
+    # a row in the root notice naming its folder, its source repository and its author.
+    DESIGN_SKILLS = {
+        "impeccable": "github.com/pbakaus/impeccable",
+        "taste-skill": "github.com/Leonxlnx/taste-skill",
+        "soft-skill": "github.com/Leonxlnx/taste-skill-classics",
+        "redesign-skill": "github.com/Leonxlnx/taste-skill",
+        "brandkit": "github.com/Leonxlnx/imagegen-skills",
+        "emil-design-eng": "github.com/emilkowalski/skills",
+        "animation-vocabulary": "github.com/emilkowalski/skills",
+        "review-animations": "github.com/emilkowalski/skills",
+        "apple-design": "github.com/emilkowalski/skills",
+    }
+
+    def test_each_design_skill_is_carried_and_has_its_source_row(self):
+        root = read(os.path.join(ROOT, "THIRD-PARTY-NOTICES.md"))
+        kit = set(skill_dirs(KIT_SKILLS))
+        rows = {line for line in root.splitlines() if line.startswith("| `claude/skills/")}
+        for skill, repo in self.DESIGN_SKILLS.items():
+            self.assertIn(skill, kit, skill)
+            row = [line for line in rows if line.startswith("| `claude/skills/%s/`" % skill)]
+            self.assertEqual(len(row), 1, skill)
+            self.assertIn(repo, row[0], skill)
+
 
 class ManifestHygiene(unittest.TestCase):
     """The four json files are published. No person, no address, no personal attribution."""

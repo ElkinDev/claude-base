@@ -23,9 +23,13 @@ claude/                     -> installs into ~/.claude
   statusline.ps1            role / model / effort / account / folder / git / context / quota status line
   claude-account.ps1        optional: switch between several Claude Code accounts (see docs/ACCOUNTS.md)
   merge-settings.py         helper the switcher uses to merge settings.json without dropping keys
-  skills/                   18 skills (TDD, quality gates, evidence, adversarial review, commit
+  skills/                   27 skills (TDD, quality gates, evidence, adversarial review, commit
                             and PR text, investigation, delegation, handover, ...); the other
-                            five ship as plugins, see plugins/ below
+                            five ship as plugins, see plugins/ below. Nine of the 27 are the
+                            design skills the designer agent reads (impeccable, taste-skill,
+                            soft-skill, redesign-skill, brandkit, emil-design-eng,
+                            animation-vocabulary, review-animations, apple-design), carried
+                            whole from upstream; THIRD-PARTY-NOTICES.md names each source
   hooks/                    worklog, branch helpers, markitdown, read guard, big-result alarm,
                             subagent turn budget notes, landings,
                             session audit, compaction checkpoint + summary persistence + recovery,
@@ -78,7 +82,8 @@ plugins/                    the skills that only make sense as a set, packaged f
                             panes that host them
   groundwork/               design vocabulary and spec slicing, skipped by the installer so its
                             two skills exist only as `/groundwork:...`; carries its own NOTICE.md
-THIRD-PARTY-NOTICES.md      the upstream licence of the skills derived from a third-party set
+THIRD-PARTY-NOTICES.md      the upstream licence of the skills derived from a third-party set, and
+                            the source repository and author of each design skill carried whole
 herdr/                      Herdr multiplexer config, the Ctrl+Alt+N global hotkey, the verified
                             version and the CLI surface the kit drives
 scripts/                    zero-token tooling: usage ledger and board, compaction watcher and report,

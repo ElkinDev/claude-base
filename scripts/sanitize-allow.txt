@@ -42,3 +42,18 @@ sz3
 # A public project whose license URL a private product's open source notices carry (python-holidays, MIT). An
 # organization whose repositories are public (gh api, 2026-10-01).
 vacanza
+
+# The upstream sources of the design skills carried whole under claude/skills (THIRD-PARTY-NOTICES.md), and the
+# design-system projects taste-skill cites by link. Organizations and accounts whose cited repositories are public.
+pbakaus
+Leonxlnx
+emilkowalski
+material-components
+microsoft
+carbon-design-system
+Shopify
+primer
+alphagov
+uswds
+radix-ui
+shadcn-ui

@@ -15,6 +15,10 @@ scripts/tool-errors.rules text eol=lf
 scripts/tests/fixtures/sanitize/** text eol=lf
 # The uiautomator dumps the frame tool is tested against, compared byte for byte.
 claude/tools/tests/fixtures/xmlframe/** text eol=lf
+# The impeccable skill's scripts stay LF as upstream ships them. Its launcher is a sh script with no
+# extension, and a CR after its shebang names an interpreter that does not exist. impeccable.cmd
+# still takes CRLF from the *.cmd line below, which comes later and so wins.
+claude/skills/impeccable/scripts/** text eol=lf
 .gitignore text eol=lf
 .gitattributes text eol=lf
 *.ps1 text eol=crlf
