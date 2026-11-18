@@ -75,7 +75,9 @@ try {
         $src = Join-Path $script:RepoRoot "claude\skills\$name"
         Assert-True (Test-Path -LiteralPath (Join-Path $src 'SKILL.md')) "the kit carries the design skill $name"
         Assert-True (Test-Path -LiteralPath (Join-Path $kitHome "skills\$name\SKILL.md")) "the design skill $name landed"
+        # The same files Get-KitPairs takes: a .bak or .new a run left in a clone is not the kit.
         $missing = @(Get-ChildItem -LiteralPath $src -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+            $_.FullName -notmatch '[\\/]__pycache__[\\/]' -and $_.Extension -notin @('.pyc', '.bak', '.new') -and
             -not (Test-Path -LiteralPath (Join-Path $kitHome ("skills\$name" + $_.FullName.Substring($src.Length))))
         } | ForEach-Object { $_.FullName.Substring($src.Length + 1) })
         Assert-True ($missing.Count -eq 0) ("every file of $name landed, missing: " + ($missing -join ', '))
