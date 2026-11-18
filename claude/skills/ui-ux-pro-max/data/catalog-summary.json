@@ -13,7 +13,7 @@
     "palettes": 192,
     "reasoningProfiles": 192,
     "fontPairings": 74,
-    "googleFonts": 1934,
+    "googleFonts": 1933,
     "curatedIcons": 105,
     "upstreamPhosphorIcons": 1512,
     "uxGuidelines": 119,
@@ -24,10 +24,10 @@
   },
   "snapshots": {
     "google-fonts.csv": {
-      "sha256": "1c8c3b2ea1faf6a1012da463756def8b3889db33f2226f0343bb4daa80307d03"
+      "sha256": "2e3742bc76891a667830b1978dd923cb1c42d07582fc22b6d6a91e9ae364ce4a"
     },
     "google-font-licenses.json": {
-      "sha256": "35688523f2955795caa1a47c53b83099e60c1708461476f9cc3a050cf3b0148a"
+      "sha256": "90d830e201b44798466a670b89e39281f78ff00af008644f88d6e64984aa7beb"
     },
     "icons.csv": {
       "sha256": "50816c6012030178195a16ee481ebf58b47bd985d70e8ec58886cc83f6eddafc"

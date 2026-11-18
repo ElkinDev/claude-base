@@ -524,5 +524,18 @@ class FormatValidator(unittest.TestCase):
             self.check(os.path.join(PLUGINS, plugin))
 
 
+class CatalogCountsTest(unittest.TestCase):
+    """The carried ui-ux-pro-max catalog agrees with its own validator."""
+
+    def test_validate_data_exits_zero(self):
+        script = os.path.join(ROOT, "claude", "skills", "ui-ux-pro-max",
+                              "scripts", "validate_data.py")
+        # No -I: the skill imports its sibling modules from its own folder.
+        run = subprocess.run(["python", script], capture_output=True,
+                             timeout=120, cwd=ROOT, text=True,
+                             encoding="utf-8", errors="replace")
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
