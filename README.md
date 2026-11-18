@@ -23,12 +23,12 @@ claude/                     -> installs into ~/.claude
   statusline.ps1            role / model / effort / account / folder / git / context / quota status line
   claude-account.ps1        optional: switch between several Claude Code accounts (see docs/ACCOUNTS.md)
   merge-settings.py         helper the switcher uses to merge settings.json without dropping keys
-  skills/                   27 skills (TDD, quality gates, evidence, adversarial review, commit
+  skills/                   28 skills (TDD, quality gates, evidence, adversarial review, commit
                             and PR text, investigation, delegation, handover, ...); the other
-                            five ship as plugins, see plugins/ below. Nine of the 27 are the
+                            five ship as plugins, see plugins/ below. Ten of the 28 are the
                             design skills the designer agent reads (impeccable, taste-skill,
                             soft-skill, redesign-skill, brandkit, emil-design-eng,
-                            animation-vocabulary, review-animations, apple-design), carried
+                            animation-vocabulary, review-animations, apple-design, ui-ux-pro-max), carried
                             whole from upstream; THIRD-PARTY-NOTICES.md names each source
   hooks/                    worklog, branch helpers, markitdown, read guard, big-result alarm,
                             subagent turn budget notes, landings,

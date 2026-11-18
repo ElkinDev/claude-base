@@ -25,7 +25,7 @@ The same notice travels with the plugin on its own channel, at `plugins/groundwo
 
 ## Skills carried whole
 
-Nine design skills reach a machine through the installer, under `claude/skills/`, as their folders were in use when they were added (2026-11-18): not rewritten for this kit, each folder with its references and scripts. Some of their one-line descriptions were shortened before that, so a later refresh is a comparison against upstream, not a blind re-copy.
+Ten design skills reach a machine through the installer, under `claude/skills/`, as their folders were in use when they were added (2026-11-18): not rewritten for this kit, each folder with its references and scripts. Some of their one-line descriptions were shortened before that, so a later refresh is a comparison against upstream, not a blind re-copy.
 
 | Folder here | Source repository | Author | Notes |
 |---|---|---|---|
@@ -38,8 +38,9 @@ Nine design skills reach a machine through the installer, under `claude/skills/`
 | `claude/skills/animation-vocabulary/` | https://github.com/emilkowalski/skills | Emil Kowalski | |
 | `claude/skills/review-animations/` | https://github.com/emilkowalski/skills | Emil Kowalski | with its `STANDARDS.md` |
 | `claude/skills/apple-design/` | https://github.com/emilkowalski/skills | Emil Kowalski | |
+| `claude/skills/ui-ux-pro-max/` | https://github.com/nextlevelbuilder/ui-ux-pro-max-skill | nextlevelbuilder | with its `data/`, `references/` and `scripts/`; the SKILL.md script paths name `<skills-dir>` |
 
-All nine carry `disable-model-invocation: true` except apple-design, so no session loads them on its own: a session or an agent reads the SKILL.md it needs, as the designer agent does.
+All ten carry `disable-model-invocation: true` except apple-design, so no session loads them on its own: a session or an agent reads the SKILL.md it needs, as the designer agent does.
 
 ## The licence
 

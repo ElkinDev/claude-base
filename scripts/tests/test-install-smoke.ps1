@@ -70,7 +70,7 @@ try {
     # folder whole. The names are written here on purpose: a skill dropped from the kit fails this
     # list, and a folder that lost a reference, a script or the font index fails the file walk.
     $designSkills = @('impeccable', 'taste-skill', 'emil-design-eng', 'soft-skill', 'redesign-skill',
-                      'brandkit', 'animation-vocabulary', 'review-animations', 'apple-design')
+                      'brandkit', 'animation-vocabulary', 'review-animations', 'apple-design', 'ui-ux-pro-max')
     foreach ($name in $designSkills) {
         $src = Join-Path $script:RepoRoot "claude\skills\$name"
         Assert-True (Test-Path -LiteralPath (Join-Path $src 'SKILL.md')) "the kit carries the design skill $name"

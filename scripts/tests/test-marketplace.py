@@ -370,6 +370,7 @@ class VendoredNotices(unittest.TestCase):
         "animation-vocabulary": "github.com/emilkowalski/skills",
         "review-animations": "github.com/emilkowalski/skills",
         "apple-design": "github.com/emilkowalski/skills",
+        "ui-ux-pro-max": "github.com/nextlevelbuilder/ui-ux-pro-max-skill",
     }
 
     def test_each_design_skill_is_carried_and_has_its_source_row(self):
