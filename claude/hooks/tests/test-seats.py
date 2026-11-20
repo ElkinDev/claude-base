@@ -425,7 +425,7 @@ class SeatDocsTest(unittest.TestCase):
                 "Not launched through the account launcher: no seat, no window, no --no-chrome. "
                 "Relaunch through it before working.",
                 # the POSIX installer deferral, which outlives the launcher landing
-                "The POSIX installer and the launcher twin are deferred"):
+                "the launcher twin is `cca`"):
             self.assertIn(phrase, text, "the page never says: " + phrase)
 
     def test_the_seats_page_reads_as_a_manual_for_the_launcher_the_kit_ships(self):

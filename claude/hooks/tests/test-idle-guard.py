@@ -201,8 +201,13 @@ def main():
 
     reset(); ticket("x-g1")
     t = write("h5 spaced.jsonl", "")
-    code, out, _ = run(payload(t.replace("/", "\\")))
-    check("H5 a backslash path with a space", blocked(out))
+    if os.name == "nt":
+        code, out, _ = run(payload(t.replace("/", "\\")))
+        check("H5 a backslash path with a space", blocked(out))
+    else:
+        # A backslash is no separator here and Claude Code never sends one, so the space is what is left to pin.
+        code, out, _ = run(payload(t))
+        check("H5 a path with a space", blocked(out))
 
     reset(); ticket("x-g1")
     t = write("h6.jsonl", agent("a1") + agent("a1"))

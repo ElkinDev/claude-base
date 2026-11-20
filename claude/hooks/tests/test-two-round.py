@@ -149,6 +149,7 @@ class TwoRound(Base):
         self.assertIn("proto-x has 2 BLOCK reviews", self.notice(self.bash(cmd)))
         self.assertEqual(self.bash(cmd), "", "once per key")
 
+    @unittest.skipUnless(os.name == "nt", "the MSYS /c/ form names a Windows drive; elsewhere it is no path at all")
     def test_bash_msys_form(self):
         self.review("review-proto-x-%s.md" % DAY, "BLOCK")
         p2 = self.review("review-proto-x-r2-%s.md" % DAY, "BLOCK").replace("\\", "/")

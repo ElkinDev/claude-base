@@ -31,6 +31,9 @@ FILE_FLAGS = {"-file", "-f", "/file"}
 INLINE_FLAGS = {"-c", "-command", "-encodedcommand"}
 LEADING_CD = re.compile(r"^\s*(?:cd\s+[^&;|]+&&\s*)+", re.IGNORECASE)
 RUNNER = "run-logged.py"
+# The interpreter named in the rewritten command, which runs in the session shell: macOS and Linux have python3 and
+# often no python, while Windows keeps the name it always used, where python3 is often the Store stub.
+PYTHON = "python" if os.name == "nt" else "python3"
 SLUG_CAP = 40
 
 
@@ -127,7 +130,7 @@ def rewrite(command, project_dir):
     prefix, wrapped = split_leading_cd(command)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     log = posix(os.path.join(project_dir, "build", "tool-logs", "%s-%s.log" % (stamp, slug(wrapped))))
-    new_command = 'python "%s" --log "%s" -- %s' % (runner, log, shell_quote(wrapped))
+    new_command = '%s "%s" --log "%s" -- %s' % (PYTHON, runner, log, shell_quote(wrapped))
     if prefix:
         new_command = "%s %s" % (prefix, new_command)
     return new_command, log

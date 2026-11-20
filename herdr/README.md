@@ -9,6 +9,10 @@ reproduced on another machine.
 - `config.toml` - the personal Herdr config (keymap, sounds, toasts). Copy it to the config path.
 - `hotkey/launch-herdr.cmd` - launcher that opens Herdr in its own Windows Terminal window.
 - `hotkey/setup-hotkey.ps1` - creates the global Ctrl+Alt+N shortcut that runs the launcher.
+- `hotkey/launch-herdr.sh` - the macOS launcher: Herdr in a new Terminal (or iTerm2) window. See
+  macOS below.
+- `hotkey/setup-hotkey.sh` and `hotkey/HerdrHotkey.swift` - the global Ctrl+Option+Cmd+N key on
+  macOS: a small background app built from the Swift file and started at every sign-in.
 - `verified-version.txt` - the Herdr build this kit was verified against.
 - `cli-surface.txt` - the subcommands the kit drives, one per line, probed by
   `python scripts/doctor.py`.
@@ -85,6 +89,72 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\hotkey\setup-hotkey.ps1
 Pass a different key or launcher if you want: `-Hotkey "Ctrl+Alt+H" -Target "C:\path\launch-herdr.cmd"`.
 The `.lnk` must stay in the Start Menu for the global hotkey to keep working. Delete it to disable
 the hotkey.
+
+## macOS
+`install.py --herdr` runs the same steps as on Windows (`install/kit_herdr.py`); by hand they are:
+
+1. Install Herdr with its official installer, saved and run as a file:
+   ```
+   curl -fsSLo /tmp/herdr-install.sh https://herdr.dev/install.sh && sh /tmp/herdr-install.sh
+   ```
+   It puts `herdr` in `~/.local/bin` (`HERDR_INSTALL_DIR` changes that) and always installs the
+   stable build: it reads no channel. Add `~/.local/bin` to your PATH if the installer says it is
+   missing.
+2. Copy `config.toml` to the path `herdr --help` prints on its `Config:` line:
+   `~/.config/herdr/config.toml` (`$XDG_CONFIG_HOME/herdr/config.toml` when that is set, the file
+   `HERDR_CONFIG_PATH` names when that is set). It is not under `~/Library`.
+3. Move to the preview channel this kit is verified on: `herdr channel set preview`. On macOS and
+   Linux the channel is the `[update] channel` line of `config.toml`, and the kit's file already
+   says preview, so the command leaves it as it is and installs the latest preview build.
+   `herdr channel show` prints the channel; a Homebrew, mise or Nix install has no preview channel.
+4. Wire the Claude integration into the kit home:
+   `CLAUDE_CONFIG_DIR=~/.claude herdr integration install claude`. `herdr integration status`
+   lists where its file went.
+5. The launcher and the hotkey, below.
+
+The installer does steps 1 to 4 and never fails the install over them: an installed Herdr is not
+reinstalled and keeps its channel (the run says which), and a `config.toml` of yours that differs
+is kept, with the kit version beside it as `config.toml.new`. One difference from Windows: an
+installed Herdr with no `config.toml` follows preview from its next `herdr update` once the kit
+file is in place, and the run says so; `herdr channel set stable` keeps it on stable.
+
+### The launcher
+`hotkey/launch-herdr.sh [folder]` opens a new window running `herdr` in the folder (your home
+folder when none is given): an iTerm2 window when iTerm2 is running, a Terminal window otherwise.
+`KIT_HERDR_TERMINAL=Terminal` or `KIT_HERDR_TERMINAL=iTerm` picks the app. The command runs in
+the window's login shell, so the window stays open at a prompt after you detach.
+
+### Ctrl+Option+Cmd+N opens Herdr
+`install.py --herdr` sets the key up on its own, with `hotkey/setup-hotkey.sh`, the twin of
+`setup-hotkey.ps1`. It compiles `HerdrHotkey.swift` into a small background app,
+`~/.claude/herdr-hotkey/HerdrHotkey.app` (no Dock icon, no window), with the launcher copied inside
+it, and loads `~/Library/LaunchAgents/local.herdr-hotkey.plist`, which starts the app now and at
+every sign-in. The app registers the key with `RegisterEventHotKey`, so macOS tells it when that one
+combination is pressed in any app and it needs no Accessibility permission. Run the script by hand
+the same way: `sh herdr/hotkey/setup-hotkey.sh`.
+
+- The first press may ask whether Herdr Hotkey can control Terminal (or iTerm): allow it, since that
+  is how the window opens. The app is rebuilt only when `HerdrHotkey.swift` or the launcher changes,
+  because macOS asks again after every new build.
+- Every start and every press is a line in `~/.claude/logs/herdr-hotkey.log`, so a key that does
+  nothing can be traced there; a key another app already holds says so in that log.
+- `sh herdr/hotkey/setup-hotkey.sh --remove` stops it and deletes the app and the plist.
+- Why not Ctrl+Cmd+N: Finder uses it for New Folder with Selection (Apple's list of Mac keyboard
+  shortcuts, support.apple.com/en-us/102650), while no macOS or Finder shortcut uses
+  Ctrl+Option+Cmd+N. To pick another key, change `kVK_ANSI_N` and the modifiers in
+  `HerdrHotkey.swift` and run the script again.
+
+It needs `swiftc`, which Apple's Command Line Tools bring (`xcode-select --install`). Without it the
+installer prints the manual route instead, through the Shortcuts app:
+1. Shortcuts > Settings > Advanced: turn on "Allow Running Scripts".
+2. File > New Shortcut, named `Open Herdr`. Add the "Run Shell Script" action with this script,
+   the path being your clone's:
+   ```
+   /bin/sh "/path/to/claude-base/herdr/hotkey/launch-herdr.sh"
+   ```
+   Add a folder after it to open Herdr there instead of in your home folder.
+3. In the shortcut's details (the (i) button), Add Keyboard Shortcut, and press Ctrl+Option+Cmd+N.
+4. The first time, macOS may ask whether Shortcuts can control Terminal (or iTerm); allow it.
 
 ## Driving a pane from a script
 The Claude integration gives every pane a state (`idle`, `working`, `blocked`, `done`, `unknown`)

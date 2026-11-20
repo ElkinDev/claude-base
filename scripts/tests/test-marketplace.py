@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -531,7 +532,7 @@ class CatalogCountsTest(unittest.TestCase):
         script = os.path.join(ROOT, "claude", "skills", "ui-ux-pro-max",
                               "scripts", "validate_data.py")
         # No -I: the skill imports its sibling modules from its own folder.
-        run = subprocess.run(["python", script], capture_output=True,
+        run = subprocess.run([sys.executable, script], capture_output=True,
                              timeout=120, cwd=ROOT, text=True,
                              encoding="utf-8", errors="replace")
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)

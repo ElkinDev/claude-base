@@ -34,3 +34,7 @@ New hook capabilities (nothing beyond today's behavior), worklog for non-Claude 
 - Parity suite: for each hook, the same fixture repo and event payload produce equivalent observable output (context JSON, jsonl lines, git config state) on Windows, macOS, and Linux, and match the ps1 behavior on Windows during the overlap.
 - Statusline renders correct fields from recorded payloads on the three OSes within the 300 ms budget.
 - `docs/HOOKS.md` covers exactly the hooks present in the repo; CI fails if a hook file exists without a registry entry.
+
+## Status (proposal, on the macos-support branch)
+
+The worklog hooks left the kit on 2026-10-28, and every user-scope hook that remains is Python, so the portable core is the hooks themselves, run as `python3` on macOS and Linux. The two project hooks have Python twins, `claude/hooks/branch-check.py` and `branch-upstream-fix.py`, and the status line has one, `claude/statusline.py` (about 35 ms per refresh on macOS, its two git calls run in parallel). The twins are sources of their own rather than replacements: Windows keeps the `.ps1` files and their wiring until a CI run on Windows proves the Python ones there.

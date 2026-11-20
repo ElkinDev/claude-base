@@ -29,6 +29,7 @@ def bash_arg_len(cmd, log):
     return len('-lc "' + inner.replace('"', "\\" + '"') + '"')
 
 
+@unittest.skipUnless(os.name == "nt" and shutil.which("powershell"), "gate-detach.ps1 is a Windows launcher (PowerShell 5.1)")
 class GateDetachCommandTest(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="gdc-")
