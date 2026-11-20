@@ -341,8 +341,9 @@ class SetupHotkeyTest(unittest.TestCase):
                          'case $1 in print) [ -f "%s" ];; bootstrap) touch "%s";; bootout) rm -f "%s";; esac\n'
                          % (self.calls, self.loaded, self.loaded, self.loaded))
         os.chmod(launchctl, 0o755)
+        # KIT_CODESIGN_IDENTITY -: ad hoc, so no case reaches for a Developer ID in the keychain and its prompt.
         self.env = dict(os.environ, KIT_HOME=self.kit, KIT_LAUNCHAGENTS_DIR=self.agents, KIT_LAUNCHCTL=launchctl,
-                        KIT_SWIFTC=compiler, TMPDIR=self.base)
+                        KIT_SWIFTC=compiler, TMPDIR=self.base, KIT_CODESIGN_IDENTITY="-")
 
     def tearDown(self):
         shutil.rmtree(self.base, ignore_errors=True)

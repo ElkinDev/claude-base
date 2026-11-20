@@ -61,7 +61,8 @@ guard registerStatus == noErr else {
 }
 say("registered Ctrl+Option+Cmd+N -> \(launcher)")
 
-// A background app: no Dock icon, no menu bar, no window.
+// An accessory app, the policy menu bar utilities use: no Dock icon and no window, while the window server still
+// hands it the key. A background-only app (.prohibited) registered the key and was never told it was pressed.
 let app = NSApplication.shared
-app.setActivationPolicy(.prohibited)
+app.setActivationPolicy(.accessory)
 app.run()

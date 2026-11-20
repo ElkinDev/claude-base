@@ -13,8 +13,10 @@
 # Herdr Hotkey can control Terminal (or iTerm): allow it once, since that is how the window opens.
 #
 # The app is rebuilt only when HerdrHotkey.swift or the launcher changed: each build has a new signature, and macOS
-# asks for the Terminal permission again after one. KIT_HOME, KIT_LAUNCHAGENTS_DIR, KIT_LAUNCHCTL and KIT_SWIFTC
-# point a test somewhere else.
+# asks for the Terminal permission again after one. It is signed with your Developer ID when the keychain holds one,
+# so macOS names you in Login Items instead of "unidentified developer", and ad hoc otherwise; KIT_CODESIGN_IDENTITY
+# names another identity, or - for ad hoc. KIT_HOME, KIT_LAUNCHAGENTS_DIR, KIT_LAUNCHCTL and KIT_SWIFTC point a test
+# somewhere else.
 set -eu
 
 if [ "$(uname -s)" != Darwin ]; then
@@ -61,7 +63,11 @@ fi
 # XML text for the two plists: a path with & or < must not break them.
 xml() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
 
-stamp=$(cat "$source_swift" "$launcher_src" | shasum -a 256 | cut -c1-64)
+identity=${KIT_CODESIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null \
+    | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1)}
+[ -n "$identity" ] || identity=-
+# The identity is part of the stamp, so a Developer ID that arrives later re-signs the app on the next run.
+stamp=$( { cat "$source_swift" "$launcher_src"; printf '%s' "$identity"; } | shasum -a 256 | cut -c1-64)
 built=$(cat "$app/Contents/Resources/source.sha256" 2>/dev/null || true)
 rebuilt=0
 if [ "$stamp" != "$built" ] || [ ! -x "$app/Contents/MacOS/HerdrHotkey" ]; then
@@ -92,9 +98,10 @@ if [ "$stamp" != "$built" ] || [ ! -x "$app/Contents/MacOS/HerdrHotkey" ]; then
 </dict>
 </plist>
 EOF
-    # Signed as a whole bundle (ad hoc, nothing leaves the machine), so macOS knows it by one identity when it asks
-    # about Terminal.
-    codesign --force --sign - "$bundle" >/dev/null 2>&1 || true
+    # Signed as a whole bundle, so macOS knows it by one identity when it asks about Terminal. No timestamp: nothing
+    # leaves the machine. A Developer ID signing that fails (a keychain prompt refused) falls back to ad hoc.
+    codesign --force --sign "$identity" --timestamp=none "$bundle" >/dev/null 2>&1 \
+        || codesign --force --sign - "$bundle" >/dev/null 2>&1 || true
     mkdir -p "$home_dir"
     rm -rf "${app:?}"
     mv "$bundle" "$app"
