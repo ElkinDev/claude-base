@@ -192,7 +192,8 @@ def test_the_leading_cd_stays_outside_the_wrapper(ws):
     """run-logged.py runs its argument in a fresh bash, so a cd inside it would not move the
     session shell. The chain stays in front and only the gradle part is wrapped."""
     command = wrapped_command(ws, "cd C:/Repo/myapp-w99 && ./gradlew :app:testDebugUnitTest")
-    assert command.startswith("cd C:/Repo/myapp-w99 && python "), command
+    python = "python" if os.name == "nt" else "python3"   # the name the filter writes on this system
+    assert command.startswith("cd C:/Repo/myapp-w99 && %s " % python), command
     assert command.count("cd C:/Repo/myapp-w99") == 1, "the cd must not also be wrapped: %s" % command
     quoted = command[command.index(" -- ") + 4:]
     assert quoted == "'./gradlew :app:testDebugUnitTest'", quoted
@@ -368,8 +369,15 @@ def fake_herdr(directory):
     """A herdr stand-in on PATH that records that it was called, and nothing else."""
     os.makedirs(directory, exist_ok=True)
     marker = os.path.join(directory, "called.txt")
-    with open(os.path.join(directory, "herdr.cmd"), "w", encoding="ascii") as handle:
-        handle.write('@echo %%* > "%s"\r\n' % marker)
+    if os.name == "nt":
+        with open(os.path.join(directory, "herdr.cmd"), "w", encoding="ascii") as handle:
+            handle.write('@echo %%* > "%s"\r\n' % marker)
+    else:
+        # shutil.which finds only an executable file here, and a .cmd is neither on macOS nor Linux.
+        stand_in = os.path.join(directory, "herdr")
+        with open(stand_in, "w", encoding="ascii") as handle:
+            handle.write('#!/bin/sh\necho "$*" > \'%s\'\n' % marker)
+        os.chmod(stand_in, 0o755)
     return marker
 
 
