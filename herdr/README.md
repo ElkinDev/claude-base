@@ -9,6 +9,8 @@ reproduced on another machine.
 - `config.toml` - the personal Herdr config (keymap, sounds, toasts). Copy it to the config path.
 - `hotkey/launch-herdr.cmd` - launcher that opens Herdr in its own Windows Terminal window.
 - `hotkey/setup-hotkey.ps1` - creates the global Ctrl+Alt+N shortcut that runs the launcher.
+- `hotkey/launch-herdr.sh` - the macOS launcher: Herdr in a new Terminal (or iTerm2) window. See
+  macOS below.
 - `verified-version.txt` - the Herdr build this kit was verified against.
 - `cli-surface.txt` - the subcommands the kit drives, one per line, probed by
   `python scripts/doctor.py`.
@@ -85,6 +87,57 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\hotkey\setup-hotkey.ps1
 Pass a different key or launcher if you want: `-Hotkey "Ctrl+Alt+H" -Target "C:\path\launch-herdr.cmd"`.
 The `.lnk` must stay in the Start Menu for the global hotkey to keep working. Delete it to disable
 the hotkey.
+
+## macOS
+`install.py --herdr` runs the same steps as on Windows (`install/kit_herdr.py`); by hand they are:
+
+1. Install Herdr with its official installer, saved and run as a file:
+   ```
+   curl -fsSLo /tmp/herdr-install.sh https://herdr.dev/install.sh && sh /tmp/herdr-install.sh
+   ```
+   It puts `herdr` in `~/.local/bin` (`HERDR_INSTALL_DIR` changes that) and always installs the
+   stable build: it reads no channel. Add `~/.local/bin` to your PATH if the installer says it is
+   missing.
+2. Copy `config.toml` to the path `herdr --help` prints on its `Config:` line:
+   `~/.config/herdr/config.toml` (`$XDG_CONFIG_HOME/herdr/config.toml` when that is set, the file
+   `HERDR_CONFIG_PATH` names when that is set). It is not under `~/Library`.
+3. Move to the preview channel this kit is verified on: `herdr channel set preview`. On macOS and
+   Linux the channel is the `[update] channel` line of `config.toml`, and the kit's file already
+   says preview, so the command leaves it as it is and installs the latest preview build.
+   `herdr channel show` prints the channel; a Homebrew, mise or Nix install has no preview channel.
+4. Wire the Claude integration into the kit home:
+   `CLAUDE_CONFIG_DIR=~/.claude herdr integration install claude`. `herdr integration status`
+   lists where its file went.
+5. The launcher and the hotkey, below.
+
+The installer does steps 1 to 4 and never fails the install over them: an installed Herdr is not
+reinstalled and keeps its channel (the run says which), and a `config.toml` of yours that differs
+is kept, with the kit version beside it as `config.toml.new`. One difference from Windows: an
+installed Herdr with no `config.toml` follows preview from its next `herdr update` once the kit
+file is in place, and the run says so; `herdr channel set stable` keeps it on stable.
+
+### The launcher
+`hotkey/launch-herdr.sh [folder]` opens a new window running `herdr` in the folder (your home
+folder when none is given): an iTerm2 window when iTerm2 is running, a Terminal window otherwise.
+`KIT_HERDR_TERMINAL=Terminal` or `KIT_HERDR_TERMINAL=iTerm` picks the app. The command runs in
+the window's login shell, so the window stays open at a prompt after you detach.
+
+### Ctrl+Option+N opens Herdr (one step by hand)
+macOS has no file that carries a global key the way a Windows `.lnk` does, so the installer
+binds nothing and prints these steps instead. With the Shortcuts app:
+1. Shortcuts > Settings > Advanced: turn on "Allow Running Scripts".
+2. File > New Shortcut, named `Open Herdr`. Add the "Run Shell Script" action with this script,
+   the path being your clone's:
+   ```
+   /bin/sh "/path/to/claude-base/herdr/hotkey/launch-herdr.sh"
+   ```
+   Add a folder after it to open Herdr there instead of in your home folder.
+3. In the shortcut's details (the (i) button), Add Keyboard Shortcut, and press Ctrl+Option+N.
+4. The first time, macOS may ask whether Shortcuts can control Terminal (or iTerm); allow it.
+
+To remove the hotkey, delete the `Open Herdr` shortcut. An Automator Quick Action that runs the
+same line, with the key set in System Settings > Keyboard > Keyboard Shortcuts > Services, works
+too, but only while the front app offers the Services menu.
 
 ## Driving a pane from a script
 The Claude integration gives every pane a state (`idle`, `working`, `blocked`, `done`, `unknown`)
