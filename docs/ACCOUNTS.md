@@ -217,6 +217,45 @@ Register-ArgumentCompleter -CommandName cc -ParameterName Target -ScriptBlock {
 
 A profile is only read when a shell starts, so an already open window will not have `cc` until you run `. $PROFILE` in it.
 
+## macOS and Linux
+
+The switcher has a POSIX twin, `claude/claude-account.py` (Python 3.8 or later, standard library only), with the same commands, flags, files and dry run as the PowerShell one. Everything above holds unless this section says otherwise.
+
+### Installing it, and why the command is `cca`
+
+The POSIX installer copies `claude-account.py` and `merge-settings.py` into the kit home (`$KIT_HOME`, or `~/.claude`) and `bin/cca` into `<kit home>/bin`, then makes `cca` reachable from a new terminal. `cca` is a small `#!/bin/sh` launcher: it follows a symbolic link to its real location, finds `claude-account.py` one folder above it and runs it with `python3`, passing every argument through, `--` included. Without the launcher, `python3 ~/.claude/claude-account.py work` does the same.
+
+The command is `cca`, not `cc`. On macOS and Linux `cc` is the system C compiler (`/usr/bin/cc`), and a kit folder placed early on PATH would shadow it for every `make`, `pip` and `node-gyp` build on the machine. Windows keeps `cc`.
+
+```sh
+cca                     list the accounts
+cca work -p             create the profile without opening a session
+cca work                open it here, in this terminal
+cca work -w             open it in a separate tab or window
+cca work -- -r          pick which session to resume
+cca work -Role orchestrator
+```
+
+Both spellings work: the PowerShell ones (`-p`, `-Prepare`, `-Role`, `-ShowEnv`, `-Sh` as a prefix of it) and GNU long options (`--prepare`, `--role orchestrator`, `--rename=new`, `--show-env`, `--window 500000`). As on Windows, a flag the switcher does not know (`-c`, `--model opus`) is forwarded to `claude`, and `--` is still the safe way to pass claude's flags, because `-r` is the switcher's rename and `-n` its no-share. On the help, `cca -h` or `cca help` is safer than `cca ?`, since zsh refuses an unmatched `?` before the command runs.
+
+### What differs
+
+**Symbolic links instead of junctions.** The shared folders are ordinary symbolic links with absolute targets, so a renamed profile keeps pointing at the right place. The delete path never descends a link: it unlinks every link it meets, at any depth, then removes the folder, and afterwards checks that every shared folder of `~/.claude` that existed before still exists. It also refuses the names `.` and `..`, which the name pattern alone would let through to the home folder.
+
+**Where the sign-in lives.** On Linux the OAuth token is `<config dir>/.credentials.json`, as on Windows, so it moves with the folder. On macOS Claude Code keeps it in the login Keychain instead, in a generic password item named after the config directory: `Claude Code-credentials` for `~/.claude` (no `CLAUDE_CONFIG_DIR`), and `Claude Code-credentials-<first 8 hex digits of the SHA-256 of the CLAUDE_CONFIG_DIR string>` for any other folder, read from the claude 2.1.329 binary. A `.credentials.json` appears on macOS only when the Keychain refuses a write. Three things follow:
+
+- Each profile signs in once and keeps its own token. There is nothing to copy and the switcher never reads, writes or deletes a Keychain item. The e-mail `cca` lists comes from `oauthAccount` in the profile's `.claude.json`, as on Windows.
+- The item name is a hash of the path as given, so the switcher always passes the same string, `~/.claude-accounts/<name>` built from `$HOME`, with no trailing slash. A profile opened by hand with another spelling of its path (a trailing slash, a path through a symbolic link) can look signed out.
+- A rename on macOS signs the profile out, because the path changed: it asks for the sign-in once more, and the old item stays in the Keychain. A delete leaves its item behind too. Both print the item name; to take the token out with the profile, open it, run `/logout`, then delete it.
+
+**Opening here.** `cca work` replaces itself with `claude` in the current folder, with the variables set for that process only. Your shell keeps its own environment, so when `claude` exits the terminal is back on whatever it was, like `cc.cmd` on Windows.
+
+**Opening a tab (`-w`).** Inside Herdr (`HERDR_ENV=1` and `herdr` on PATH) it opens a Herdr tab exactly as on Windows, `-x` workspace included; the label keeps the `cc-<account>[-<role>]` form on every system because `scripts/herdr_panes.py` reads the account of a pane from it. Otherwise, on macOS, it opens a new iTerm2 tab when iTerm2 is the terminal in use and a new Terminal.app window elsewhere, through `osascript`; Terminal.app cannot open a tab without UI scripting, which needs an accessibility grant. The command typed into the new shell exports the variables, so that tab stays on the account after `claude` exits; it is POSIX shell syntax, read by zsh, bash and dash, not by fish. When no window can be opened (Linux, or `osascript` failing), it prints the exact command to run in a terminal of your choice.
+
+**The seat and the dry run.** The seat file is `<seats dir>/<role>.md`, where the seats directory is `CLAUDE_SEATS_DIR`, else `<kit home>/seats`; briefs default to `~/.claude/briefs`. `cca work -Role orchestrator -ShowEnv` prints the same lines as on Windows, and `PANE_COMMAND=` and `COMMAND=` are in POSIX syntax (`export`, `unset`, single quotes).
+
+`scripts/tests/test-claude-account-posix.py` covers all of the above in a temporary home, with a fake `claude`, `osascript` and `herdr` on PATH: `python3 scripts/tests/test-claude-account-posix.py`.
+
 ## Undoing all of this
 
 Nothing here modifies Claude Code itself. To back it out, delete `~/.claude-accounts` (junctions first, see the trap above), remove the `cc` function from your profile, and carry on with `~/.claude` as you did before. Any account signed in inside a profile stays signed in on claude.ai; you are only discarding the local token.
