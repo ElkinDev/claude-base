@@ -62,7 +62,7 @@ A seated session also carries `CLAUDE_BRIEFS_DIR`, default `%USERPROFILE%\.claud
 
 ## The line without the launcher
 
-The launcher is PowerShell and it is not the mechanism, only the convenience. On a machine without it, or in any other shell, a seat is two things typed by hand, the variable and the append flag:
+The launcher (`cc` on Windows, `cca` on macOS and Linux) is not the mechanism, only the convenience. On a machine without it, or in any other shell, a seat is two things typed by hand, the variable and the append flag:
 
 ```sh
 CLAUDE_ROLE=orchestrator claude --append-system-prompt-file ~/.claude/seats/orchestrator.md
@@ -111,7 +111,7 @@ Two notices reach any main session, seated or not, and carry their rule in their
 
 ## Mac and Linux
 
-The seats are two markdown files and nothing else, so they work anywhere Claude Code runs. The installer and the account launcher are PowerShell, so on a POSIX machine the files are copied by hand and the line is typed or aliased:
+The seats are two markdown files and nothing else, so they work anywhere Claude Code runs. On macOS and Linux `install.py` copies them to `~/.claude/seats` with the rest of user scope, and the launcher twin is `cca`, the account switcher's command there (`claude/claude-account.py`, docs/ACCOUNTS.md), which takes the same `-Role`, `-ShowEnv` and start-line rules: `cca work -o orchestrator`. It is `cca` and not `cc` because `cc` is the C compiler on those systems. Without the launcher the line is typed or aliased:
 
 ```sh
 seat=~/.claude/seats/orchestrator.md
@@ -119,7 +119,7 @@ seat=~/.claude/seats/orchestrator.md
 CLAUDE_ROLE=orchestrator claude --append-system-prompt-file "$seat"
 ```
 
-The check is not decoration: a missing append file is a hard launch failure, `Error: Append system prompt file not found`, and nothing starts. The POSIX installer and the launcher twin are deferred to their own item. Nothing here fails without them, because a session launched with no seat is a plain session.
+The check is not decoration: a missing append file is a hard launch failure, `Error: Append system prompt file not found`, and nothing starts. A session launched with no seat is a plain session, so nothing fails on a machine that has neither the launcher nor the files.
 
 ## Scripts the seat text names
 

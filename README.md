@@ -21,7 +21,9 @@ claude/                     -> installs into ~/.claude
   CLAUDE.md                 global always-on rules (language, voice, persona, principles)
   settings.json             base settings (status line and hooks); paths filled at install
   statusline.ps1            role / model / effort / account / folder / git / context / quota status line
+  statusline.py             the same status line for macOS and Linux (and anywhere Python runs)
   claude-account.ps1        optional: switch between several Claude Code accounts (see docs/ACCOUNTS.md)
+  claude-account.py         the same switcher for macOS and Linux, run by bin/cca (see docs/ACCOUNTS.md)
   merge-settings.py         helper the switcher uses to merge settings.json without dropping keys
   skills/                   28 skills (TDD, quality gates, evidence, adversarial review, commit
                             and PR text, investigation, delegation, handover, ...); the other
@@ -110,8 +112,12 @@ docs/                       status line, accounts, permissions, adoption, eviden
                             context economics
 install.ps1                 installer (user scope, and -Project to scaffold a project). It never
                             overwrites or deletes a file it did not write; -DryRun shows the plan
-install/                    what the installer runs on: lib.ps1 the ownership rule, backup.ps1 the
-                            backup record, adopt.ps1 the preflight and the exclude file
+install.py                  the same installer for macOS and Linux, with the same manifest, backups and
+                            switches (--dry-run, --project, ...; the PowerShell spellings work too)
+install/                    what the installers run on: lib.ps1 the ownership rule, backup.ps1 the
+                            backup record, adopt.ps1 the preflight and the exclude file, and their
+                            Python twins kit_lib.py and kit_adopt.py; get.ps1 and get.sh, the one-line
+                            installers; the daily update for each system
 ```
 
 ## Quickstart
@@ -133,6 +139,16 @@ repository page and run it as `INSTALL.md` shows.
 The kit lands in your user profile (`%USERPROFILE%\.claude`), so Claude Code picks it up in whatever folder you
 open it. Keep the clone all the same: updates, `-Project` and the Herdr hotkey run from it. To keep it in another
 folder, pass `-Dir` (`INSTALL.md`).
+
+On macOS (and Linux), paste this into a terminal instead. It checks the Command Line Tools (git and Python) and
+Claude Code, clones the kit into `~/claude-base`, runs `install.py`, asks about Herdr and ends with the doctor:
+```
+curl -fsSL https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.sh | bash
+```
+The kit lands in `~/.claude` exactly as on Windows: the same skills, hooks and agents, the hooks run with `python3`,
+the status line is `statusline.py`, and the account switcher is `cca` (not `cc`, which is the C compiler there).
+From a clone the installer is `python3 install.py`, with the same switches (`--dry-run`, `--project <path>`,
+`--permissions ask`, ...); `INSTALL.md`, "macOS and Linux", has the details.
 
 ### Updating
 Paste the same line again. It pulls the clone and re-runs the installer, and that is the whole update: files
@@ -221,9 +237,14 @@ cc work           open it here (signs in the first time)
 cc                list the accounts and which one this window is on
 ```
 Hooks live per config directory: one added to `~/.claude/settings.json` reaches a profile only after
-`cc work -p -s`, so run that for each profile whenever the default's hooks change. The script is
-PowerShell and Windows (directory junctions, token in `.credentials.json`); on macOS and Linux the
-`CLAUDE_CONFIG_DIR` mechanism is the same but the script is not ported yet.
+`cc work -p -s`, so run that for each profile whenever the default's hooks change.
+
+On Windows the switcher is PowerShell, with directory junctions and the token in `.credentials.json`.
+On macOS and Linux it is `claude-account.py`, with the same flags, symbolic links instead of
+junctions, and the command `cca` instead of `cc`, because `cc` is the C compiler there and a `cc` on
+PATH would break every build that calls it (`cca work -p`, `cca work`, `cca`). On macOS each
+profile's token lives in the login Keychain, so every profile signs in once, and a rename means
+signing in again. See `docs/ACCOUNTS.md`, "macOS and Linux".
 
 `docs/ACCOUNTS.md` covers the wiring, the shortcuts, the session roles, and the traps that cost real
 damage: deleting a profile through a junction, and the PowerShell 5.1 JSON parse that silently signs
