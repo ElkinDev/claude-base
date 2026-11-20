@@ -139,6 +139,17 @@ the same way: `sh herdr/hotkey/setup-hotkey.sh`.
 - Every start and every press is a line in `~/.claude/logs/herdr-hotkey.log`, so a key that does
   nothing can be traced there; a key another app already holds says so in that log.
 - `sh herdr/hotkey/setup-hotkey.sh --remove` stops it and deletes the app and the plist.
+- The app carries an icon of its own (`HerdrHotkey.icns`, drawn by `make-icon.swift`, an original drawing since
+  Herdr ships none), and its LaunchAgent names it in `AssociatedBundleIdentifiers`, so Login Items can list it as
+  Herdr Hotkey rather than under its developer's name.
+- Signed builds for other Macs. A build made on a Mac without a Developer ID is signed ad hoc, and Login Items calls
+  it an item from an unidentified developer. `release.sh`, run on the maintainer's Mac, builds the app universal with
+  the hardened runtime, signs it with the maintainer's Developer ID, has Apple notarize it, publishes it as a GitHub
+  release and writes `release.txt`. Every Mac whose clone has the same source then installs that build instead of
+  compiling one, after checking its sha256 and its team; a mismatch or a failed download falls back to the local
+  build. The maintainer stores notary credentials once (`xcrun notarytool store-credentials notary --apple-id <apple
+  id> --team-id <team id>`, with an app-specific password from appleid.apple.com), runs `sh herdr/hotkey/release.sh`
+  after any change to the Swift file, the launcher or the icon, and commits `release.txt`.
 - Why not Ctrl+Cmd+N: Finder uses it for New Folder with Selection (Apple's list of Mac keyboard
   shortcuts, support.apple.com/en-us/102650), while no macOS or Finder shortcut uses
   Ctrl+Option+Cmd+N. To pick another key, change `kVK_ANSI_N` and the modifiers in

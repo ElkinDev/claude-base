@@ -9,6 +9,7 @@ stub through KIT_HERDR_EXE, or gets one from a stub installer (KIT_HERDR_INSTALL
 folder is KIT_HERDR_CONFIG_DIR, also inside the sandbox; and the launcher calls a stub osascript (KIT_OSASCRIPT).
 Skipped on Windows, where scripts/tests/test-install-herdr.ps1 covers install/herdr.ps1.
 """
+import hashlib
 import importlib.util
 import os
 import re
@@ -24,6 +25,8 @@ REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 MODULE = os.path.join(REPO, "install", "kit_herdr.py")
 KIT_CONFIG = os.path.join(REPO, "herdr", "config.toml")
 LAUNCHER = os.path.join(REPO, "herdr", "hotkey", "launch-herdr.sh")
+HOTKEY_DIR = os.path.join(REPO, "herdr", "hotkey")
+ICON = os.path.join(HOTKEY_DIR, "HerdrHotkey.icns")
 SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 
 spec = importlib.util.spec_from_file_location("kit_herdr", MODULE)
@@ -342,8 +345,12 @@ class SetupHotkeyTest(unittest.TestCase):
                          % (self.calls, self.loaded, self.loaded, self.loaded))
         os.chmod(launchctl, 0o755)
         # KIT_CODESIGN_IDENTITY -: ad hoc, so no case reaches for a Developer ID in the keychain and its prompt.
+        # KIT_HOTKEY_RELEASE_FILE: a record of the test's own, so the repository's release.txt never sends a case
+        # to the network. Missing until a case writes it.
+        self.release = os.path.join(self.base, "release.txt")
         self.env = dict(os.environ, KIT_HOME=self.kit, KIT_LAUNCHAGENTS_DIR=self.agents, KIT_LAUNCHCTL=launchctl,
-                        KIT_SWIFTC=compiler, TMPDIR=self.base, KIT_CODESIGN_IDENTITY="-")
+                        KIT_SWIFTC=compiler, TMPDIR=self.base, KIT_CODESIGN_IDENTITY="-",
+                        KIT_HOTKEY_RELEASE_FILE=self.release)
 
     def tearDown(self):
         shutil.rmtree(self.base, ignore_errors=True)
@@ -365,15 +372,89 @@ class SetupHotkeyTest(unittest.TestCase):
         self.assertTrue(os.access(os.path.join(app, "MacOS", "HerdrHotkey"), os.X_OK))
         self.assertEqual(read(os.path.join(app, "Resources", "launch-herdr.sh")), read(LAUNCHER))
         self.assertIn(b"<key>LSUIElement</key><true/>", read(os.path.join(app, "Info.plist")))
+        self.assertIn(b"<key>CFBundleIconFile</key><string>HerdrHotkey</string>", read(os.path.join(app, "Info.plist")))
+        self.assertEqual(read(os.path.join(app, "Resources", "HerdrHotkey.icns")), read(ICON))
+        self.assertIn(b"origin=local -", read(os.path.join(self.kit, "herdr-hotkey", "installed.txt")))
         plist = read(os.path.join(self.agents, "local.herdr-hotkey.plist")).decode("utf-8")
         self.assertIn("<string>%s</string>" % os.path.join(app, "MacOS", "HerdrHotkey"), plist)
         self.assertIn("<string>%s</string>" % os.path.join(app, "Resources", "launch-herdr.sh"), plist)
         self.assertIn("<key>RunAtLoad</key><true/>", plist)
+        self.assertIn("<key>AssociatedBundleIdentifiers</key><array><string>local.herdr-hotkey</string></array>", plist)
         # print, bootout, print until the job is gone (the stand-in drops it at once), bootstrap
         self.assertEqual(self.launchctl_calls(), ["print", "bootout", "print", "bootstrap"])
         out = self.run_setup()
         self.assertIn("Up to date: Ctrl+Option+Cmd+N opens Herdr", out)
         self.assertEqual(self.launchctl_calls()[4:], ["print"], "an unchanged, loaded key is not reloaded")
+
+    # ---- the published build ----------------------------------------------------------------------------------
+
+    def source_stamp(self):
+        digest = hashlib.sha256()
+        for path in (os.path.join(HOTKEY_DIR, "HerdrHotkey.swift"), LAUNCHER, ICON):
+            digest.update(read(path))
+        return digest.hexdigest()
+
+    def publish(self, source=None, sha=None, team=""):
+        """A stand-in for a published build: an app signed ad hoc, zipped the way release.sh zips it, and a
+        release.txt naming it by a file:// URL."""
+        bundle = os.path.join(self.base, "pub", "HerdrHotkey.app")
+        os.makedirs(os.path.join(bundle, "Contents", "MacOS"))
+        os.makedirs(os.path.join(bundle, "Contents", "Resources"))
+        with open(os.path.join(bundle, "Contents", "MacOS", "HerdrHotkey"), "w") as handle:
+            handle.write("#!/bin/sh\n")
+        os.chmod(os.path.join(bundle, "Contents", "MacOS", "HerdrHotkey"), 0o755)
+        shutil.copy(LAUNCHER, os.path.join(bundle, "Contents", "Resources", "launch-herdr.sh"))
+        with open(os.path.join(bundle, "Contents", "Info.plist"), "w") as handle:
+            handle.write('<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>CFBundleIdentifier'
+                         '</key><string>local.herdr-hotkey</string><key>CFBundleExecutable</key><string>HerdrHotkey'
+                         '</string><key>CFBundleName</key><string>published</string></dict></plist>\n')
+        subprocess.run(["codesign", "--force", "--sign", "-", bundle], check=True, capture_output=True)
+        archive = os.path.join(self.base, "HerdrHotkey.zip")
+        subprocess.run(["ditto", "-c", "-k", "--keepParent", bundle, archive], check=True)
+        with open(self.release, "w") as handle:
+            handle.write("source=%s\nurl=file://%s\nsha256=%s\nteam=%s\n"
+                         % (source or self.source_stamp(), archive,
+                            sha or hashlib.sha256(read(archive)).hexdigest(), team))
+
+    def installed(self):
+        return read(os.path.join(self.kit, "herdr-hotkey", "installed.txt")).decode("utf-8")
+
+    def info_plist(self):
+        return read(os.path.join(self.kit, "herdr-hotkey", "HerdrHotkey.app", "Contents", "Info.plist"))
+
+    def test_a_published_build_of_this_source_is_downloaded_not_compiled(self):
+        self.publish()
+        # A compiler that always fails: the case passes only if nothing is compiled.
+        failing = os.path.join(self.base, "failing-swiftc")
+        with open(failing, "w") as handle:
+            handle.write("exit 1\n")
+        os.chmod(failing, 0o755)
+        self.env["KIT_SWIFTC"] = failing
+        out = self.run_setup()
+        self.assertIn("Installed the signed, notarized build named in release.txt.", out)
+        self.assertIn("origin=release ", self.installed())
+        self.assertIn(b"<string>published</string>", self.info_plist())
+        self.assertIn("Up to date:", self.run_setup(), "the same release is not fetched twice")
+
+    def test_a_download_that_is_not_the_published_build_is_not_used(self):
+        self.publish(sha="0" * 64)
+        out = self.run_setup()
+        self.assertIn("The published build could not be used (the download is not the published build", out)
+        self.assertIn("building it here instead", out)
+        self.assertIn("origin=local -", self.installed())
+        self.assertNotIn(b"<string>published</string>", self.info_plist())
+
+    def test_a_build_signed_by_another_team_is_not_used(self):
+        self.publish(team="ZZZZZZZZZZ")
+        out = self.run_setup()
+        self.assertIn("is signed by team not set, not ZZZZZZZZZZ", out)
+        self.assertIn("origin=local -", self.installed())
+
+    def test_a_release_of_other_source_is_not_fetched(self):
+        self.publish(source="f" * 64)
+        out = self.run_setup()
+        self.assertNotIn("published build", out)
+        self.assertIn("origin=local -", self.installed())
 
     def test_remove_takes_away_what_it_made(self):
         self.run_setup()
