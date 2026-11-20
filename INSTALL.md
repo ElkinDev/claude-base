@@ -392,10 +392,12 @@ On yes:
    which the kit file already sets, so this installs the preview build and leaves the file as it is. An installed
    Herdr keeps its channel and the run says which.
 4. It runs `herdr integration install claude` into the kit home.
-5. macOS has no file that carries a global key the way the Windows Start Menu shortcut does, so the run prints one
-   step to do by hand: a Shortcuts shortcut that runs `/bin/sh <clone>/herdr/hotkey/launch-herdr.sh`, bound to
-   Ctrl+Option+N (`herdr/README.md`, section macOS). The launcher opens Herdr in a new Terminal window, or in iTerm2
-   when it is running.
+5. It sets up Ctrl+Option+Cmd+N, the macOS twin of Ctrl+Alt+N, with `herdr/hotkey/setup-hotkey.sh`: a small
+   background app built here from `herdr/hotkey/HerdrHotkey.swift` (it needs the Command Line Tools' `swiftc`) and
+   started by a LaunchAgent at every sign-in. The key opens Herdr in a new Terminal window, or in iTerm2 when it is
+   running, from any app; the first press may ask whether Herdr Hotkey can control Terminal. Not Ctrl+Cmd+N, which
+   Finder uses for New Folder with Selection. Without `swiftc` the run prints the manual Shortcuts step instead
+   (`herdr/README.md`, section macOS), and `sh herdr/hotkey/setup-hotkey.sh --remove` takes the key away.
 
 ## Plugin marketplace
 The five skills that only make sense as a set are also published as two plugins, for a machine that

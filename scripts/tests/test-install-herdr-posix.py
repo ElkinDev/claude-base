@@ -66,9 +66,11 @@ class HerdrStepTest(unittest.TestCase):
         self.stub = os.path.join(self.stubs, "herdr")
         self.write_exe(self.stub, STUB_HERDR % {"log": self.calls_log})
         self.hotkey = os.path.join(self.stubs, "hotkey.sh")
-        self.write_exe(self.hotkey, 'echo "$1" > "%s"; echo "Created: stub hotkey"\n' % self.hotkey_mark)
+        self.write_exe(self.hotkey, 'echo "$1 $KIT_HOME" > "%s"; echo "Created: stub hotkey"\n' % self.hotkey_mark)
+        # KIT_HERDR_SWIFTC none: no case builds the real key app or loads a LaunchAgent of this machine; the cases
+        # that need the setup script name a stub of it.
         self.env = mock.patch.dict(os.environ, {"HOME": self.user, "PATH": SYSTEM_PATH, "TMPDIR": self.tmp,
-                                                "KIT_HERDR_CONFIG_DIR": self.config_dir})
+                                                "KIT_HERDR_CONFIG_DIR": self.config_dir, "KIT_HERDR_SWIFTC": "none"})
         self.env.start()
         for name in ("KIT_HERDR_EXE", "KIT_HERDR_HOTKEY", "KIT_HERDR_INSTALLER", "KIT_HERDR_ANSWER",
                      "KIT_ASSUME_INTERACTIVE", "HERDR_STUB_CHANNEL", "CLAUDE_CONFIG_DIR", "HERDR_CONFIG_PATH",
@@ -139,7 +141,8 @@ class HerdrStepTest(unittest.TestCase):
         self.assertIn("  config     write " + self.config, out)
         self.assertIn("  integrate  herdr integration install claude", out)
         if sys.platform == "darwin":
-            self.assertIn("/bin/sh %s, key Ctrl+Option+N" % LAUNCHER, out)
+            self.assertIn("/bin/sh %s, key Ctrl+Option+Cmd+N" % LAUNCHER, out)
+            self.assertIn("no swiftc to build the key with", out)
         self.assertFalse(os.path.exists(self.config))
         self.use_stubs()
         out = self.install("yes", dry_run=True)
@@ -161,8 +164,9 @@ class HerdrStepTest(unittest.TestCase):
         self.assertEqual(read(self.config), read(KIT_CONFIG), "config.toml is the kit version")
         self.assertIn("  ok    config: write " + self.config, out)
         with open(self.hotkey_mark) as handle:
-            self.assertEqual(handle.read().strip(), LAUNCHER, "the hotkey step ran, given the launcher")
-        self.assertIn("  ok    hotkey Ctrl+Option+N: Created: stub hotkey", out)
+            self.assertEqual(handle.read().strip(), "%s %s" % (LAUNCHER, self.kit_home),
+                             "the hotkey step ran, given the launcher and the kit home")
+        self.assertIn("  ok    hotkey Ctrl+Option+Cmd+N: Created: stub hotkey", out)
         out = self.install()
         self.assertIn("  ok    config: skip same " + self.config, out)
 
@@ -293,16 +297,90 @@ class HerdrStepTest(unittest.TestCase):
 
     # ---- the hotkey ---------------------------------------------------------------------------------------------
 
-    def test_the_hotkey_step_points_at_the_launcher_and_binds_nothing(self):
+    def test_with_swiftc_the_plan_runs_the_setup_script(self):
+        os.environ["KIT_HERDR_SWIFTC"] = "present"
+        with mock.patch.object(sys, "platform", "darwin"):
+            out = self.install("yes", dry_run=True)
+        setup = os.path.join(REPO, "herdr", "hotkey", "setup-hotkey.sh")
+        self.assertIn("  hotkey     run %s: Ctrl+Option+Cmd+N opens Herdr from any app" % setup, out)
+
+    def test_without_swiftc_the_hotkey_step_points_at_the_launcher_and_binds_nothing(self):
         os.environ["KIT_HERDR_EXE"] = self.stub
         with mock.patch.object(sys, "platform", "darwin"):
             out = self.install()
-        self.assertIn("  note  hotkey Ctrl+Option+N is one step by hand on macOS", out)
-        self.assertIn("a shortcut that runs /bin/sh %s, with Ctrl+Option+N as its key." % LAUNCHER, out)
+        self.assertIn("  note  hotkey Ctrl+Option+Cmd+N is one step by hand here", out)
+        self.assertIn("a shortcut that runs /bin/sh %s, with Ctrl+Option+Cmd+N as its key." % LAUNCHER, out)
         self.assertIn("Steps: %s, section macOS." % os.path.join(REPO, "herdr", "README.md"), out)
         with mock.patch.object(sys, "platform", "linux"):
             out = self.install()
         self.assertIn("  note  hotkey: none on Linux", out)
+
+
+@unittest.skipUnless(sys.platform == "darwin", "the key app is macOS")
+class SetupHotkeyTest(unittest.TestCase):
+    """herdr/hotkey/setup-hotkey.sh with a stand-in compiler and launchctl: what it builds, what it loads, when it
+    leaves things as they are, and --remove. The real build is checked by hand; here nothing reaches launchd."""
+
+    SCRIPT = os.path.join(REPO, "herdr", "hotkey", "setup-hotkey.sh")
+
+    def setUp(self):
+        self.base = os.path.realpath(tempfile.mkdtemp(prefix="kit-hotkey-test-"))
+        self.kit = os.path.join(self.base, "kit")
+        self.agents = os.path.join(self.base, "agents")
+        self.calls = os.path.join(self.base, "launchctl.txt")
+        self.loaded = os.path.join(self.base, "loaded")
+        compiler = os.path.join(self.base, "swiftc")
+        # The stand-in compiler writes an executable at the path after -o.
+        with open(compiler, "w") as handle:
+            handle.write('while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done\n'
+                         'printf "#!/bin/sh\\n" > "$out"; chmod +x "$out"\n')
+        os.chmod(compiler, 0o755)
+        launchctl = os.path.join(self.base, "launchctl")
+        with open(launchctl, "w") as handle:
+            handle.write('echo "$1" >> "%s"\n'
+                         'case $1 in print) [ -f "%s" ];; bootstrap) touch "%s";; bootout) rm -f "%s";; esac\n'
+                         % (self.calls, self.loaded, self.loaded, self.loaded))
+        os.chmod(launchctl, 0o755)
+        self.env = dict(os.environ, KIT_HOME=self.kit, KIT_LAUNCHAGENTS_DIR=self.agents, KIT_LAUNCHCTL=launchctl,
+                        KIT_SWIFTC=compiler, TMPDIR=self.base)
+
+    def tearDown(self):
+        shutil.rmtree(self.base, ignore_errors=True)
+
+    def run_setup(self, *args):
+        done = subprocess.run(["/bin/sh", self.SCRIPT] + list(args), capture_output=True, text=True, env=self.env,
+                              timeout=60)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        return done.stdout
+
+    def launchctl_calls(self):
+        with open(self.calls) as handle:
+            return handle.read().split()
+
+    def test_it_builds_the_app_loads_it_and_then_leaves_it_alone(self):
+        out = self.run_setup()
+        self.assertIn("Created: Ctrl+Option+Cmd+N opens Herdr from any app", out)
+        app = os.path.join(self.kit, "herdr-hotkey", "HerdrHotkey.app", "Contents")
+        self.assertTrue(os.access(os.path.join(app, "MacOS", "HerdrHotkey"), os.X_OK))
+        self.assertEqual(read(os.path.join(app, "Resources", "launch-herdr.sh")), read(LAUNCHER))
+        self.assertIn(b"<key>LSUIElement</key><true/>", read(os.path.join(app, "Info.plist")))
+        plist = read(os.path.join(self.agents, "local.herdr-hotkey.plist")).decode("utf-8")
+        self.assertIn("<string>%s</string>" % os.path.join(app, "MacOS", "HerdrHotkey"), plist)
+        self.assertIn("<string>%s</string>" % os.path.join(app, "Resources", "launch-herdr.sh"), plist)
+        self.assertIn("<key>RunAtLoad</key><true/>", plist)
+        # print, bootout, print until the job is gone (the stand-in drops it at once), bootstrap
+        self.assertEqual(self.launchctl_calls(), ["print", "bootout", "print", "bootstrap"])
+        out = self.run_setup()
+        self.assertIn("Up to date: Ctrl+Option+Cmd+N opens Herdr", out)
+        self.assertEqual(self.launchctl_calls()[4:], ["print"], "an unchanged, loaded key is not reloaded")
+
+    def test_remove_takes_away_what_it_made(self):
+        self.run_setup()
+        out = self.run_setup("--remove")
+        self.assertIn("Removed: Ctrl+Option+Cmd+N no longer opens Herdr", out)
+        self.assertFalse(os.path.exists(os.path.join(self.agents, "local.herdr-hotkey.plist")))
+        self.assertFalse(os.path.exists(os.path.join(self.kit, "herdr-hotkey")))
+        self.assertEqual(self.launchctl_calls()[-1], "bootout")
 
 
 @unittest.skipUnless(sys.platform == "darwin", "the launcher is macOS")

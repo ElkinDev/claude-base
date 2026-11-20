@@ -3,7 +3,7 @@
 # Terminal window. The macOS twin of launch-herdr.cmd.
 # Usage: launch-herdr.sh [working-directory]
 #   No arg opens in your home folder. Change the default below to your main repo, or pass a folder.
-# The global Ctrl+Option+N key that runs it is one step by hand in the Shortcuts app: herdr/README.md, section macOS.
+# The global Ctrl+Option+Cmd+N key that runs it is set up by setup-hotkey.sh: herdr/README.md, section macOS.
 #
 # The command goes to the window's own login shell, so herdr is found with the PATH your shell profile sets; it is
 # named by its full path when this script can find it, since a Shortcuts run starts with a bare system PATH.

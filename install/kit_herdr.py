@@ -6,7 +6,7 @@ imported by install.py by file path.
 
 On yes it installs Herdr with its official installer (https://herdr.dev/install.sh), unless a herdr is already on
 PATH, which keeps its own channel (the run says when it is not preview), puts herdr/config.toml in place, wires the
-Claude Code integration and points at the Ctrl+Option+N hotkey. A config.toml you already have and that differs is
+Claude Code integration and sets up the Ctrl+Option+Cmd+N hotkey. A config.toml you already have and that differs is
 never touched: the kit version lands beside it as config.toml.new, the same rule as every other file the installer
 writes.
 
@@ -21,10 +21,11 @@ moves to preview at its next update once the kit config.toml is written, and the
 The config path is the one herdr --help prints: HERDR_CONFIG_PATH when set, else $XDG_CONFIG_HOME/herdr/config.toml,
 else ~/.config/herdr/config.toml, on macOS too (herdr 0.8.0 and 0.9.5, 2026-11-20).
 
-The hotkey. macOS gives no file a global key the way a Windows .lnk carries one, and every way to bind one (a
-Shortcuts shortcut, an Automator Quick Action with a pbs key equivalent) needs a step in an app, or writes system
-preferences no test can check without changing the machine. So the run points at herdr/hotkey/launch-herdr.sh and at
-the one manual step in herdr/README.md, and binds nothing itself.
+The hotkey. macOS gives no file a global key the way a Windows .lnk carries one, so on macOS the step runs
+herdr/hotkey/setup-hotkey.sh, the twin of setup-hotkey.ps1: it compiles HerdrHotkey.swift into a small background app
+that registers Ctrl+Option+Cmd+N with RegisterEventHotKey (no Accessibility permission) and starts it with a
+LaunchAgent at every sign-in. With no swiftc (no Command Line Tools) the run prints the manual Shortcuts step of
+herdr/README.md instead.
 
 Herdr is optional, so nothing here can fail the install: a step that fails prints a FAIL line and the next steps that
 depend on it are skipped.
@@ -33,7 +34,8 @@ The external commands can be replaced through the environment, which is what the
   KIT_HERDR_INSTALLER     an installer (a path or a URL) saved and run instead of the official one
   KIT_HERDR_EXE           the herdr to call instead of the one found on PATH
   KIT_HERDR_CONFIG_DIR    the folder of config.toml instead of the one herdr reads
-  KIT_HERDR_HOTKEY        a sh script run for the hotkey step instead of the manual-step note
+  KIT_HERDR_HOTKEY        a sh script run for the hotkey step instead of herdr/hotkey/setup-hotkey.sh
+  KIT_HERDR_SWIFTC        `none` to act as if swiftc were missing (the manual-step note), anything else as present
   KIT_HERDR_ANSWER        the answer to the question, instead of reading the console
   KIT_ASSUME_INTERACTIVE  1 or 0, instead of asking the console whether a person is there
 """
@@ -123,17 +125,45 @@ def config_plan(kit_config, config):
     return "keep yours %s, the kit version lands beside it as %s.new" % (config, os.path.basename(config))
 
 
+HOTKEY = "Ctrl+Option+Cmd+N"
+
+
 def launcher_path(kit_root):
     return os.path.join(kit_root, "herdr", "hotkey", "launch-herdr.sh")
 
 
-def hotkey_plan(kit_root):
+def hotkey_script(kit_root):
+    """The script the hotkey step runs: KIT_HERDR_HOTKEY, else setup-hotkey.sh on macOS when swiftc is there to build
+    it, else None (the manual Shortcuts step)."""
     if os.environ.get("KIT_HERDR_HOTKEY"):
-        return "run " + os.environ["KIT_HERDR_HOTKEY"]
-    if sys.platform == "darwin":
-        return ("one step by hand: a Shortcuts shortcut that runs /bin/sh %s, key Ctrl+Option+N "
-                "(herdr/README.md, macOS)" % shlex.quote(launcher_path(kit_root)))
-    return "none on Linux: bind herdr to a key in your desktop's keyboard settings"
+        return os.environ["KIT_HERDR_HOTKEY"]
+    if sys.platform != "darwin":
+        return None
+    script = os.path.join(kit_root, "herdr", "hotkey", "setup-hotkey.sh")
+    if not os.path.isfile(script):
+        return None
+    forced = os.environ.get("KIT_HERDR_SWIFTC")
+    if forced is not None:
+        return None if forced == "none" else script
+    try:
+        found = subprocess.run(["xcrun", "--find", "swiftc"], capture_output=True, timeout=30).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        found = False
+    return script if found else None
+
+
+def manual_hotkey_step(kit_root):
+    return ("one step by hand: a Shortcuts shortcut that runs /bin/sh %s, key %s (herdr/README.md, macOS)"
+            % (shlex.quote(launcher_path(kit_root)), HOTKEY))
+
+
+def hotkey_plan(kit_root):
+    if sys.platform != "darwin" and not os.environ.get("KIT_HERDR_HOTKEY"):
+        return "none on Linux: bind herdr to a key in your desktop's keyboard settings"
+    script = hotkey_script(kit_root)
+    if script:
+        return "run %s: %s opens Herdr from any app, started at every sign-in" % (script, HOTKEY)
+    return manual_hotkey_step(kit_root) + "; no swiftc to build the key with (xcode-select --install)"
 
 
 def run(argv, env=None, timeout=STEP_TIMEOUT, merge=True):
@@ -320,16 +350,17 @@ def install_herdr(kit_root, kit_home, choice, dry_run=False, out=print):
     step("integration install claude", [exe, "integration", "install", "claude"], out,
          env=dict(os.environ, CLAUDE_CONFIG_DIR=kit_home))
 
-    hotkey = os.environ.get("KIT_HERDR_HOTKEY")
     launcher = launcher_path(kit_root)
-    if hotkey:
-        step("hotkey Ctrl+Option+N", ["/bin/sh", hotkey, launcher], out)
-    elif sys.platform != "darwin":
+    script = hotkey_script(kit_root)
+    if sys.platform != "darwin" and not os.environ.get("KIT_HERDR_HOTKEY"):
         out("  note  hotkey: none on Linux; bind herdr to a key in your desktop's keyboard settings")
     elif not os.path.isfile(launcher):
         out("  FAIL  hotkey: the launcher %s is missing" % launcher)
+    elif script:
+        # The key's app lands in the kit home this run installed, the same place as everything else.
+        step("hotkey %s" % HOTKEY, ["/bin/sh", script, launcher], out, env=dict(os.environ, KIT_HOME=kit_home))
     else:
-        out("  note  hotkey Ctrl+Option+N is one step by hand on macOS, which gives no file a global key: in the "
-            "Shortcuts app,")
-        out("        a shortcut that runs /bin/sh %s, with Ctrl+Option+N as its key." % shlex.quote(launcher))
+        out("  note  hotkey %s is one step by hand here: there is no swiftc to build it with (xcode-select --install"
+            " brings it), so in the Shortcuts app," % HOTKEY)
+        out("        a shortcut that runs /bin/sh %s, with %s as its key." % (shlex.quote(launcher), HOTKEY))
         out("        Steps: %s, section macOS." % os.path.join(kit_root, "herdr", "README.md"))

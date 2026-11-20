@@ -11,6 +11,8 @@ reproduced on another machine.
 - `hotkey/setup-hotkey.ps1` - creates the global Ctrl+Alt+N shortcut that runs the launcher.
 - `hotkey/launch-herdr.sh` - the macOS launcher: Herdr in a new Terminal (or iTerm2) window. See
   macOS below.
+- `hotkey/setup-hotkey.sh` and `hotkey/HerdrHotkey.swift` - the global Ctrl+Option+Cmd+N key on
+  macOS: a small background app built from the Swift file and started at every sign-in.
 - `verified-version.txt` - the Herdr build this kit was verified against.
 - `cli-surface.txt` - the subcommands the kit drives, one per line, probed by
   `python scripts/doctor.py`.
@@ -122,9 +124,28 @@ folder when none is given): an iTerm2 window when iTerm2 is running, a Terminal 
 `KIT_HERDR_TERMINAL=Terminal` or `KIT_HERDR_TERMINAL=iTerm` picks the app. The command runs in
 the window's login shell, so the window stays open at a prompt after you detach.
 
-### Ctrl+Option+N opens Herdr (one step by hand)
-macOS has no file that carries a global key the way a Windows `.lnk` does, so the installer
-binds nothing and prints these steps instead. With the Shortcuts app:
+### Ctrl+Option+Cmd+N opens Herdr
+`install.py --herdr` sets the key up on its own, with `hotkey/setup-hotkey.sh`, the twin of
+`setup-hotkey.ps1`. It compiles `HerdrHotkey.swift` into a small background app,
+`~/.claude/herdr-hotkey/HerdrHotkey.app` (no Dock icon, no window), with the launcher copied inside
+it, and loads `~/Library/LaunchAgents/local.herdr-hotkey.plist`, which starts the app now and at
+every sign-in. The app registers the key with `RegisterEventHotKey`, so macOS tells it when that one
+combination is pressed in any app and it needs no Accessibility permission. Run the script by hand
+the same way: `sh herdr/hotkey/setup-hotkey.sh`.
+
+- The first press may ask whether Herdr Hotkey can control Terminal (or iTerm): allow it, since that
+  is how the window opens. The app is rebuilt only when `HerdrHotkey.swift` or the launcher changes,
+  because macOS asks again after every new build.
+- Every start and every press is a line in `~/.claude/logs/herdr-hotkey.log`, so a key that does
+  nothing can be traced there; a key another app already holds says so in that log.
+- `sh herdr/hotkey/setup-hotkey.sh --remove` stops it and deletes the app and the plist.
+- Why not Ctrl+Cmd+N: Finder uses it for New Folder with Selection (Apple's list of Mac keyboard
+  shortcuts, support.apple.com/en-us/102650), while no macOS or Finder shortcut uses
+  Ctrl+Option+Cmd+N. To pick another key, change `kVK_ANSI_N` and the modifiers in
+  `HerdrHotkey.swift` and run the script again.
+
+It needs `swiftc`, which Apple's Command Line Tools bring (`xcode-select --install`). Without it the
+installer prints the manual route instead, through the Shortcuts app:
 1. Shortcuts > Settings > Advanced: turn on "Allow Running Scripts".
 2. File > New Shortcut, named `Open Herdr`. Add the "Run Shell Script" action with this script,
    the path being your clone's:
@@ -132,12 +153,8 @@ binds nothing and prints these steps instead. With the Shortcuts app:
    /bin/sh "/path/to/claude-base/herdr/hotkey/launch-herdr.sh"
    ```
    Add a folder after it to open Herdr there instead of in your home folder.
-3. In the shortcut's details (the (i) button), Add Keyboard Shortcut, and press Ctrl+Option+N.
+3. In the shortcut's details (the (i) button), Add Keyboard Shortcut, and press Ctrl+Option+Cmd+N.
 4. The first time, macOS may ask whether Shortcuts can control Terminal (or iTerm); allow it.
-
-To remove the hotkey, delete the `Open Herdr` shortcut. An Automator Quick Action that runs the
-same line, with the key set in System Settings > Keyboard > Keyboard Shortcuts > Services, works
-too, but only while the front app offers the Services menu.
 
 ## Driving a pane from a script
 The Claude integration gives every pane a state (`idle`, `working`, `blocked`, `done`, `unknown`)
