@@ -47,7 +47,10 @@ SWEEP = load_script()
 
 
 def norm(path):
-    return os.path.normcase(os.path.abspath(path))
+    # git prints a worktree by its real path, which on macOS puts /private in front of a temp folder under /var.
+    if os.name == "nt":
+        return os.path.normcase(os.path.abspath(path))
+    return os.path.normcase(os.path.realpath(path))
 
 
 def own_long_path(path):
@@ -456,17 +459,33 @@ class WorktreeSweepTest(unittest.TestCase):
 
     def test_keep_wins_in_another_case_with_backslashes_and_with_a_trailing_slash(self):
         path = self.worktree("wt-landed", "landed", self.commits[0])
-        spellings = (
-            path.upper(),
-            path.replace("/", "\\"),
-            path.rstrip("/\\") + "/",
-        )
+        spellings = (path.rstrip("/\\") + "/",)
+        if os.name == "nt":
+            # Another case and backslashes name the same folder on Windows only; elsewhere they are another path.
+            spellings += (path.upper(), path.replace("/", "\\"))
         for spelling in spellings:
             code, out = self.sweep("--keep", spelling)
             self.assertEqual(0, code, out)
             self.assert_names(self.line_for(out, "KEPT"), path)
             self.assertIn("remove=0", out)
             self.assertIn("unmatched-keeps=0", out)
+
+    @unittest.skipIf(os.name == "nt", "a symlink needs a privilege on Windows, and the paths there are not resolved")
+    def test_a_keep_and_a_never_sweep_spelled_through_a_link_still_match(self):
+        path = self.worktree("wt-landed", "landed", self.commits[0])
+        os.symlink(self.root, os.path.join(self.root, "via"))
+        spelled = os.path.join(self.root, "via", "wt-landed")
+        code, out = self.sweep("--keep", spelled)
+        self.assertEqual(0, code, out)
+        self.assertIn("remove=0", out)
+        self.assertIn("unmatched-keeps=0", out)
+        code, out = self.sweep("--never-sweep", spelled + "=standing")
+        self.assertEqual(0, code, out)
+        self.assertIn("standing", self.line_for(out, "KEPT"))
+        code, out = self.sweep("--never-sweep", spelled + "=standing", "--apply")
+        self.assertEqual(0, code, out)
+        self.assertIn("removed=0", out)
+        self.assertTrue(os.path.isdir(path))
 
     def test_the_script_source_carries_no_force_no_prune_and_one_removal_call_site(self):
         with open(SCRIPT, "r", encoding="utf-8") as handle:
@@ -613,7 +632,7 @@ class WorktreeSweepTest(unittest.TestCase):
         self.assertEqual(["theirs.log"], self.zip_children(leaf, "build", "lockrun"))
         self.assertEqual(elsewhere, self.zip_text(leaf, ".source").strip())
         self.assertEqual(["x.done", "x.log"], self.zip_children(leaf + "-2", "build", "lockrun"))
-        self.assertEqual(os.path.abspath(path), self.zip_text(leaf + "-2", ".source").strip())
+        self.assertEqual(norm(path), norm(self.zip_text(leaf + "-2", ".source").strip()))
 
     def test_a_zip_left_by_an_earlier_run_of_the_same_worktree_is_kept_whole(self):
         # A run that archived and then skipped (a gate started) leaves its zip. The next run
