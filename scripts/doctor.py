@@ -7,7 +7,8 @@ Run it before installing, after a machine change, and whenever Herdr updates:
     python scripts/doctor.py --json
 
 Each check prints one line, `ok | warn | FAIL  <name>  <detail>`. The exit code is 1 only
-when a required check FAILs; warnings never fail, and neither does anything about Herdr,
+when a required check FAILs (on macOS and Linux that includes `python3` on PATH, the
+interpreter every hook runs); warnings never fail, and neither does anything about Herdr,
 which is optional. A `FAIL herdr <subcommand>` still matters: it means the CLI surface the
 kit drives has moved under it, and the code that calls that subcommand needs re-verifying
 before `herdr/cli-surface.txt` and `herdr/verified-version.txt` are updated.
@@ -15,6 +16,7 @@ before `herdr/cli-surface.txt` and `herdr/verified-version.txt` are updated.
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -120,6 +122,25 @@ def check_claude():
     return check("ok", "claude", "%s (%s)" % (first_line(out), path), True)
 
 
+def check_python3():
+    """macOS and Linux: every hook and the status line the installer renders run `python3` from
+    PATH, which can be another interpreter than the one running this check (macOS has no `python`
+    at all, and a Homebrew python3 may shadow the system one)."""
+    path = shutil.which("python3")
+    if not path:
+        return check("FAIL", "python3", "not on PATH: the hooks run python3; install Python 3 "
+                     "(on macOS: xcode-select --install)", True)
+    code, out = run([path, "--version"])
+    found = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", out or "") if code == 0 else None
+    if not found:
+        return check("warn", "python3", "on PATH at %s, but `python3 --version` did not answer" % path, True)
+    version = tuple(int(part or 0) for part in found.groups())
+    if version[:2] < MIN_PYTHON:
+        return check("FAIL", "python3", "%s at %s: the hooks need %d.%d or newer"
+                     % (".".join(map(str, version)), path, MIN_PYTHON[0], MIN_PYTHON[1]), True)
+    return check("ok", "python3", "%s (%s), the interpreter the hooks run" % (".".join(map(str, version)), path), True)
+
+
 def check_git_bash():
     """Windows only: the hooks run through Git Bash, so its absolute path must be resolvable."""
     candidates = []
@@ -182,6 +203,8 @@ def collect():
     items = [check_git(), check_python(), check_claude()]
     if WINDOWS:
         items.append(check_git_bash())
+    else:
+        items.append(check_python3())
     items.extend(check_herdr())
     return items
 

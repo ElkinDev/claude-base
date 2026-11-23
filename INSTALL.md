@@ -60,6 +60,32 @@ beside it as `settings.json.new`; on such a machine, take the hook commands from
 hooks keep starting PowerShell by name and fail. The automatic merge under Updating adds hooks the file lacks, it
 does not rewrite the ones already there.
 
+## One command (macOS and Linux)
+Paste this line into a terminal (Terminal.app, iTerm2, or any shell):
+```
+curl -fsSL https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.sh | bash
+```
+Options go after `bash -s --`, for example
+`curl -fsSL https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.sh | bash -s -- --no-herdr`. The
+same switches as the Windows line exist, in either spelling: `--herdr`/`--no-herdr`, `--yes`, `--dir <folder>`,
+`--permissions ask`, `--no-hook-merge`, `--auto-update`/`--no-auto-update` and `--dry-run` (or `-NoHerdr`, `-Dir`,
+...). The questions are read from the terminal, so they work through the pipe; to read the script first, save it
+(`curl -fsSL <url> -o ~/claude-base-get.sh`) and run it with `bash ~/claude-base-get.sh`. The whole script runs only
+once it has downloaded in full, so a download cut short runs nothing.
+
+`install/get.sh` does on macOS what `get.ps1` does on Windows:
+1. It checks git and Python 3.8+, which on macOS both come with Apple's Command Line Tools, and Claude Code. When
+   the tools are missing it opens Apple's installer (`xcode-select --install`, a window of its own; run the line
+   again when it has finished). Claude Code is installed through npm when npm is on PATH, else with its official
+   installer (`https://claude.ai/install.sh`), saved to a temp file and run as a file. On Linux a missing git or
+   Python is named with the package manager line to install it.
+2. It clones the kit into `~/claude-base` (or `--dir`, or `$CLAUDE_BASE_DIR`), or updates a clone already there.
+3. It runs `install.py` at user scope (section 1), which overwrites nothing of yours, after asking whether to add
+   Herdr (Enter is yes).
+4. It runs the doctor and lists what is left by hand: signing in to Claude Code, and a project.
+
+The rest of this file names the Windows commands; the macOS and Linux form of each is in "macOS and Linux" below.
+
 ## 0. Check the machine first
 ```
 python scripts/doctor.py
@@ -293,6 +319,85 @@ The one command at the top of this file does it. By hand:
 1. Clone this repo and run `python scripts\doctor.py`.
 2. Run `install.ps1` (user scope) and answer the Herdr question.
 3. Review the defaults in `settings.json` (permission mode, model, effort) and adjust.
+
+## macOS and Linux
+`install.py` is the installer on these systems, the Python twin of `install.ps1`. It keeps the same manifest, the
+same backup folders and the same ownership rule (nothing of yours overwritten or deleted, `<name>.new` beside a file
+you edited, `--force` after a backup), so `python3 scripts/kit-restore.py --stamp <stamp>` rolls back a run of
+either. Every switch has a GNU spelling and accepts the PowerShell one too, so a line copied from this file works as
+it stands:
+
+| Windows | macOS and Linux |
+|---|---|
+| `python scripts\doctor.py` | `python3 scripts/doctor.py` |
+| `install.ps1 -DryRun` | `python3 install.py --dry-run` |
+| `install.ps1` | `python3 install.py` |
+| `install.ps1 -Permissions ask` | `python3 install.py --permissions ask` |
+| `install.ps1 -Project C:\Repo\my-app -LocalOnly` | `python3 install.py --project ~/code/my-app --local-only` |
+| `install.ps1 -Project ... -GradleHook` / `-Sdd` | `--gradle-hook` / `--sdd` |
+| `-Herdr`, `-NoHerdr`, `-NoHookMerge`, `-AutoUpdate`, `-NoAutoUpdate` | `--herdr`, `--no-herdr`, `--no-hook-merge`, `--auto-update`, `--no-auto-update` |
+
+What differs is what each system runs:
+- macOS has no `python`, only `python3` (Apple's Command Line Tools bring it, 3.9 today), so the rendered
+  `settings.json` runs every hook as `python3 "<kit home>/hooks/<hook>.py"`, and the doctor checks that `python3` on
+  PATH is 3.8 or newer. The kit's own docs and skills write `python <script>`, the Windows form; the global
+  `CLAUDE.md` tells the agent to read it as `python3` there.
+- The status line is `statusline.py`, the same segments as `statusline.ps1` (`docs/STATUSLINE.md`).
+- A project gets the Python twins of the branch hooks, `.claude/hooks/branch-check.py` and
+  `branch-upstream-fix.py`, wired by a `.claude/settings.local.json` rendered for python3. The gradle hook, with
+  `--gradle-hook`, runs its filter with python3 as well.
+- The account switcher is `cca`, not `cc`: on macOS and Linux `cc` is the C compiler, and a `cc` ahead of it on PATH
+  would break every build that calls it. The run makes it a command in any new terminal with a symlink in
+  `~/.local/bin` when that folder is already on PATH (the Claude Code installer puts it there), else with one
+  `export PATH="$PATH:<kit home>/bin"` line appended to your shell's rc file (`~/.zshrc` for zsh). Appended, never
+  prepended, so no system command is shadowed. A rollback leaves both, as it leaves the PATH entry on Windows.
+  `docs/ACCOUNTS.md`, "macOS and Linux", covers the switcher: symlinks instead of junctions, and on macOS the token
+  of each profile in the login Keychain, so each profile signs in once.
+
+### Updating every day on its own (macOS)
+`--auto-update` on `install.py` (or on the `get.sh` line) loads a LaunchAgent of your own user, with no elevation:
+`~/Library/LaunchAgents/local.kit-auto-update-<hash>.plist`, named with the same short hash of the kit home's full
+path as the Windows task, so each kit home has exactly one. It runs `/usr/bin/python3 <kit home>/kit-auto-update.py
+--dir <clone> --kit-home <kit home>`, a copy of `install/auto-update.py` that every install refreshes, and carries no
+option. launchd starts it every day at 05:00, and a Mac that was asleep then starts it when it wakes. launchd drops a
+start the Mac was powered off for, so the job also starts at each sign-in, and the run does its work once per day: a
+start that finds the day's 05:00 already covered ends at once and logs nothing. Enabling the job counts as that
+day's update, so the first run is the next 05:00.
+
+Everything else works as on Windows: the install record, the replayed choices (`--no-hook-merge` from the record,
+the permission mode from the live `settings.json`), `--unattended`, waiting on another clone, prompts off and ssh in
+batch mode, the lock in the clone's `.git`, the logs and the session-start line. The 30-minute limit is the run's
+own, since launchd has none: at 30 minutes it stops git or `install.py`, and every process it started, and ends its
+log on a `failed` line, which the next session reports.
+
+- macOS may announce the job as a new background item, and lists it under System Settings > General > Login Items;
+  switching it off there stops the daily run.
+- A clone or kit home under Desktop, Documents, Downloads or iCloud Drive may be refused to a background job; the
+  registration prints a `note` line when that applies.
+- A run at wake or sign-in can start before the network is up; its pull then fails, is reported once, and the next
+  day tries again.
+- `--no-auto-update` unloads the job and deletes its plist, and nothing else; the logs stay.
+- Linux has no daily job yet: `--auto-update` says so in one line and the install goes on.
+
+### Herdr on macOS and Linux
+`install.py` asks the same question as `install.ps1`; `--herdr` or `--no-herdr` answers it (`install/kit_herdr.py`).
+On yes:
+1. It installs Herdr with its official installer, `https://herdr.dev/install.sh`, saved to a temporary file and run
+   with `/bin/sh`, unless a `herdr` is already on PATH or in `~/.local/bin`. That installer always installs the
+   stable build into `~/.local/bin`; the run says so when that folder is not on your PATH.
+2. It copies `herdr/config.toml` to `~/.config/herdr/config.toml`, the path `herdr --help` prints
+   (`XDG_CONFIG_HOME` and `HERDR_CONFIG_PATH` move it). A config of yours that differs is kept, and the kit version
+   lands beside it as `config.toml.new`.
+3. A fresh install then runs `herdr channel set preview`. On these systems the channel is a line of `config.toml`,
+   which the kit file already sets, so this installs the preview build and leaves the file as it is. An installed
+   Herdr keeps its channel and the run says which.
+4. It runs `herdr integration install claude` into the kit home.
+5. It sets up Ctrl+Option+Cmd+N, the macOS twin of Ctrl+Alt+N, with `herdr/hotkey/setup-hotkey.sh`: a small
+   background app built here from `herdr/hotkey/HerdrHotkey.swift` (it needs the Command Line Tools' `swiftc`) and
+   started by a LaunchAgent at every sign-in. The key opens Herdr in a new Terminal window, or in iTerm2 when it is
+   running, from any app; the first press may ask whether Herdr Hotkey can control Terminal. Not Ctrl+Cmd+N, which
+   Finder uses for New Folder with Selection. Without `swiftc` the run prints the manual Shortcuts step instead
+   (`herdr/README.md`, section macOS), and `sh herdr/hotkey/setup-hotkey.sh --remove` takes the key away.
 
 ## Plugin marketplace
 The five skills that only make sense as a set are also published as two plugins, for a machine that

@@ -19,6 +19,15 @@ def run_git(cwd, *args):
     return subprocess.run(["git", "-C", cwd] + list(args), capture_output=True, text=True)
 
 
+def comparable(path):
+    path = os.path.normpath(str(path))
+    if os.name != "nt":
+        # The resolver takes the repository from git, which reports its real path: on macOS a temp folder under /var
+        # comes back under /private/var. Both name the same folder, so the comparison resolves links first.
+        path = os.path.realpath(path)
+    return os.path.normcase(path)
+
+
 class EvidencePathTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="evidence-path-")
@@ -53,8 +62,7 @@ class EvidencePathTest(unittest.TestCase):
                               capture_output=True, text=True, cwd=cwd, env=env)
 
     def assertSamePath(self, produced, expected):
-        self.assertEqual(os.path.normcase(os.path.normpath(str(produced))),
-                         os.path.normcase(os.path.normpath(str(expected))))
+        self.assertEqual(comparable(produced), comparable(expected))
 
     # the default ---------------------------------------------------------
 

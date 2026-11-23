@@ -24,12 +24,14 @@ class DoctorTest(unittest.TestCase):
         self.saved_which = doctor.shutil.which
         self.saved_run = doctor.run
         self.saved_windows = doctor.WINDOWS
+        self.saved_is_file = doctor.is_file
 
         doctor.WINDOWS = False  # the Git Bash check is Windows-only and is covered on its own
-        self.present = {"git", "claude", "herdr"}
+        self.present = {"git", "claude", "herdr", "python3"}
         self.versions = {
             "git": "git version 2.54.0",
             "claude": "2.1.250 (Claude Code)",
+            "python3": "Python 3.9.6",
             "herdr": doctor.read_verified(),
         }
         self.missing_subcommands = set()
@@ -96,6 +98,28 @@ class DoctorTest(unittest.TestCase):
         self.assertIn("not on PATH", self.line(output, "git"))
         self.assertIn("required checks failed: git", output)
 
+    def test_python3_missing_off_windows_is_a_required_failure(self):
+        self.present.discard("python3")
+        code, output = self.capture([])
+        self.assertEqual(code, 1)
+        self.assertTrue(self.line(output, "python3").startswith("FAIL"), output)
+        self.assertIn("required checks failed: python3", output)
+
+    def test_an_old_python3_off_windows_is_a_required_failure(self):
+        self.versions["python3"] = "Python 3.7.9"
+        code, output = self.capture([])
+        self.assertEqual(code, 1)
+        self.assertIn("need 3.8 or newer", self.line(output, "python3"))
+
+    def test_python3_is_not_checked_on_windows(self):
+        doctor.WINDOWS = True
+        doctor.is_file = lambda path: True
+        try:
+            code, output = self.capture([])
+        finally:
+            doctor.is_file = self.saved_is_file
+        self.assertEqual(self.line(output, "python3"), "")
+
     def test_claude_missing_is_a_required_failure(self):
         self.present.discard("claude")
         code, output = self.capture([])
@@ -152,7 +176,7 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(code, 0, output)
         items = json.loads(output)
         self.assertIsInstance(items, list)
-        self.assertEqual(len(items), 3 + len(doctor.read_surface()) + 1)  # tools + surface + herdr
+        self.assertEqual(len(items), 4 + len(doctor.read_surface()) + 1)  # tools (python3 off Windows) + surface + herdr
         for item in items:
             self.assertEqual(set(item), {"status", "name", "detail", "required"})
             self.assertIn(item["status"], ("ok", "warn", "FAIL"))

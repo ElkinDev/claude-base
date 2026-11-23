@@ -16,7 +16,21 @@ K=${1:?kind}; TXT=${2-}; PANE=${3:-orchestrator pane}
 REG=${ROW_REGISTER:-${CLAUDE_RULINGS_FILE:-$HOME/.claude/rulings.md}}
 D=$(date "+%Y-%m-%d"); T=$(date "+%H:%M" | cut -c1-4)x
 export ROW_K="$K" ROW_TXT="$TXT" ROW_PANE="$PANE" ROW_REG="$REG" ROW_D="$D" ROW_T="$T" PYTHONUTF8=1 PYTHONIOENCODING=utf-8
-python - <<'PY'
+# The interpreter is probed, not assumed, as scripts/git-hooks/pre-push does: macOS has only python3, and on Windows
+# python3 is often the Store stub, which exists on PATH and runs nothing. python goes first so Windows keeps running
+# the interpreter it always ran; a name that is not on PATH fails the probe without starting anything.
+PY=
+for candidate in python python3 "py -3"; do
+  # shellcheck disable=SC2086
+  if $candidate -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
+    PY=$candidate; break
+  fi
+done
+if [ -z "$PY" ]; then
+  echo "ROW WRITE FAILED $REG: no python 3.8 or newer found (tried python, python3, py -3)"; exit 1
+fi
+# shellcheck disable=SC2086
+$PY - <<'PY'
 import os, re, sys
 CAP = 400
 k, pane, reg, d, tm = (os.environ[x] for x in ("ROW_K", "ROW_PANE", "ROW_REG", "ROW_D", "ROW_T"))

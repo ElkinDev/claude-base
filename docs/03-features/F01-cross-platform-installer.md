@@ -35,3 +35,7 @@ Uninstall automation (a documented manual list only, FR-007), package-manager di
 - `--dry-run` writes nothing (verified by hashing the home tree before and after).
 - Project scaffold plus each optional flag produces exactly the manifest-declared files.
 - UNINSTALL.md lists every path the manifest can write.
+
+## Status (proposal, on the macos-support branch)
+
+The macOS and Linux side is built differently from the summary above, and the summary is kept as the original plan. Instead of `install/install.sh` plus a shared `install/manifest.json`, the POSIX installer is `install.py` at the root, a Python twin of `install.ps1` (engine in `install/kit_lib.py` and `install/kit_adopt.py`), because Python 3.8+ is already a hard requirement of the kit and `kit-restore.py` and `merge-hooks.py` already read the same manifest and backup layout. Windows keeps `install.ps1` unchanged. The one-line bootstrap is `install/get.sh`; the daily update is a launchd agent (`install/kit_schedule.py`, `install/auto-update.py`); the Herdr step is `install/kit_herdr.py`. Flags keep the PowerShell spellings as aliases. Linux has no daily update yet, and the three-OS CI matrix is still open (F11). Tests: `scripts/tests/test-install-posix.py`, `test-install-get-posix.py`, `test-install-schedule-posix.py`, `test-install-herdr-posix.py`.

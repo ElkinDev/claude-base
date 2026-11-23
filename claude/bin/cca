@@ -1,0 +1,30 @@
+#!/bin/sh
+# cca: switch Claude Code accounts on macOS and Linux (claude-base docs/ACCOUNTS.md). The installer
+# copies this file into <kit home>/bin and makes it reachable from PATH, sometimes through a symbolic
+# link in another folder; the switcher, claude-account.py, sits one folder above the real file.
+# It is not called cc because on these systems cc is the C compiler, and shadowing it breaks builds.
+# Every argument is handed over untouched, the -- separator included.
+self=$0
+case $self in
+    */*) ;;
+    *) self=$(command -v "$self") || self=$0 ;;
+esac
+# Follow the links to the real file, so a link on PATH still finds the switcher beside the kit.
+while [ -L "$self" ]; do
+    link=$(readlink "$self")
+    case $link in
+        /*) self=$link ;;
+        *) self=$(dirname "$self")/$link ;;
+    esac
+done
+dir=$(cd "$(dirname "$self")" && pwd -P) || exit 1
+script=$(dirname "$dir")/claude-account.py
+if [ ! -f "$script" ]; then
+    echo "cca: the switcher is not at $script. Run the claude-base installer again." >&2
+    exit 1
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "cca: python3 is not on PATH; the switcher needs Python 3.8 or later." >&2
+    exit 1
+fi
+exec python3 "$script" "$@"

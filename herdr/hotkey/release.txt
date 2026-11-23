@@ -1,0 +1,6 @@
+# Written by herdr/hotkey/release.sh. setup-hotkey.sh installs this build instead of compiling one when its source
+# matches HerdrHotkey.swift, launch-herdr.sh and HerdrHotkey.icns, after checking the sha256 and the team.
+source=bf843c3e699bd274fb602cc360d41137b2d8e610625502ceb5ee8000d023e86f
+url=https://github.com/ElkinDev/claude-base/releases/download/herdr-hotkey-bf843c3e699b/HerdrHotkey.zip
+sha256=ae9865924b1bd893ccdf5a542285396434d81a199cdd48d810e694f8065ada5d
+team=BL4KZH338B

@@ -107,8 +107,12 @@ class ArchiveStop(Exception):
 
 
 def norm(path):
-    """Compare paths the way Windows does: absolute and case-insensitive."""
-    return os.path.normcase(os.path.abspath(path))
+    """Compare paths the way Windows does: absolute and case-insensitive. Elsewhere links are resolved as well, because
+    git lists a worktree by its real path: on macOS a worktree made under /var or /tmp is listed under /private, and a
+    --keep or --never-sweep spelled the way it was typed would match nothing, so a never-swept worktree could go."""
+    if os.name == "nt":
+        return os.path.normcase(os.path.abspath(path))
+    return os.path.normcase(os.path.realpath(path))
 
 
 def git(args, timeout=READ_TIMEOUT):

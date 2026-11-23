@@ -6,6 +6,9 @@ project-template/scripts/hooks/** text eol=lf
 *.json text eol=lf
 *.md text eol=lf
 *.sh text eol=lf
+# The macOS and Linux account switcher's launcher: a sh script with no extension, so a CR after its
+# shebang would name an interpreter that does not exist.
+claude/bin/cca text eol=lf
 # The sanitize guard: git runs the wrappers under sh, and the rule files are tab separated.
 scripts/git-hooks/** text eol=lf
 scripts/sanitize-rules.txt text eol=lf

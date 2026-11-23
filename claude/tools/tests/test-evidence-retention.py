@@ -59,6 +59,27 @@ def set_birthtime(path, stamp):
         k32.CloseHandle(handle)
 
 
+def dir_link(link, target):
+    """A link to a folder: a junction on Windows, which needs no privilege there, and a symlink elsewhere, which the
+    script reads the same way (is_link). False when the machine will not make one."""
+    if os.name == "nt":
+        made = subprocess.run(["cmd", "/c", "mklink", "/J", link, target], capture_output=True, timeout=60)
+        return made.returncode == 0
+    try:
+        os.symlink(target, link, target_is_directory=True)
+    except OSError:
+        return False
+    return True
+
+
+def drop_dir_link(link):
+    """Removes the link itself, never its target: rmdir takes a junction, unlink a symlink."""
+    if os.name == "nt":
+        os.rmdir(link)
+    else:
+        os.unlink(link)
+
+
 class EvidenceRetentionTest(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="evr root ")
@@ -310,9 +331,8 @@ class EvidenceRetentionTest(unittest.TestCase):
                 handle.write("abcd")
             self.put("Findings/bench/old/a.png", 70)
             link = os.path.join(self.root, "Findings", "bench", "old", "linked")
-            made = subprocess.run(["cmd", "/c", "mklink", "/J", link, outside], capture_output=True, timeout=60)
-            if made.returncode != 0:
-                self.skipTest("no junction on this machine")
+            if not dir_link(link, outside):
+                self.skipTest("no junction or symlink on this machine")
             code, out = self.run_it("--apply")
             self.assertEqual(0, code, out)
             self.assertTrue(os.path.exists(os.path.join(outside, "keep.txt")), "the walk went through the link")
@@ -320,7 +340,7 @@ class EvidenceRetentionTest(unittest.TestCase):
         finally:
             link = os.path.join(self.root, "Findings", "bench", "old", "linked")
             if os.path.isdir(link):
-                os.rmdir(link)  # removes the junction itself, never its target
+                drop_dir_link(link)
             shutil.rmtree(outside, ignore_errors=True)
 
     def test_a_file_already_gone_counts_as_gone_not_as_an_error(self):
@@ -666,10 +686,8 @@ class EvidenceRetentionTest(unittest.TestCase):
             day = os.path.join(self.trash, "2026-07-01")
             os.makedirs(day)
             open(os.path.join(self.trash, RET.TRASH_MARK), "w").close()
-            made = subprocess.run(["cmd", "/c", "mklink", "/J", os.path.join(day, "linked"), outside],
-                                  capture_output=True, timeout=60)
-            if made.returncode != 0:
-                self.skipTest("no junction on this machine")
+            if not dir_link(os.path.join(day, "linked"), outside):
+                self.skipTest("no junction or symlink on this machine")
             code, out = self.run_it("--apply")
             self.assertEqual(0, code, out)
             self.assertFalse(os.path.exists(day), out)
@@ -686,9 +704,8 @@ class EvidenceRetentionTest(unittest.TestCase):
             open(os.path.join(outside, "2026-07-01", "precious.md"), "w").close()
             for i in range(3):
                 self.put("lanes/old-{}.md".format(i), 90)
-            made = subprocess.run(["cmd", "/c", "mklink", "/J", link, outside], capture_output=True, timeout=60)
-            if made.returncode != 0:
-                self.skipTest("no junction on this machine")
+            if not dir_link(link, outside):
+                self.skipTest("no junction or symlink on this machine")
             for extra in (("--apply",), ("--apply", "--max-share", "0.1"), ()):
                 code, out = self.run_it("--trash", link, *extra)
                 self.assertEqual(4, code, out)
@@ -696,7 +713,7 @@ class EvidenceRetentionTest(unittest.TestCase):
                 self.assertEqual(3, len(os.listdir(os.path.join(self.root, "lanes"))), out)
         finally:
             if os.path.lexists(link):
-                os.rmdir(link)  # removes the junction, never its target
+                drop_dir_link(link)
             shutil.rmtree(outside, ignore_errors=True)
 
     def test_under_the_letter_a_short_sidecar_waits_for_a_bundle_of_its_stem(self):
