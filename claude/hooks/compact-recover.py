@@ -4,10 +4,10 @@ disk-truth section), the last rows of the rulings register, the head of the work
 NOTES.md, the newest brief in CLAUDE_BRIEFS_DIR and the tail of CLAUDE_LANDINGS_FILE.
 No model runs. Both modes open with the seat block: which chair the pane holds, the loud line
 when nothing launched the session, and the newest resume brief of that seat. Both then print the
-open owner asks of the newest dated decisions file, then the pulse, before the rulings: a full
-block at a session start, the count and the last written ask after a compaction, and nothing to a
-subagent. With --rulings it prints the seat block, the asks, the pulse and the rulings block and
-nothing else, which is what
+open owner asks of the newest dated decisions file, then the planned ledger at the seat that keeps
+one, then the pulse, before the rulings: a full block at a session start, the count and the last
+written ask after a compaction, and nothing to a subagent. With --rulings it prints the seat block,
+the asks, the planned ledger, the pulse and the rulings block and nothing else, which is what
 a SessionStart on startup, resume, clear or fork wires; stdin is read there too, because the
 payload is what tells a subagent from the session that launched it.
 
@@ -175,7 +175,7 @@ def ruling_key(row):
     return (bare[0:10], bare[11:16])
 
 
-def rulings_block():
+def rulings_block(cap=RULINGS_CAP):
     """The last rows of the owner's rulings register, whole, capped as one block.
 
     The rows are what a compaction summary paraphrases away, so they are printed
@@ -187,6 +187,8 @@ def rulings_block():
     A block over the cap gives up whole rows from its oldest end, never its newest:
     the newest rulings are the ones a compaction loses, which is why the register
     exists. The marker sits where the rows were dropped and is counted in the cap.
+    `cap` is RULINGS_CAP unless the caller has less room: a session start gives it what the seat
+    block, the asks, the planned ledger and the pulse minimum leave under CAP.
 
     The register is append-only by rule, so a ruling made at 11:47 and written at
     12:30 sits below a 12:2x row while carrying the older stamp: file order is not
@@ -208,7 +210,7 @@ def rulings_block():
     dropped = False
     while kept:
         block = heading + (RULINGS_MARKER if dropped else "") + "\n" + "\n".join(kept)
-        if len(block) <= RULINGS_CAP:
+        if len(block) <= cap:
             return block
         kept = kept[1:]
         dropped = True
@@ -489,6 +491,45 @@ def seat_block(data):
     return "\n".join(lines)
 
 
+# The planned ledger: one seat's list of planned work, every open row as one short line (dated rows first), printed
+# at a session start and, shorter, after a compaction, so a planned item never falls out between sessions. The module
+# at PLANNED_PY owns the parsing and the key snapshot and exposes session_block(room, compact=False), which prints a
+# DROPPED ROW line for a key that left the ledger. A missing module at the default path prints nothing, the way a
+# machine that never wrote a ledger sees no pulse either; a module CLAUDE_PLANNED_PY names that is missing or fails
+# prints one line saying so, because a silent ledger is how planned items fell out. Never for a subagent or another seat.
+PLANNED_PY = os.path.join(os.path.expanduser("~"), ".claude", "tools", "planned-check.py")
+PLANNED_SEAT = "analyst"
+PLANNED_ROOM = 2800  # session start: the whole block; the rulings take what is left of CAP
+PLANNED_COMPACT_ROOM = 1200  # compaction: the dated, finished and in-work rows, the stopped ones counted
+PLANNED_MORE = "\n[planned ledger cut, open the ledger]"
+PLANNED_FAILED = "Planned ledger: the block failed (%s), run python %s"
+
+
+def planned_block(data, room=PLANNED_ROOM, compact=False):
+    """The planned ledger's block for PLANNED_SEAT, at most `room` characters (a module that overruns its room is cut
+    with PLANNED_MORE, so it never takes the rulings' room); "" for a subagent, another seat or no module at the
+    default path; one PLANNED_FAILED line for a configured module that is missing or raises. Never raises."""
+    if data.get("agent_id") or data.get("agent_type") or seat() != PLANNED_SEAT:
+        return ""
+    configured = os.environ.get("CLAUDE_PLANNED_PY")
+    script = configured or PLANNED_PY
+    if not configured and not os.path.isfile(script):
+        return ""
+    try:
+        import importlib.util
+        sys.dont_write_bytecode = True
+        spec = importlib.util.spec_from_file_location("planned_check", script)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        text = str(mod.session_block(room, compact=compact) or "")
+    except BaseException as e:  # a module that calls sys.exit still leaves the hook its output
+        return PLANNED_FAILED % (type(e).__name__, script)
+    if len(text) > room:
+        text = text[:max(room - len(PLANNED_MORE), 0)] + PLANNED_MORE
+    return text
+
+
+STARTUP_PULSE_MIN = 100  # room kept for the pulse at a session start (its dropped-for-room line is about 80)
 STDIN_WAIT = 2.0
 
 
@@ -567,13 +608,21 @@ def main():
     if "--rulings" in sys.argv[1:]:
         if not board:
             return 0
-        text = rulings_block()
+        # The asks and the planned ledger are built first and the rulings take the room they and the seat block leave
+        # under CAP, less STARTUP_PULSE_MIN kept for the pulse and the joins: the planned block is whole, the rulings
+        # give up their oldest rows, and the pulse keeps its minimum. The cut at CAP is a fallback (seat block, asks
+        # and planned ledger at their caps would otherwise overrun it).
         asks = open_asks(data)
+        planned = planned_block(data)
+        fixed = sum(len(p) + 2 for p in (block, asks, planned) if p)
+        text = rulings_block(max(min(RULINGS_CAP, CAP - fixed - STARTUP_PULSE_MIN - 2), 0))
         # never named head: an assignment anywhere in main() makes the name local to all of it, and the
         # compaction branch below calls the module's head() on NOTES.md
-        top = "\n\n".join(part for part in (block, asks) if part)
+        top = "\n\n".join(part for part in (block, asks, planned) if part)
         pulse = pulse_block(data, PULSE_MAX, CAP - len(text) - len(top) - 4)
         text = "\n\n".join(part for part in (top, pulse, text) if part)
+        if len(text) > CAP:
+            text = text[:CAP - len(CAP_MARKER)] + CAP_MARKER
         sys.stdout.buffer.write(text.encode("utf-8"))
         return 0
     session_id = str(data.get("session_id") or "")
@@ -598,6 +647,9 @@ def main():
         asks = open_asks(data, ASKS_COMPACT_CAP)
         if asks:
             out.append(asks)
+        planned = planned_block(data, PLANNED_COMPACT_ROOM, compact=True)
+        if planned:
+            out.append(planned)
         pulse_at = len(out)
         out.append(rulings_block())
         sheet = state_sheet()

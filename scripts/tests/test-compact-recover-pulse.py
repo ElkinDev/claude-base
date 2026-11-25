@@ -1,12 +1,16 @@
-"""Pins for the pulse block of claude/hooks/compact-recover.py: the hook prints tools/pulse.py's block after the open asks and before the rulings, at most PULSE_MAX lines at a
+"""Pins for the pulse block of claude/hooks/compact-recover.py: the hook prints tools/pulse.py's block after the open asks (and the planned ledger, at its seat) and before the rulings, at most PULSE_MAX lines at a
 session start and PULSE_COMPACT_MAX at a compaction, trimmed to the room left under CAP, never to an agent and never
 off the board; a missing, failing or hanging pulse prints nothing and costs the start at most its bound.
 
-    python test-recovery-pulse.py
-    COMPACT_RECOVER_PY=<p> python test-recovery-pulse.py    # against a staged copy
+    python test-compact-recover-pulse.py
+    COMPACT_RECOVER_PY=<p> python test-compact-recover-pulse.py    # against a staged copy
 
-The hook runs from a copy in a temp folder with every board input pointed into it; the pulse is a stub script there
-(CLAUDE_PULSE_PY), so nothing of the live board is read or written.
+The hook runs from a copy in a temp folder with every board input pointed into it, so nothing of the live board is
+read or written: the pulse is a stub script there (CLAUDE_PULSE_PY), the board is declared with the temp folder as its
+root (a hook whose source names a board root of its own put the folder off the board and printed nothing, so every pin
+but the three that expect no block went red against it), the briefs folder is an empty one there (it was the user's
+own, read into the seat block), and the planned ledger is a stub that prints nothing (CLAUDE_ROLE is the seat that
+keeps one, so the hook would load the user's own ledger module).
 """
 import json
 import os
@@ -69,14 +73,18 @@ def main():
         open(reg, "w", encoding="utf-8").write("".join(RULING % (i, i) for i in range(1, 4)))
         cks = os.path.join(tmp, "checkpoints")
         os.makedirs(cks)
+        briefs = os.path.join(tmp, "briefs")
+        os.makedirs(briefs)
+        no_planned = stub(tmp, "no-planned", "def session_block(room, compact=False):\n    return ''\n")
         fifteen = stub(tmp, "fifteen", "import sys\nprint('pulse 2026-09-24 07:00: summary line')\n"
                                         "[print('ITEM %d [pulse:w-%08d]' % (i, i)) for i in range(1, 15)]\n")
         base = dict(os.environ, CLAUDE_DECISIONS_GLOB=os.path.join(ddir, "owner-decisions-*.md"),
                     CLAUDE_RULINGS_FILE=reg, CLAUDE_CHECKPOINT_DIR=cks, CLAUDE_ROLE="analyst",
                     CLAUDE_LANE_STATE_SCRIPT=os.path.join(tmp, "no-lane-state.py"),
                     CLAUDE_LANE_STATE_SHEET=os.path.join(tmp, "law.md"), PYTHONIOENCODING="utf-8",
-                    CLAUDE_PULSE_PY=fifteen)
-        for name in ("CLAUDE_BRIEFS_DIR", "CLAUDE_LANDINGS_FILE", "CLAUDE_BOARD_ROOT", "CLAUDE_BOARD_PREFIXES"):
+                    CLAUDE_PULSE_PY=fifteen, CLAUDE_BOARD_ROOT=tmp, CLAUDE_BRIEFS_DIR=briefs,
+                    CLAUDE_PLANNED_PY=no_planned)
+        for name in ("CLAUDE_LANDINGS_FILE", "CLAUDE_BOARD_PREFIXES"):
             base.pop(name, None)
         payload = {"session_id": "pin00000-0000", "cwd": tmp, "source": "startup"}
         compact = dict(payload, source="compact")
@@ -167,12 +175,13 @@ def main():
               room_under_cap)
 
         def full_day_leaves_a_trace():
-            # asks at ASKS_CAP and rulings near RULINGS_CAP (13 rows of 470 chars, 6,850) leave the pulse about
-            # 1,040 chars. A summary of 962 chars fits with the cut marker (996) but not under the heading too, so
-            # only the first fallback prints it; one of 1,232 does not fit at all, so only the second prints the
-            # notice. Neither run may print the heading: the case proves the fallback, not the trimming (review
-            # plsh r1 finding 3; the no-fallback mutant passed the earlier 420-char version of this case; the
-            # marker after the summary is review plsh r2 note 1).
+            # asks at ASKS_CAP and rulings near RULINGS_CAP (13 rows of 470 chars, 6,850) leave the pulse a room
+            # read from a run without a pulse (CAP less that output and the join), never a fixed figure: the seat
+            # block and the session start's room split move it. A summary 10 characters short of that room with
+            # the cut marker fits but not under the heading too, so only the first fallback prints it; one as long
+            # as the room does not fit at all, so only the second prints the notice. Neither run may print the
+            # heading: the case proves the fallback, not the trimming (review plsh r1 finding 3; the no-fallback
+            # mutant passed an earlier version of this case; the marker after the summary is review plsh r2 note 1).
             dd = os.path.join(tmp, "full")
             os.makedirs(dd, exist_ok=True)
             open(os.path.join(dd, "owner-decisions-2026-09-24.md"), "w", encoding="utf-8").write(
@@ -180,8 +189,12 @@ def main():
             big = os.path.join(tmp, "full-rulings.md")
             open(big, "w", encoding="utf-8").write("".join(
                 "2026-09-24 07:%02d [decision] %s (analyst pane)\n" % (i, "r" * 470) for i in range(40)))
+            env0 = dict(base, CLAUDE_PULSE_PY=os.path.join(tmp, "no-pulse.py"), CLAUDE_RULINGS_FILE=big,
+                        CLAUDE_DECISIONS_GLOB=os.path.join(dd, "owner-decisions-*.md"))
+            room = 9000 - len(run(hook, ["--rulings"], payload, env0)[1]) - 2
+            fits, over = room - 75, room  # 75 = the summary's 32-character prefix, the join and the 32-character marker, plus 10
             outs = {}
-            for n in (930, 1200):
+            for n in (fits, over):
                 long_pulse = stub(tmp, "longsum%d" % n, "print('pulse 2026-09-24 07:00: summary ' + 's' * %d)\n"
                                                         "[print('L%%d ' %% i + 'x' * 880) for i in range(12)]\n" % n)
                 env7 = dict(base, CLAUDE_PULSE_PY=long_pulse, CLAUDE_RULINGS_FILE=big,
@@ -189,9 +202,9 @@ def main():
                 outs[n] = run(hook, ["--rulings"], payload, env7)[1]
             whole = all(len(o) <= 9000 and "Pulse (python " not in o and "Rulings (last" in o and "Open owner asks"
                         in o for o in outs.values())
-            return (whole and "summary " + "s" * 930 + "\n[pulse cut to fit, run pulse.py]" in outs[930]
-                    and "[pulse dropped for room" not in outs[930]
-                    and "[pulse dropped for room, run python " in outs[1200] and "summary sss" not in outs[1200])
+            return (room > 200 and whole and "summary " + "s" * fits + "\n[pulse cut to fit, run pulse.py]" in outs[fits]
+                    and "[pulse dropped for room" not in outs[fits]
+                    and "[pulse dropped for room, run python " in outs[over] and "summary sss" not in outs[over])
         check("a full day (asks and rulings at their caps): the pulse's summary with the cut marker, or else a dropped notice",
               full_day_leaves_a_trace)
     finally:
