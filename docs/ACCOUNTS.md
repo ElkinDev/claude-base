@@ -221,22 +221,26 @@ A profile is only read when a shell starts, so an already open window will not h
 
 The switcher has a POSIX twin, `claude/claude-account.py` (Python 3.8 or later, standard library only), with the same commands, flags, files and dry run as the PowerShell one. Everything above holds unless this section says otherwise.
 
-### Installing it, and why the command is `cca`
+### Installing it, and the commands `cca` and `cc`
 
 The POSIX installer copies `claude-account.py` and `merge-settings.py` into the kit home (`$KIT_HOME`, or `~/.claude`) and `bin/cca` into `<kit home>/bin`, then makes `cca` reachable from a new terminal. `cca` is a small `#!/bin/sh` launcher: it follows a symbolic link to its real location, finds `claude-account.py` one folder above it and runs it with `python3`, passing every argument through, `--` included. Without the launcher, `python3 ~/.claude/claude-account.py work` does the same.
 
-The command is `cca`, not `cc`. On macOS and Linux `cc` is the system C compiler (`/usr/bin/cc`), and a kit folder placed early on PATH would shadow it for every `make`, `pip` and `node-gyp` build on the machine. Windows keeps `cc`.
+The command on PATH is `cca`, not `cc`. On macOS and Linux `cc` is the system C compiler (`/usr/bin/cc`), and a kit folder placed early on PATH would shadow it for every `make`, `pip` and `node-gyp` build on the machine.
+
+The `cc` you type is a shell function instead, so the lines read as on Windows. The installer appends it once to the rc file of zsh or bash (`~/.zshrc`, or `~/.bash_profile` on macOS and `~/.bashrc` on Linux), between two marker lines that start with `# >>> claude-base: cc` and `# <<< claude-base: cc`. `cc` alone and `cc <account> ...` run `cca` with every argument. A first word that starts with a dash or holds a dot or a slash runs the compiler, so `cc -o app main.c`, `cc main.c` and `cc --version` work as before. Only the terminal sees the function: a build calls `cc` from a child process, which finds the compiler on PATH. An rc file that already defines a `cc` of your own keeps it, an unattended run leaves the rc file alone, and a rollback does not remove the block; delete the block by hand to go back to `cca` alone. A terminal opened before the install has no `cc` until you run `source ~/.zshrc` in it, or the rc file of your shell.
 
 ```sh
-cca                     list the accounts
-cca work -p             create the profile without opening a session
-cca work                open it here, in this terminal
-cca work -w             open it in a separate tab or window
-cca work -- -r          pick which session to resume
-cca work -Role orchestrator
+cc                      list the accounts
+cc work -p              create the profile without opening a session
+cc work                 open it here, in this terminal
+cc work -w              open it in a separate tab or window
+cc work -- -r           pick which session to resume
+cc work -Role orchestrator
 ```
 
-Both spellings work: the PowerShell ones (`-p`, `-Prepare`, `-Role`, `-ShowEnv`, `-Sh` as a prefix of it) and GNU long options (`--prepare`, `--role orchestrator`, `--rename=new`, `--show-env`, `--window 500000`). As on Windows, a flag the switcher does not know (`-c`, `--model opus`) is forwarded to `claude`, and `--` is still the safe way to pass claude's flags, because `-r` is the switcher's rename and `-n` its no-share. On the help, `cca -h` or `cca help` is safer than `cca ?`, since zsh refuses an unmatched `?` before the command runs.
+Each line works with `cca` in place of `cc`, which is the form for a script or a shell without the function.
+
+Both spellings work: the PowerShell ones (`-p`, `-Prepare`, `-Role`, `-ShowEnv`, `-Sh` as a prefix of it) and GNU long options (`--prepare`, `--role orchestrator`, `--rename=new`, `--show-env`, `--window 500000`). As on Windows, a flag the switcher does not know (`-c`, `--model opus`) is forwarded to `claude`, and `--` is still the safe way to pass claude's flags, because `-r` is the switcher's rename and `-n` its no-share. On the help, `cc help`, `cca -h` or `cca help` is safer than `cca ?`, since zsh refuses an unmatched `?` before the command runs, and `cc -h` is the compiler's help.
 
 ### What differs
 

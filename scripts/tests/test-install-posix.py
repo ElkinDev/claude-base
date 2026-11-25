@@ -231,7 +231,8 @@ class InstallPosixTest(unittest.TestCase):
         link = os.path.join(self.links, "cca")
         self.assertTrue(os.path.islink(link), out)
         self.assertEqual(os.readlink(link), os.path.join(self.home, "bin", "cca"))
-        self.assertFalse(os.path.exists(self.rc))
+        # The rc file gets the cc function (test-install-cc-posix.py), never a PATH line.
+        self.assertNotIn("export PATH", self.read(self.rc))
         self.assertNotIn("linked", self.install(path_extra=self.links))
 
     def test_a_name_that_is_not_ours_is_kept(self):

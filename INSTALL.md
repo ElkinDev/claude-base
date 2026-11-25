@@ -346,11 +346,13 @@ What differs is what each system runs:
 - A project gets the Python twins of the branch hooks, `.claude/hooks/branch-check.py` and
   `branch-upstream-fix.py`, wired by a `.claude/settings.local.json` rendered for python3. The gradle hook, with
   `--gradle-hook`, runs its filter with python3 as well.
-- The account switcher is `cca`, not `cc`: on macOS and Linux `cc` is the C compiler, and a `cc` ahead of it on PATH
-  would break every build that calls it. The run makes it a command in any new terminal with a symlink in
+- The account switcher on PATH is `cca`, not `cc`: on macOS and Linux `cc` is the C compiler, and a `cc` ahead of it on
+  PATH would break every build that calls it. The run makes it a command in any new terminal with a symlink in
   `~/.local/bin` when that folder is already on PATH (the Claude Code installer puts it there), else with one
   `export PATH="$PATH:<kit home>/bin"` line appended to your shell's rc file (`~/.zshrc` for zsh). Appended, never
-  prepended, so no system command is shadowed. A rollback leaves both, as it leaves the PATH entry on Windows.
+  prepended, so no system command is shadowed. The run then appends a `cc` shell function to the same rc file, so
+  `cc work` opens an account as on Windows while `cc -o app main.c` still compiles, and builds, which never see a
+  function of the terminal, are unchanged. A rollback leaves all of these, as it leaves the PATH entry on Windows.
   `docs/ACCOUNTS.md`, "macOS and Linux", covers the switcher: symlinks instead of junctions, and on macOS the token
   of each profile in the login Keychain, so each profile signs in once.
 
