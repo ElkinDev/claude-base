@@ -24,8 +24,9 @@ How it works:
 'default' is a reserved name meaning ~/.claude itself, the directory plain `claude` uses when
 CLAUDE_CONFIG_DIR is not set. It cannot be moved, only relabelled.
 
-The command is `cca`, not `cc` as on Windows: on macOS and Linux `cc` is the C compiler, and a kit
-folder early on PATH would shadow it for every build.
+The command on PATH is `cca`, not `cc` as on Windows: on macOS and Linux `cc` is the C compiler, and a
+kit folder early on PATH would shadow it for every build. The `cc` typed in a terminal is a shell
+function the installer adds (install/kit_cc.py), which runs cca for an account and the compiler else.
 
 Quick start:  cca -h           full help
               cca              list the accounts

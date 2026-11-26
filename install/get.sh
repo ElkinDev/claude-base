@@ -229,7 +229,7 @@ main() {
     say "Left to do by hand:"
     say "  1. Open a new terminal and run claude, then sign in (one sign-in per account)."
     say "  2. Scaffold a project: python3 \"$DIR/install.py\" --project <path>"
-    say "  3. Several accounts on one machine: cca in a new terminal (cca ? lists the options), $DIR/docs/ACCOUNTS.md"
+    say "  3. Several accounts on one machine: cc in a new terminal (cc help lists the options), $DIR/docs/ACCOUNTS.md"
     return 0
 }
 

@@ -146,7 +146,7 @@ Claude Code, clones the kit into `~/claude-base`, runs `install.py`, asks about 
 curl -fsSL https://raw.githubusercontent.com/ElkinDev/claude-base/main/install/get.sh | bash
 ```
 The kit lands in `~/.claude` exactly as on Windows: the same skills, hooks and agents, the hooks run with `python3`,
-the status line is `statusline.py`, and the account switcher is `cca` (not `cc`, which is the C compiler there).
+the status line is `statusline.py`, and the account switcher is `cc` as on Windows, a shell function that runs `cca`.
 From a clone the installer is `python3 install.py`, with the same switches (`--dry-run`, `--project <path>`,
 `--permissions ask`, ...); `INSTALL.md`, "macOS and Linux", has the details.
 
@@ -241,8 +241,10 @@ Hooks live per config directory: one added to `~/.claude/settings.json` reaches 
 
 On Windows the switcher is PowerShell, with directory junctions and the token in `.credentials.json`.
 On macOS and Linux it is `claude-account.py`, with the same flags, symbolic links instead of
-junctions, and the command `cca` instead of `cc`, because `cc` is the C compiler there and a `cc` on
-PATH would break every build that calls it (`cca work -p`, `cca work`, `cca`). On macOS each
+junctions, and the command on PATH is `cca`, because `cc` is the C compiler there and a `cc` on
+PATH would break every build that calls it. The installer adds a `cc` shell function to your zsh or
+bash rc file that runs `cca` for an account and the compiler for anything else (`cc -o app main.c`),
+so `cc work -p`, `cc work` and `cc` read as on Windows. On macOS each
 profile's token lives in the login Keychain, so every profile signs in once, and a rename means
 signing in again. See `docs/ACCOUNTS.md`, "macOS and Linux".
 

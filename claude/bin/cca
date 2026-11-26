@@ -2,7 +2,8 @@
 # cca: switch Claude Code accounts on macOS and Linux (claude-base docs/ACCOUNTS.md). The installer
 # copies this file into <kit home>/bin and makes it reachable from PATH, sometimes through a symbolic
 # link in another folder; the switcher, claude-account.py, sits one folder above the real file.
-# It is not called cc because on these systems cc is the C compiler, and shadowing it breaks builds.
+# It is not called cc because on these systems cc is the C compiler, and shadowing it breaks builds;
+# the cc typed in a terminal is a shell function the installer adds, which calls this file.
 # Every argument is handed over untouched, the -- separator included.
 self=$0
 case $self in

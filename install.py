@@ -45,6 +45,7 @@ INSTALL_DIR = os.path.join(ROOT, "install")
 sys.path.insert(0, INSTALL_DIR)
 
 import kit_adopt  # noqa: E402  (found through INSTALL_DIR)
+import kit_cc  # noqa: E402
 import kit_lib  # noqa: E402
 from kit_lib import Pair, plan_line, read_text  # noqa: E402
 
@@ -410,8 +411,9 @@ class Run(object):
                 pairs += kit_adopt.kit_pairs(os.path.join(plugin, "skills"), os.path.join(home, "skills"))
         # The status line and the account switcher for this system. The Windows files (statusline.ps1,
         # claude-account.ps1, cc-launch.ps1, bin/cc.cmd) run nowhere here, so they are not copied.
-        # The switcher's command is `cca`, not `cc`: on macOS and Linux `cc` is the C compiler, and a
-        # cc on PATH ahead of it would break every build that calls it (docs/ACCOUNTS.md).
+        # The switcher's command on PATH is `cca`, not `cc`: on macOS and Linux `cc` is the C compiler,
+        # and a cc on PATH ahead of it would break every build that calls it. The `cc` typed in a
+        # terminal is a shell function in the rc file instead (install/kit_cc.py, docs/ACCOUNTS.md).
         for rel in ("statusline.py", "claude-account.py", "merge-settings.py", "CLAUDE.md", os.path.join("bin", "cca")):
             source = os.path.join(ROOT, "claude", rel)
             if os.path.isfile(source):
@@ -433,13 +435,17 @@ class Run(object):
         pairs = self.user_pairs()
         say("Kit home: %s" % self.home)
         self.execute(pairs, "user scope install")
-        # The kit's commands (cca) reach the PATH once; a terminal opened after this run finds them.
-        # Not on an unattended run: a user who took them off the PATH keeps them off.
+        # The kit's commands (cca) reach the PATH once, and the cc function the rc file; a terminal
+        # opened after this run finds them. Not on an unattended run: a user who took them off keeps
+        # them off.
         say()
         if args.unattended:
             say("  user PATH    left as it is (--unattended)")
         else:
-            for line in add_kit_commands(os.path.join(self.home, "bin"), [p.target for p in pairs], args.dry_run):
+            bin_dir, targets = os.path.join(self.home, "bin"), [p.target for p in pairs]
+            for line in add_kit_commands(bin_dir, targets, args.dry_run):
+                say("  " + line)
+            for line in kit_cc.add_cc_function(_rc_file(), bin_dir, targets, args.dry_run):
                 say("  " + line)
         say()
         if args.permissions == "bypass":

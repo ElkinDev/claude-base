@@ -76,7 +76,7 @@ class GetShTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertTrue(os.path.isdir(os.path.join(self.dir, ".git")))
         self.assertEqual(self.calls(), ["install.py --permissions bypass --no-herdr", "doctor.py "])
-        self.assertIn("cca", out)
+        self.assertIn("cc in a new terminal (cc help lists the options)", out)
 
     def test_options_reach_the_installer(self):
         code, out = self.run_get("--herdr", "--permissions", "ask", "--no-hook-merge", "--auto-update")
