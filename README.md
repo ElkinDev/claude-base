@@ -35,7 +35,9 @@ claude/                     -> installs into ~/.claude
   hooks/                    worklog, branch helpers, markitdown, read guard, big-result alarm,
                             subagent turn budget notes, landings,
                             the orchestrator's idle floor (idle-floor.py, a Stop hook that
-                            refuses a turn end under three subagents in flight),
+                            refuses a turn end under three subagents in flight; wired by
+                            default, acts only when CLAUDE_ROLE is orchestrator, off by
+                            unsetting that role or setting IDLE_FLOOR_FLOOR to 0),
                             session audit, compaction checkpoint + summary persistence + recovery,
                             the wake-turn, long-run and two-round notices, and the subagent
                             background guard (docs/CONTEXT-ECONOMICS.md, section 7)
