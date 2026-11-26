@@ -1072,7 +1072,13 @@ class ShellReaperTest(unittest.TestCase):
                 f = self.go(procs, msys=rows, kill=(rc, text))
                 self.assertEqual(f.kill_calls, [[501, 503]])
                 self.assertEqual(self.log_lines(), [head.format(rc, shown)])
+                self.assertEqual(f.rc, 0 if rc == 0 else 1)  # a failed taskkill fails the run
                 os.remove(self.log)
+
+    def test_duplicate_exempt_tokens_are_kept_once(self):
+        self.write_config({'exempt': ['runner', 'runner', 'gradle']})
+        rules = sr.load_rules(self.config)
+        self.assertEqual(rules.exempt, sr.EXEMPT_TOKENS + ('runner',))
 
     def test_console_text_decodes_with_the_oem_code_page(self):
         try:
@@ -1104,10 +1110,14 @@ class ShellReaperTest(unittest.TestCase):
         open(self.pythonw, 'wb').close()
         self.tripwire = os.path.join(self.dir, 'tripwire.log')
 
-    def install(self, *args, scheduler=True, shadow=''):
+    def install(self, *args, scheduler=True, shadow='', config=True):
         """(exit code, stdout, stderr) of install/shell-reaper.ps1 with args, run in a fresh powershell under the
         scheduler tripwires; scheduler=False leaves KIT_SCHEDULER unset, so the script reaches for the scheduler."""
         env = dict(os.environ, KIT_HOME=self.kit, TRIPWIRE_LOG=self.tripwire)
+        if config:  # the install step wants a config in the kit home unless -Force
+            open(os.path.join(self.kit, 'shell-reaper.json'), 'a', encoding='utf-8').close()
+        elif os.path.exists(os.path.join(self.kit, 'shell-reaper.json')):
+            os.remove(os.path.join(self.kit, 'shell-reaper.json'))
         env.pop('KIT_SCHEDULER', None)
         if scheduler:
             env['KIT_SCHEDULER'] = self.scheduler
@@ -1139,6 +1149,18 @@ class ShellReaperTest(unittest.TestCase):
         rc, out, err = self.install('-Remove', scheduler=False)
         self.assertNotEqual(rc, 0, out)
         self.assertEqual(self.tripped(), ['Get-ScheduledTask'])
+
+    def test_install_without_a_config_refuses_with_the_warning_and_force_registers(self):
+        self.make_kit()
+        before = self.read_scheduler()
+        rc, out, err = self.install('-Python', self.pythonw, config=False)
+        self.assertEqual(rc, 2, out)
+        for word in ('shell-reaper.json', 'exempt', '45', '150', '390', '-Force', 'Nothing was registered'):
+            self.assertIn(word, err)
+        self.assertEqual((self.read_scheduler(), self.tripped()), (before, []))
+        rc, out, err = self.install('-Python', self.pythonw, '-Force', config=False)
+        self.assertEqual(rc, 0, err)
+        self.assertIn(task_name(self.kit), self.read_scheduler())
 
     def test_install_registers_one_task_per_kit_home_with_a_15_minute_cap(self):
         self.make_kit()

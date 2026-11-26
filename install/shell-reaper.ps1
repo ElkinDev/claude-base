@@ -9,6 +9,9 @@ runs it.
   powershell -ExecutionPolicy Bypass -File .\install\shell-reaper.ps1             register it
   powershell -ExecutionPolicy Bypass -File .\install\shell-reaper.ps1 -Remove     remove it
 
+With no shell-reaper.json in the kit home it prints a warning about the age limits and exempt, registers nothing and
+exits 2; -Force registers anyway.
+
 It needs shell-reaper.py and msys_tree.py in <kit home>\tools, where install.ps1 copies the kit's claude\tools
 folder: the first loads the second by path from beside itself (pythonw -I keeps that folder off sys.path), so it
 refuses, with nothing registered, when either is missing.
@@ -39,7 +42,9 @@ param(
     # Remove this kit home's task and do nothing else.
     [switch]$Remove,
     # The pythonw.exe the task runs; by default the one beside the python.exe on PATH.
-    [string]$Python
+    [string]$Python,
+    # Register although no shell-reaper.json exists in the kit home.
+    [switch]$Force
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
@@ -107,6 +112,10 @@ if ($Python) {
         [Console]::Error.WriteLine('refused: no pythonw.exe beside the python.exe on PATH; name one with -Python. Nothing was registered.')
         exit 2
     }
+}
+if (-not $DryRun -and -not $Force -and -not (Test-Path -LiteralPath (Join-Path $kitHome 'shell-reaper.json') -PathType Leaf)) {
+    [Console]::Error.WriteLine("refused: no shell-reaper.json in $kitHome. Set your own long jobs under exempt in shell-reaper.json first (or run the tool with --dry and read what it would kill) before installing the task: the task ends the whole process tree of any agent tool shell past 45 minutes with no wait token, 150 with a wait token, 390 with a gate token. Nothing was registered; pass -Force to register anyway.")
+    exit 2
 }
 $arguments = "-I `"$script`" --home `"$kitHome`""
 if ($DryRun) {

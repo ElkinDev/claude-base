@@ -358,7 +358,7 @@ def load_rules(path):
     unknown = sorted(k for k in data if k not in CONFIG_KEYS and not k.startswith('_'))
     if unknown:
         raise ValueError(f'{path}: unknown key {", ".join(unknown)} (known: {", ".join(CONFIG_KEYS)})')
-    extra = tuple(t for t in string_list(data, 'exempt', path) if t not in EXEMPT_TOKENS)
+    extra = tuple(t for t in dict.fromkeys(string_list(data, 'exempt', path)) if t not in EXEMPT_TOKENS)
     return Rules(EXEMPT_TOKENS + extra, string_list(data, 'repo_roots', path))
 
 
@@ -549,7 +549,10 @@ def run(deps, dry):
                 deps.out('DRY ' + entry(ts, a, 'WOULD-KILL', roots_text(a)))
                 continue
             try:
-                emit(deps, False, execute(deps, a, ts))
+                text, failed = execute(deps, a, ts)
+                emit(deps, False, text)
+                if failed:  # taskkill ended with a non-zero rc: the run fails, as the docstring says
+                    code = 1
             except Exception as exc:  # a failed re-read or taskkill is logged, the next one still runs, the run fails
                 emit(deps, False, entry(ts, a, 'ERROR', f'{type(exc).__name__}: {one_line(str(exc))}'))
                 code = 1
@@ -582,26 +585,26 @@ def roots_text(a):
 
 def execute(deps, a, ts):
     """Kill one class A or B tree (M3): one re-read of every root, then one taskkill naming them all; a root that is
-    gone or whose creation time changed refuses the whole kill. Returns the log entry."""
+    gone or whose creation time changed refuses the whole kill. Returns (the log entry, True when taskkill's rc is not 0)."""
     roots = kill_roots_of(a)
     pre = f'{roots_text(a)} ' if len(roots) > 1 else ''
     cur = deps.read_pids([pid for pid, _ in roots])
     for i, (pid, created) in enumerate(roots):
         now = cur.get(pid)
         if i == 0 and now is None:
-            return entry(ts, a, 'GONE', f'{pre}ended before the kill')
+            return entry(ts, a, 'GONE', f'{pre}ended before the kill'), False
         if i == 0 and now.created != created:
-            return entry(ts, a, 'REFUSED', f'{pre}pid reuse: created {created} now {now.created}')
+            return entry(ts, a, 'REFUSED', f'{pre}pid reuse: created {created} now {now.created}'), False
         if now is None:
-            return entry(ts, a, 'REFUSED', f'{pre}root {pid} gone before the kill')
+            return entry(ts, a, 'REFUSED', f'{pre}root {pid} gone before the kill'), False
         if now.created != created:
-            return entry(ts, a, 'REFUSED', f'{pre}root {pid} pid reuse: created {created} now {now.created}')
+            return entry(ts, a, 'REFUSED', f'{pre}root {pid} pid reuse: created {created} now {now.created}'), False
     rc, text = deps.kill_trees([pid for pid, _ in roots])
     lines = (text or '').strip().splitlines()
     first = one_line(lines[0]) if lines else '(no output)'
     # rc 128 can follow SUCCESS lines, its ERROR line last (probe in the docstring): a failed kill logs both ends
     last = f' last={one_line(lines[-1])}' if rc != 0 and len(lines) > 1 else ''
-    return entry(ts, a, 'KILL', f'rc={rc} {pre}taskkill={first}{last}')
+    return entry(ts, a, 'KILL', f'rc={rc} {pre}taskkill={first}{last}'), rc != 0
 
 
 # ---- the live process table, the re-read and the kill (never reached by the tests) ----
