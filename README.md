@@ -62,7 +62,11 @@ claude/                     -> installs into ~/.claude
                             region of a twentieth of the dump, for an agent driving a device
                             without paying for a screenshot; tests and three synthetic dumps
                             under tools/tests/, run with
-                            python claude/tools/tests/test-xmlframe.py
+                            python claude/tools/tests/test-xmlframe.py;
+                            shell-reaper.py and msys_tree.py: an optional scheduled task (every 10
+                            minutes, install/shell-reaper.ps1) that ends Claude Code Bash tool shells
+                            that outlived their call and keep their agent waiting; its rules, config
+                            and stop file are in INSTALL.md, tests under tools/tests/
 project-template/           -> copy into each project
   AGENTS.md                 portable working rules for every agent (voice, persona, git, TDD,
                             evidence, pipeline, learnings), in sections scripts/agents-md.py keeps

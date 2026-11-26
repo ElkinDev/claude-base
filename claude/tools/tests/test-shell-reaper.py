@@ -293,6 +293,19 @@ class ShellReaperTest(unittest.TestCase):
                     self.assertEqual(f.killed, [])
                     os.remove(self.log)
 
+    def test_class_c_root_must_end_at_a_separator_or_the_end_of_the_token(self):
+        self.write_config({'repo_roots': ['D:/work', 'D:\\src\\']})
+        rules = sr.Rules(roots=('D:/work', 'D:\\src\\'))
+        for cmd, want in (('node D:/workshop/a.js', False), ('node D:\\workshop\\a.js', False),
+                          ('node D:/src2/a.js', False), ('node D:/work', True), ('node "D:/work"', True),
+                          ('node D:\\work\\a.js', True), ('node D:/src/a.js', True), ('node d:/WORK/a.js', True)):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(sr.names_repo_root(cmd, rules), want)
+        f = self.go([sr.Proc(791, 1, 'node.exe', ago(800), 'node D:/workshop/a.js'),
+                     sr.Proc(792, 1, 'node.exe', ago(800), 'node D:/work/a.js')])
+        self.assertEqual([x.split(' pid=')[1].split(' ')[0] for x in self.log_lines()], ['792'])
+        self.assertEqual(f.killed, [])
+
     def test_class_c_exclusions(self):
         self.write_config(ROOTS)
         tokens = ('gradle', 'gradlew', 'java', 'lockrun', 'gate-detach')

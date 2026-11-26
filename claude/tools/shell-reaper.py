@@ -318,11 +318,12 @@ def own_lineage(table, own_pid):
 
 
 def names_repo_root(cmd, rules=DEFAULT_RULES):
-    """The command names one of the config's repo roots, with either slash, in any case (substring)."""
-    low = (cmd or '').lower()
+    """The command names one of the config's repo roots, with either slash, in any case: the root must be followed
+    by a separator, the end of the command or a space or quote, so D:/work does not match D:/workshop."""
+    low = (cmd or '').lower().replace('\\', '/')
     for root in rules.roots:
-        r = root.lower()
-        if r.replace('\\', '/') in low or r.replace('/', '\\') in low:
+        r = root.lower().replace('\\', '/').rstrip('/')
+        if r and re.search(re.escape(r) + r'''(?=[/\s"']|$)''', low):
             return True
     return False
 
