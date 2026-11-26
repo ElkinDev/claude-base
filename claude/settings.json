@@ -126,6 +126,15 @@
             "timeout": 20
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"%USERPROFILE%/.claude/hooks/idle-floor.py\"",
+            "timeout": 20
+          }
+        ]
       }
     ],
     "PreToolUse": [

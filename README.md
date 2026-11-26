@@ -34,6 +34,8 @@ claude/                     -> installs into ~/.claude
                             whole from upstream; THIRD-PARTY-NOTICES.md names each source
   hooks/                    worklog, branch helpers, markitdown, read guard, big-result alarm,
                             subagent turn budget notes, landings,
+                            the orchestrator's idle floor (idle-floor.py, a Stop hook that
+                            refuses a turn end under three subagents in flight),
                             session audit, compaction checkpoint + summary persistence + recovery,
                             the wake-turn, long-run and two-round notices, and the subagent
                             background guard (docs/CONTEXT-ECONOMICS.md, section 7)
