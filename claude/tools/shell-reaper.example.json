@@ -1,0 +1,5 @@
+{
+  "_help": "Config of shell-reaper.py, optional. Copy it to shell-reaper.json in the kit home (beside logs/) and replace these example values with your own. exempt: tokens added to the kit's own (gradle, gradlew, java, lockrun, gate-detach), such as your queue runner or render server; a Bash tool shell whose command names one as a whole word, in any case, is never killed, only watched in the log past 390 minutes. repo_roots: the folders class C reports orphan trees under (report only, never a kill), each matched with either slash and in any case; with none, class C reports nothing. Keys that start with an underscore are notes. Any other key, or a value that is not a list of non-empty strings, makes a run log one CONFIG-ERROR line, read and kill nothing, and exit 1.",
+  "exempt": ["queue-runner.py", "render-server"],
+  "repo_roots": ["D:/work", "D:\\src"]
+}
