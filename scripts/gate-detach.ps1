@@ -33,10 +33,16 @@
 # -Bash defaults to GATE_DETACH_BASH when that variable is set, else Git for Windows' bash.exe.
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][string]$Command,
-    [Parameter(Mandatory = $true)][string]$Log,
+    [string]$Command,
+    [string]$Log,
     [string]$Bash = $(if ($env:GATE_DETACH_BASH) { $env:GATE_DETACH_BASH } else { 'C:\Program Files\Git\bin\bash.exe' })
 )
+# No parameter may ever prompt (2026-11-26): a Mandatory parameter makes PowerShell ask on stdin, and in an agent's tool
+# shell that prompt waits forever with 0 s CPU. Each required one is checked by hand and refused with exit 2.
+$usage = 'usage: gate-detach.ps1 -Command <bash command line> -Log <posix log path> [-Bash <path to bash.exe>]'
+foreach ($n in 'Command', 'Log') {
+    if ([string]::IsNullOrWhiteSpace((Get-Variable $n -ValueOnly))) { [Console]::Error.WriteLine("gate-detach.ps1: missing required parameter -$n. $usage"); exit 2 }
+}
 if (-not (Test-Path $Bash)) { Write-Error "bash not found at $Bash"; exit 2 }
 $argLimit = 8000
 function Get-BashArgs([string]$cmd, [string]$log) {

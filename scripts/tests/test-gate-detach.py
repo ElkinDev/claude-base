@@ -118,7 +118,8 @@ class GateDetachCommandTest(unittest.TestCase):
 
     def test_a_missing_log_argument_is_refused(self):
         r = self.detach("-Command", "echo x")
-        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("-Log", r.stderr)
         self.assertEqual(r.stdout.strip(), "")
 
     def test_the_process_is_started_with_no_console_window(self):
