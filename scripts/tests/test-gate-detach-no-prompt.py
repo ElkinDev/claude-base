@@ -46,6 +46,7 @@ def run_on_a_console(script, *args):
     return p.returncode, out + err
 
 
+@unittest.skipUnless(os.name == "nt" and shutil.which("powershell"), "gate-detach.ps1 is a Windows launcher (PowerShell 5.1)")
 class GateDetachNoPromptTest(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="dnp-")

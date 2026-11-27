@@ -206,8 +206,8 @@ with no PowerShell profile line and under any local execution policy; one set by
 Requirements: Windows PowerShell 5.1+, `git` on PATH, and a terminal font with emoji for the status
 line glyphs.
 
-#### Ending stuck shells (optional)
-Claude Code's Bash tool sometimes leaves a shell running after its call is over, and the agent that started it keeps waiting on it. `shell-reaper.py` finds those shells and ends them. It is not part of `install.ps1`; register it by hand, once per kit home, after an install (it needs `shell-reaper.py` and `msys_tree.py` in `<kit home>\tools`, which every install copies):
+#### Ending stuck shells (optional, Windows only)
+Claude Code's Bash tool sometimes leaves a shell running after its call is over, and the agent that started it keeps waiting on it. `shell-reaper.py` finds those shells and ends them. It is not part of `install.ps1`; register it by hand, once per kit home, after an install (it needs `shell-reaper.py` and `msys_tree.py` in `<kit home>\tools`, which every install copies). It is Windows only: it reads Git for Windows' process list, ends trees with `taskkill` and is registered in Task Scheduler, and it has no macOS or Linux form:
 
 **Before registering the task:** name your own long jobs in `shell-reaper.json` under `exempt` (or run the tool with `--dry` and read what it would kill). The task ends the whole process tree of any agent tool shell past three age limits: 45 minutes with no wait token in its command, 150 minutes with a wait token, 390 minutes with a gate token. A dev server, a long test suite or a training script started from a tool call is such a shell, so it dies at 45 minutes unless it is exempt. The script refuses (exit 2, nothing registered) while no `shell-reaper.json` exists in the kit home; `-Force` registers anyway.
 
@@ -372,6 +372,8 @@ What differs is what each system runs:
   function of the terminal, are unchanged. A rollback leaves all of these, as it leaves the PATH entry on Windows.
   `docs/ACCOUNTS.md`, "macOS and Linux", covers the switcher: symlinks instead of junctions, and on macOS the token
   of each profile in the login Keychain, so each profile signs in once.
+- The shell reaper (section 1, "Ending stuck shells") is Windows only. `install.py` copies `shell-reaper.py` and
+  `msys_tree.py` with the rest of the tools folder, but nothing schedules or runs them here.
 
 ### Updating every day on its own (macOS)
 `--auto-update` on `install.py` (or on the `get.sh` line) loads a LaunchAgent of your own user, with no elevation:
